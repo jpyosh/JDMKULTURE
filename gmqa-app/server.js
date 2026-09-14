@@ -98,15 +98,15 @@ app.post('/api/jobs', (req, res) => {
   if (!j.job_date) return res.status(400).json({ error: 'job_date required' });
 
   const seq = db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date).c + 1;
-  const jo_number = j.vehicle_class ? joNumber(j.job_date, seq) : null;
+  const jo_number = joNumber(j.job_date, seq);
 
   const info = db.prepare(`INSERT INTO jobs
-    (jo_number, job_date, time_in, vehicle_class, plate, service_id, addon_id, addon_price_override,
+    (jo_number, job_date, time_in, time_out, vehicle_class, plate, service_id, addon_id, addon_price_override,
      custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method, detailer, remarks)
-    VALUES (@jo_number,@job_date,@time_in,@vehicle_class,@plate,@service_id,@addon_id,@addon_price_override,
+    VALUES (@jo_number,@job_date,@time_in,@time_out,@vehicle_class,@plate,@service_id,@addon_id,@addon_price_override,
      @custom_addon_name,@custom_price,@custom_comm,@discount,@discount_reason,@tip_gcash,@payment_method,@detailer,@remarks)`)
     .run({
-      jo_number, job_date: j.job_date, time_in: j.time_in || null, vehicle_class: j.vehicle_class || null,
+      jo_number, job_date: j.job_date, time_in: j.time_in || null, time_out: j.time_out || null, vehicle_class: j.vehicle_class || null,
       plate: j.plate || null, service_id: j.service_id || null, addon_id: j.addon_id || null,
       addon_price_override: j.addon_price_override ?? null, custom_addon_name: j.custom_addon_name || null,
       custom_price: j.custom_price || 0, custom_comm: j.custom_comm || 0, discount: j.discount || 0,
@@ -119,7 +119,7 @@ app.post('/api/jobs', (req, res) => {
 });
 
 app.put('/api/jobs/:id', (req, res) => {
-  const fields = ['time_in', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override',
+  const fields = ['time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override',
     'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash',
     'payment_method', 'detailer', 'remarks'];
   const updates = fields.filter(f => f in req.body);
@@ -260,18 +260,38 @@ app.post('/api/employees', (req, res) => {
   res.json(db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid));
 });
 
+app.put('/api/employees/:id', (req, res) => {
+  const fields = ['name', 'rate_per_day', 'construction_rate'];
+  const updates = fields.filter(f => f in req.body);
+  if (!updates.length) return res.status(400).json({ error: 'No employee fields supplied' });
+  const values = { ...req.body, id: req.params.id };
+  for (const field of ['rate_per_day', 'construction_rate']) {
+    if (field in values) values[field] = Number(values[field] || 0);
+  }
+  db.prepare(`UPDATE employees SET ${updates.map(f => `${f}=@${f}`).join(', ')} WHERE id=@id`).run(values);
+  res.json(db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id));
+});
+
+app.delete('/api/employees/:id', (req, res) => {
+  db.prepare('UPDATE employees SET active=0 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/payroll/:periodLabel', (req, res) => {
   const employees = db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all();
   const entries = db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(req.params.periodLabel);
   const merged = employees.map(emp => {
     const entry = entries.find(e => e.employee_id === emp.id) || {
-      employee_id: emp.id, period_label: req.params.periodLabel, days_worked: 0, day_off: 0,
+      employee_id: emp.id, period_label: req.params.periodLabel, days_worked: 0, half_days: 0,
+      absences: 0, day_off: 0, ot_hours: 0,
       construction_days: 0, deductions: 0, notes: '',
     };
     const regularPay = Number(emp.rate_per_day) * Number(entry.days_worked || 0);
+    const halfDayPay = Number(emp.rate_per_day) * Number(entry.half_days || 0) * 0.5;
+    const otPay = Number(emp.rate_per_day) / 8 * 1.25 * Number(entry.ot_hours || 0);
     const constructionPay = Number(emp.construction_rate) * Number(entry.construction_days || 0);
-    const finalSalary = regularPay + constructionPay - Number(entry.deductions || 0);
-    return { employee: emp, entry, regularPay, constructionPay, finalSalary };
+    const finalSalary = regularPay + halfDayPay + otPay + constructionPay - Number(entry.deductions || 0);
+    return { employee: emp, entry, regularPay, halfDayPay, otPay, constructionPay, finalSalary };
   });
   const totalNetPay = merged.reduce((s, m) => s + m.finalSalary, 0);
   res.json({ periodLabel: req.params.periodLabel, rows: merged, totalNetPay });
@@ -280,17 +300,37 @@ app.get('/api/payroll/:periodLabel', (req, res) => {
 app.put('/api/payroll/:periodLabel/:employeeId', (req, res) => {
   const { periodLabel, employeeId } = req.params;
   const b = req.body;
-  db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, days_worked, day_off, construction_days, deductions, notes)
-    VALUES (@employee_id,@period_label,@days_worked,@day_off,@construction_days,@deductions,@notes)
-    ON CONFLICT(id) DO NOTHING`);
   const existing = db.prepare('SELECT id FROM payroll_entries WHERE employee_id=? AND period_label=?').get(employeeId, periodLabel);
+
   if (existing) {
-    db.prepare(`UPDATE payroll_entries SET days_worked=@days_worked, day_off=@day_off,
+    db.prepare(`UPDATE payroll_entries SET days_worked=@days_worked, half_days=@half_days,
+      absences=@absences, day_off=@day_off, ot_hours=@ot_hours,
       construction_days=@construction_days, deductions=@deductions, notes=@notes WHERE id=@id`)
-      .run({ ...b, id: existing.id });
+      .run({
+        days_worked: Number(b.days_worked || 0),
+        half_days: Number(b.half_days || 0),
+        absences: Number(b.absences || 0),
+        day_off: Number(b.day_off || 0),
+        ot_hours: Number(b.ot_hours || 0),
+        construction_days: Number(b.construction_days || 0),
+        deductions: Number(b.deductions || 0),
+        notes: b.notes || '',
+        id: existing.id,
+      });
   } else {
-    db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, days_worked, day_off, construction_days, deductions, notes)
-      VALUES (?,?,?,?,?,?,?)`).run(employeeId, periodLabel, b.days_worked || 0, b.day_off || 0, b.construction_days || 0, b.deductions || 0, b.notes || '');
+    db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, days_worked, half_days, absences, day_off, ot_hours, construction_days, deductions, notes)
+      VALUES (@employee_id,@period_label,@days_worked,@half_days,@absences,@day_off,@ot_hours,@construction_days,@deductions,@notes)`).run({
+        employee_id: Number(employeeId),
+        period_label: periodLabel,
+        days_worked: Number(b.days_worked || 0),
+        half_days: Number(b.half_days || 0),
+        absences: Number(b.absences || 0),
+        day_off: Number(b.day_off || 0),
+        ot_hours: Number(b.ot_hours || 0),
+        construction_days: Number(b.construction_days || 0),
+        deductions: Number(b.deductions || 0),
+        notes: b.notes || '',
+      });
   }
   res.json({ ok: true });
 });

@@ -55,10 +55,12 @@ function renderDailyMetrics(jobs) {
   const gross = serviced.reduce((s, j) => s + j.computed.totalPrice, 0);
   const comm = serviced.reduce((s, j) => s + j.computed.detailerComm, 0);
   const net = gross - comm;
+  const gcashTips = serviced.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
   document.getElementById('daily-metrics').innerHTML = `
     <div class="metric"><div class="label">Vehicles Serviced</div><div class="value">${serviced.length}</div></div>
     <div class="metric"><div class="label">Gross Sales</div><div class="value">${peso(gross)}</div></div>
     <div class="metric"><div class="label">Total Commissions</div><div class="value amber">${peso(comm)}</div></div>
+    <div class="metric"><div class="label">GCash Tips</div><div class="value teal">${peso(gcashTips)}</div></div>
     <div class="metric"><div class="label">Net Shop Revenue</div><div class="value teal">${peso(net)}</div></div>
   `;
 }
@@ -90,28 +92,33 @@ function rowHtml(j) {
   const c = j.computed;
   return `<tr data-id="${j.id}">
     <td class="jo-number">${j.jo_number || '—'}</td>
-    <td><input type="time" data-field="time_in" value="${j.time_in || ''}" style="width:100px"></td>
+    <td><input type="time" data-field="time_in" value="${j.time_in || ''}"></td>
+    <td><input type="time" data-field="time_out" value="${j.time_out || ''}"></td>
     <td>
-      <select data-field="vehicle_class" style="width:75px">
+      <select data-field="vehicle_class">
         <option value="">—</option>
         ${CLASSES.map(c2 => `<option value="${c2}" ${j.vehicle_class === c2 ? 'selected' : ''}>${c2}</option>`).join('')}
       </select>
     </td>
-    <td><input type="text" data-field="plate" value="${j.plate || ''}" style="width:110px"></td>
-    <td><select data-field="service_id" style="width:170px">${selectOptions(pricing.services, j.service_id, 'Select…')}</select></td>
-    <td><select data-field="addon_id" style="width:140px">${selectOptions(pricing.addons, j.addon_id, 'None')}</select></td>
+    <td><input type="text" data-field="plate" value="${j.plate || ''}"></td>
+    <td><select data-field="service_id">${selectOptions(pricing.services, j.service_id, 'Select…')}</select></td>
+    <td><select data-field="addon_id">${selectOptions(pricing.addons, j.addon_id, 'None')}</select></td>
     <td>
-      <div class="field-stack">
-        <input type="text" data-field="custom_addon_name" value="${j.custom_addon_name || ''}" placeholder="custom item" class="compact-input">
-        <input type="number" data-field="custom_price" value="${j.custom_price || ''}" placeholder="₱ price" class="mini-input compact-input">
-        <input type="number" data-field="custom_comm" value="${j.custom_comm || ''}" placeholder="comm" class="mini-input compact-input">
-      </div>
+      <details class="extras-menu">
+        <summary>${j.custom_addon_name || j.discount || j.tip_gcash ? 'Edit extras' : 'Add extras'}</summary>
+        <div class="extras-fields">
+          <input type="text" data-field="custom_addon_name" value="${j.custom_addon_name || ''}" placeholder="Custom item">
+          <input type="number" data-field="custom_price" value="${j.custom_price || ''}" placeholder="Custom price">
+          <input type="number" data-field="custom_comm" value="${j.custom_comm || ''}" placeholder="Custom comm.">
+          <input type="number" data-field="discount" value="${j.discount || ''}" placeholder="Discount">
+          <input type="number" data-field="tip_gcash" value="${j.tip_gcash || ''}" placeholder="GCash tip">
+        </div>
+      </details>
     </td>
-    <td class="num"><input type="number" data-field="discount" value="${j.discount || ''}" class="mini-input" style="width:70px"></td>
-    <td><select data-field="payment_method" style="width:90px">
-        ${['Cash', 'GCash', 'Maya'].map(p => `<option ${j.payment_method === p ? 'selected' : ''}>${p}</option>`).join('')}
+    <td><select data-field="payment_method">
+        ${['Cash', 'GCash'].map(p => `<option ${j.payment_method === p ? 'selected' : ''}>${p}</option>`).join('')}
       </select></td>
-    <td><input type="text" data-field="detailer" value="${j.detailer || ''}" style="width:90px"></td>
+    <td><input type="text" data-field="detailer" value="${j.detailer || ''}"></td>
     <td class="num money">${peso(c.totalPrice)}</td>
     <td class="num money amber-text">${peso(c.detailerComm)}</td>
     <td class="num money pos">${peso(c.netRevenue)}</td>
@@ -129,6 +136,7 @@ document.getElementById('add-job-btn').addEventListener('click', async () => {
     service_id: document.getElementById('new-job-service').value || null,
     addon_id: document.getElementById('new-job-addon').value || null,
     payment_method: document.getElementById('new-job-payment').value || 'Cash',
+    tip_gcash: Number(document.getElementById('new-job-tip').value || 0),
     detailer: document.getElementById('new-job-detailer').value || null,
   };
 
@@ -142,6 +150,7 @@ document.getElementById('add-job-btn').addEventListener('click', async () => {
   document.getElementById('new-job-service').value = '';
   document.getElementById('new-job-addon').value = '';
   document.getElementById('new-job-class').value = '';
+  document.getElementById('new-job-tip').value = '';
   loadDaily();
 });
 
@@ -344,27 +353,48 @@ async function loadPayroll() {
   const tbody = document.getElementById('payroll-tbody');
   tbody.innerHTML = rows.map(r => `
     <tr data-emp="${r.employee.id}">
-      <td>${r.employee.name}</td>
-      <td class="num money">${peso(r.employee.rate_per_day)}</td>
+      <td><input type="text" data-employee-field="name" value="${r.employee.name}" class="employee-name"></td>
+      <td class="num"><input type="number" class="mini-input" data-employee-field="rate_per_day" value="${r.employee.rate_per_day}"></td>
       <td class="num"><input type="number" class="mini-input" data-field="days_worked" value="${r.entry.days_worked}"></td>
+      <td class="num"><input type="number" class="mini-input" data-field="half_days" value="${r.entry.half_days || 0}"></td>
+      <td class="num"><input type="number" class="mini-input" data-field="ot_hours" value="${r.entry.ot_hours || 0}"></td>
+      <td class="num"><input type="number" class="mini-input" data-field="absences" value="${r.entry.absences || 0}"></td>
       <td class="num"><input type="number" class="mini-input" data-field="day_off" value="${r.entry.day_off}"></td>
       <td class="num"><input type="number" class="mini-input" data-field="construction_days" value="${r.entry.construction_days}"></td>
-      <td class="num money">${peso(r.employee.construction_rate)}</td>
+      <td class="num"><input type="number" class="mini-input" data-employee-field="construction_rate" value="${r.employee.construction_rate}"></td>
       <td class="num"><input type="number" class="mini-input" data-field="deductions" value="${r.entry.deductions}"></td>
       <td class="num money pos">${peso(r.finalSalary)}</td>
+      <td><input type="text" data-field="notes" value="${r.entry.notes || ''}" placeholder="Optional" class="payroll-note"></td>
+      <td><button class="icon-btn remove-employee" title="Deactivate employee">✕</button></td>
     </tr>`).join('');
   tbody.querySelectorAll('input').forEach(el => el.addEventListener('change', () => savePayrollCell(el)));
+  tbody.querySelectorAll('[data-employee-field]').forEach(el => el.addEventListener('change', () => saveEmployeeCell(el)));
+  tbody.querySelectorAll('.remove-employee').forEach(el => el.addEventListener('click', () => removeEmployee(el.closest('tr').dataset.emp)));
   document.getElementById('payroll-total').textContent = peso(totalNetPay);
 }
 
 async function savePayrollCell(el) {
   const empId = el.closest('tr').dataset.emp;
-  const row = [...document.querySelectorAll(`tr[data-emp="${empId}"] input`)];
+  const row = [...document.querySelectorAll(`tr[data-emp="${empId}"] [data-field]`)];
   const body = {};
-  row.forEach(i => body[i.dataset.field] = Number(i.value || 0));
+  row.forEach(i => body[i.dataset.field] = i.dataset.field === 'notes' ? i.value : Number(i.value || 0));
   await fetch(`/api/payroll/${encodeURIComponent(payrollPeriodEl.value)}/${empId}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
+  loadPayroll();
+}
+
+async function saveEmployeeCell(el) {
+  await fetch(`/api/employees/${el.closest('tr').dataset.emp}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [el.dataset.employeeField]: el.dataset.employeeField === 'name' ? el.value.trim() : Number(el.value || 0) }),
+  });
+  loadPayroll();
+}
+
+async function removeEmployee(id) {
+  if (!confirm('Remove this employee from active payroll?')) return;
+  await fetch(`/api/employees/${id}`, { method: 'DELETE' });
   loadPayroll();
 }
 

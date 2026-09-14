@@ -90,6 +90,9 @@ input:focus, select:focus, textarea:focus{outline:2px solid var(--teal-dim); out
 
 .section-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;}
 .section-header h2{margin:0;}
+.subtle-badge{
+  display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:4px 9px; background:rgba(47,217,176,0.1); color:var(--teal); border:1px solid rgba(47,217,176,0.2); font-size:10px; text-transform:uppercase; letter-spacing:0.08em;
+}
 .entry-grid{
   display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; align-items:end;
 }
@@ -124,20 +127,32 @@ button.icon-btn:hover{color:var(--red);}
 
 /* ---------- Table ---------- */
 .table-wrap{overflow:auto; border:1px solid var(--border); border-radius:8px; background:rgba(14,17,22,0.6);}
+.daily-table{width:100%; table-layout:fixed; font-size:11px;}
+.daily-table th,.daily-table td{padding:8px 5px; white-space:nowrap;}
+.daily-table th:nth-child(1){width:58px}.daily-table th:nth-child(2),.daily-table th:nth-child(3){width:62px}
+.daily-table th:nth-child(4){width:55px}.daily-table th:nth-child(5){width:92px}.daily-table th:nth-child(6){width:135px}
+.daily-table th:nth-child(7){width:115px}.daily-table th:nth-child(8){width:78px}.daily-table th:nth-child(9){width:70px}
+.daily-table th:nth-child(10){width:82px}.daily-table th:nth-child(11),.daily-table th:nth-child(12),.daily-table th:nth-child(13){width:76px}.daily-table th:nth-child(14){width:28px}
+.daily-table input,.daily-table select{min-width:0; padding:6px 4px; font-size:11px;}
+.daily-table .jo-number{white-space:normal; line-height:1.05;}
+.extras-menu{position:relative; white-space:normal;}
+.extras-menu summary{cursor:pointer; color:var(--teal); font-size:10px;}
+.extras-fields{position:absolute; z-index:4; top:22px; right:0; width:160px; display:grid; gap:5px; padding:8px; background:var(--surface-alt); border:1px solid var(--border); border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,.35);}
+.extras-fields input{width:100%;}
 .matrix-table{width:100%; border-collapse:separate; border-spacing:0; font-size:12px; min-width:900px;}
 .matrix-table thead th{position:sticky; top:0; z-index:2; background:rgba(25,30,38,0.96); backdrop-filter:blur(10px);}
 .matrix-table th{
   text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
-  color:var(--muted); font-weight:600; padding:10px 8px; border-bottom:1px solid var(--border); border-right:1px solid var(--border);
+  color:var(--muted); font-weight:600; padding:14px 12px; border-bottom:1px solid var(--border); border-right:1px solid var(--border);
 }
-.matrix-table td{padding:8px 8px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); vertical-align:middle; background:rgba(25,30,38,0.2);}
+.matrix-table td{padding:12px 10px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); vertical-align:middle; background:rgba(25,30,38,0.2);}
 .matrix-table tr:last-child td{border-bottom:none;}
 .matrix-table tr:hover td{background:rgba(36,42,52,0.6);}
 .matrix-table .sticky-name{position:sticky; left:0; z-index:1; min-width:170px; background:rgba(25,30,38,0.96);}
 .matrix-table .sub-head{font-size:9px; color:var(--muted);}
 .matrix-table .group-head{background:rgba(47,217,176,0.08); color:var(--text); text-align:center;}
 .table-actions{display:flex; justify-content:center;}
-.matrix-table input{min-width:52px; width:100%; background:rgba(36,42,52,0.8); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:6px 6px; font-family:var(--mono); text-align:right;}
+.matrix-table input{min-width:76px; width:100%; background:rgba(36,42,52,0.8); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:9px 8px; font-family:var(--mono); text-align:right;}
 .matrix-table input:focus{outline:2px solid rgba(47,217,176,0.35); outline-offset:1px;}
 .matrix-table tbody td:first-child input{max-width:170px; text-align:left; font-family:'Inter', sans-serif;}
 td.num, th.num{text-align:right; font-family:var(--mono);}
@@ -164,6 +179,9 @@ tbody tr:hover{background:var(--surface-alt);}
 .variance-bad{color:var(--red); font-weight:600;}
 
 .mini-input{width:90px;}
+.payroll-note{min-width:150px;}
+.employee-name{min-width:110px;}
+@media (max-width: 1050px){.daily-table{min-width:1060px; table-layout:auto;}.daily-table th,.daily-table td{padding:8px;}}
 .form-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:10px; align-items:end;}
 .form-grid label{display:block; font-size:11px; color:var(--muted); margin-bottom:4px;}
 

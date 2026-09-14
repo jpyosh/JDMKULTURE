@@ -46,6 +46,7 @@
       <div class="card">
         <div class="section-header">
           <h2>Quick Job Entry</h2>
+          <span class="subtle-badge">Service + payment + tip</span>
         </div>
         <div class="entry-grid">
           <div>
@@ -81,8 +82,11 @@
             <select id="new-job-payment">
               <option value="Cash">Cash</option>
               <option value="GCash">GCash</option>
-              <option value="Maya">Maya</option>
             </select>
+          </div>
+          <div>
+            <label>GCash Tip</label>
+            <input type="number" id="new-job-tip" min="0" step="0.01" placeholder="0.00">
           </div>
           <div>
             <label>Detailer</label>
@@ -99,12 +103,11 @@
           <h2>Job Orders</h2>
         </div>
         <div style="overflow-x:auto;">
-          <table>
+          <table class="daily-table">
             <thead>
               <tr>
-                <th>JO#</th><th>Time</th><th>Class</th><th>Plate</th><th>Service</th><th>Add-On</th>
-                <th>Custom</th><th class="num">Discount</th><th>Pay</th><th>Detailer</th>
-                <th class="num">Total</th><th class="num">Comm</th><th class="num">Net</th><th></th>
+                <th>JO#</th><th>In</th><th>Out</th><th>Class</th><th>Plate</th><th>Service</th><th>Add-On</th>
+                <th>Extras</th><th>Pay</th><th>Detailer</th><th class="num">Total</th><th class="num">Comm</th><th class="num">Net</th><th></th>
               </tr>
             </thead>
             <tbody id="jobs-tbody"></tbody>
@@ -266,7 +269,7 @@
       <div class="view-header">
         <div>
           <h1>Payroll</h1>
-          <div class="desc">Final Salary = (Rate/Day × Days Worked) + (Construction Rate × Construction Days) − Deductions.</div>
+          <div class="desc">Track attendance and compute pay from full days, half days, overtime, construction work, and deductions.</div>
         </div>
         <div>
           <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Pay Period Label</label>
@@ -277,8 +280,9 @@
         <div style="overflow-x:auto;">
           <table>
             <thead>
-              <tr><th>Name</th><th class="num">Rate/Day</th><th class="num">Days Worked</th><th class="num">Day Off</th>
-                  <th class="num">Constr. Days</th><th class="num">Constr. Rate</th><th class="num">Deductions</th><th class="num">Final Salary</th></tr>
+                  <tr><th>Name</th><th class="num">Rate/Day</th><th class="num">Full Days</th><th class="num">Half Days</th>
+                  <th class="num">OT Hours</th><th class="num">Absences</th><th class="num">Days Off</th><th class="num">Constr. Days</th>
+                    <th class="num">Constr. Rate</th><th class="num">Deductions</th><th class="num">Final Salary</th><th>Notes</th><th></th></tr>
             </thead>
             <tbody id="payroll-tbody"></tbody>
           </table>

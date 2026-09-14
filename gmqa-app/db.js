@@ -40,6 +40,7 @@ function init() {
       jo_number TEXT,
       job_date TEXT NOT NULL,
       time_in TEXT,
+      time_out TEXT,
       vehicle_class TEXT,
       plate TEXT,
       service_id INTEGER,
@@ -87,7 +88,10 @@ function init() {
       employee_id INTEGER NOT NULL,
       period_label TEXT NOT NULL,
       days_worked REAL DEFAULT 0,
+      half_days REAL DEFAULT 0,
+      absences REAL DEFAULT 0,
       day_off INTEGER DEFAULT 0,
+      ot_hours REAL DEFAULT 0,
       construction_days REAL DEFAULT 0,
       deductions REAL DEFAULT 0,
       notes TEXT
@@ -110,6 +114,10 @@ function ensureSchemaColumns() {
   addColumnIfMissing('services', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('addons', 'price_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('addons', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
+  addColumnIfMissing('jobs', 'time_out', 'TEXT');
+  addColumnIfMissing('payroll_entries', 'half_days', 'REAL DEFAULT 0');
+  addColumnIfMissing('payroll_entries', 'absences', 'REAL DEFAULT 0');
+  addColumnIfMissing('payroll_entries', 'ot_hours', 'REAL DEFAULT 0');
 }
 
 function seedIfEmpty() {
