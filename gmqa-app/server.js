@@ -4,10 +4,11 @@ const path = require('path');
 const { db, init, CLASSES } = require('./db');
 
 fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-init();
+const ready = Promise.resolve().then(() => init());
 
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => ready.then(() => next()).catch(next));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- helpers ----------
@@ -21,9 +22,9 @@ function commFor(row, cls) {
 
 // Computes total price + commission for one job row using live lookups
 // (mirrors the sheet's INDEX/MATCH against Pricing Matrix / Commission Matrix).
-function computeJob(job) {
-  const service = job.service_id ? db.prepare('SELECT * FROM services WHERE id=?').get(job.service_id) : null;
-  const addon = job.addon_id ? db.prepare('SELECT * FROM addons WHERE id=?').get(job.addon_id) : null;
+async function computeJob(job) {
+  const service = job.service_id ? await db.prepare('SELECT * FROM services WHERE id=?').get(job.service_id) : null;
+  const addon = job.addon_id ? await db.prepare('SELECT * FROM addons WHERE id=?').get(job.addon_id) : null;
   const cls = job.vehicle_class;
 
   const basePrice = priceFor(service, cls);
@@ -49,58 +50,58 @@ function joNumber(dateStr, seq) {
 
 // ---------- Pricing Matrix ----------
 
-app.get('/api/pricing', (req, res) => {
-  const services = db.prepare('SELECT * FROM services ORDER BY id').all();
-  const addons = db.prepare('SELECT * FROM addons ORDER BY id').all();
+app.get('/api/pricing', async (req, res) => {
+  const services = await db.prepare('SELECT * FROM services ORDER BY id').all();
+  const addons = await db.prepare('SELECT * FROM addons ORDER BY id').all();
   res.json({ classes: CLASSES, services, addons });
 });
 
-app.put('/api/pricing/service/:id', (req, res) => {
+app.put('/api/pricing/service/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   const set = updates.map(f => `${f}=@${f}`).join(', ');
-  db.prepare(`UPDATE services SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
-  res.json(db.prepare('SELECT * FROM services WHERE id=?').get(req.params.id));
+  await db.prepare(`UPDATE services SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
+  res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(req.params.id));
 });
 
-app.post('/api/pricing/service', (req, res) => {
+app.post('/api/pricing/service', async (req, res) => {
   const s = req.body;
-  const info = db.prepare(`INSERT INTO services (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
+  const info = await db.prepare(`INSERT INTO services (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(s);
-  res.json(db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
+  res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
 });
 
-app.put('/api/pricing/addon/:id', (req, res) => {
+app.put('/api/pricing/addon/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   const set = updates.map(f => `${f}=@${f}`).join(', ');
-  db.prepare(`UPDATE addons SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
-  res.json(db.prepare('SELECT * FROM addons WHERE id=?').get(req.params.id));
+  await db.prepare(`UPDATE addons SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
+  res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(req.params.id));
 });
 
-app.post('/api/pricing/addon', (req, res) => {
+app.post('/api/pricing/addon', async (req, res) => {
   const a = req.body;
-  const info = db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
+  const info = await db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(a);
-  res.json(db.prepare('SELECT * FROM addons WHERE id=?').get(info.lastInsertRowid));
+  res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(info.lastInsertRowid));
 });
 
 // ---------- Daily Log / Jobs ----------
 
-app.get('/api/jobs/:date', (req, res) => {
-  const jobs = db.prepare('SELECT * FROM jobs WHERE job_date=? ORDER BY id').all(req.params.date);
-  const enriched = jobs.map(j => ({ ...j, computed: computeJob(j) }));
+app.get('/api/jobs/:date', async (req, res) => {
+  const jobs = await db.prepare('SELECT * FROM jobs WHERE job_date=? ORDER BY id').all(req.params.date);
+  const enriched = await Promise.all(jobs.map(async j => ({ ...j, computed: await computeJob(j) })));
   res.json(enriched);
 });
 
-app.post('/api/jobs', (req, res) => {
+app.post('/api/jobs', async (req, res) => {
   const j = req.body;
   if (!j.job_date) return res.status(400).json({ error: 'job_date required' });
 
-  const seq = db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date).c + 1;
+  const seq = Number((await db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date)).c) + 1;
   const jo_number = joNumber(j.job_date, seq);
 
-  const info = db.prepare(`INSERT INTO jobs
+  const info = await db.prepare(`INSERT INTO jobs
     (jo_number, job_date, time_in, time_out, vehicle_class, plate, service_id, addon_id, addon_price_override,
      custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method, detailer, remarks)
     VALUES (@jo_number,@job_date,@time_in,@time_out,@vehicle_class,@plate,@service_id,@addon_id,@addon_price_override,
@@ -114,72 +115,73 @@ app.post('/api/jobs', (req, res) => {
       payment_method: j.payment_method || 'Cash', detailer: j.detailer || null, remarks: j.remarks || null,
     });
 
-  const job = db.prepare('SELECT * FROM jobs WHERE id=?').get(info.lastInsertRowid);
-  res.json({ ...job, computed: computeJob(job) });
+  const job = await db.prepare('SELECT * FROM jobs WHERE id=?').get(info.lastInsertRowid);
+  res.json({ ...job, computed: await computeJob(job) });
 });
 
-app.put('/api/jobs/:id', (req, res) => {
+app.put('/api/jobs/:id', async (req, res) => {
   const fields = ['time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override',
     'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash',
     'payment_method', 'detailer', 'remarks'];
   const updates = fields.filter(f => f in req.body);
   if (updates.length) {
     const set = updates.map(f => `${f}=@${f}`).join(', ');
-    db.prepare(`UPDATE jobs SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
+    await db.prepare(`UPDATE jobs SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   }
-  const job = db.prepare('SELECT * FROM jobs WHERE id=?').get(req.params.id);
-  res.json({ ...job, computed: computeJob(job) });
+  const job = await db.prepare('SELECT * FROM jobs WHERE id=?').get(req.params.id);
+  res.json({ ...job, computed: await computeJob(job) });
 });
 
-app.delete('/api/jobs/:id', (req, res) => {
-  db.prepare('DELETE FROM jobs WHERE id=?').run(req.params.id);
+app.delete('/api/jobs/:id', async (req, res) => {
+  await db.prepare('DELETE FROM jobs WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ---------- Expenses ----------
 
-app.get('/api/expenses/:date', (req, res) => {
-  res.json(db.prepare('SELECT * FROM expenses WHERE expense_date=? ORDER BY id').all(req.params.date));
+app.get('/api/expenses/:date', async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM expenses WHERE expense_date=? ORDER BY id').all(req.params.date));
 });
 
-app.post('/api/expenses', (req, res) => {
+app.post('/api/expenses', async (req, res) => {
   const e = req.body;
-  const info = db.prepare('INSERT INTO expenses (expense_date, side, description, amount) VALUES (?,?,?,?)')
+  const info = await db.prepare('INSERT INTO expenses (expense_date, side, description, amount) VALUES (?,?,?,?)')
     .run(e.expense_date, e.side, e.description || '', e.amount || 0);
-  res.json(db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid));
+  res.json(await db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid));
 });
 
-app.delete('/api/expenses/:id', (req, res) => {
-  db.prepare('DELETE FROM expenses WHERE id=?').run(req.params.id);
+app.delete('/api/expenses/:id', async (req, res) => {
+  await db.prepare('DELETE FROM expenses WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ---------- Daily meta (float / actual counts) ----------
 
-app.get('/api/meta/:date', (req, res) => {
-  const meta = db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date);
+app.get('/api/meta/:date', async (req, res) => {
+  const meta = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date);
   res.json(meta || { job_date: req.params.date, supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0 });
 });
 
-app.put('/api/meta/:date', (req, res) => {
+app.put('/api/meta/:date', async (req, res) => {
   const m = req.body;
-  db.prepare(`INSERT INTO daily_meta (job_date, supervisor, cash_float, actual_cash, actual_gcash, gcash_tips_to_distribute)
+  await db.prepare(`INSERT INTO daily_meta (job_date, supervisor, cash_float, actual_cash, actual_gcash, gcash_tips_to_distribute)
     VALUES (@job_date,@supervisor,@cash_float,@actual_cash,@actual_gcash,@gcash_tips_to_distribute)
     ON CONFLICT(job_date) DO UPDATE SET supervisor=excluded.supervisor, cash_float=excluded.cash_float,
       actual_cash=excluded.actual_cash, actual_gcash=excluded.actual_gcash,
       gcash_tips_to_distribute=excluded.gcash_tips_to_distribute`)
     .run({ job_date: req.params.date, supervisor: m.supervisor || '', cash_float: m.cash_float || 0,
       actual_cash: m.actual_cash, actual_gcash: m.actual_gcash, gcash_tips_to_distribute: m.gcash_tips_to_distribute || 0 });
-  res.json(db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date));
+  res.json(await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date));
 });
 
 // ---------- EOD Dashboard (the fixed reconciliation) ----------
 
-app.get('/api/eod/:date', (req, res) => {
+app.get('/api/eod/:date', async (req, res) => {
   const date = req.params.date;
-  const jobs = db.prepare('SELECT * FROM jobs WHERE job_date=?').all(date).map(j => ({ ...j, computed: computeJob(j) }));
-  const expenses = db.prepare('SELECT * FROM expenses WHERE expense_date=?').all(date);
-  const meta = db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(date)
+  const rawJobs = await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(date);
+  const jobs = await Promise.all(rawJobs.map(async j => ({ ...j, computed: await computeJob(j) })));
+  const expenses = await db.prepare('SELECT * FROM expenses WHERE expense_date=?').all(date);
+  const meta = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(date)
     || { cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, supervisor: '' };
 
   const servicedJobs = jobs.filter(j => j.vehicle_class);
@@ -222,21 +224,21 @@ app.get('/api/eod/:date', (req, res) => {
 
 // ---------- Weekly rollup ----------
 
-app.get('/api/weekly', (req, res) => {
+app.get('/api/weekly', async (req, res) => {
   const { start, end } = req.query;
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT job_date,
       SUM(CASE WHEN vehicle_class IS NOT NULL AND vehicle_class != '' THEN 1 ELSE 0 END) as vehicles
     FROM jobs WHERE job_date BETWEEN ? AND ? GROUP BY job_date`).all(start, end);
 
-  const days = rows.map(r => {
-    const jobs = db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date)
-      .filter(j => j.vehicle_class).map(j => ({ ...j, computed: computeJob(j) }));
+  const days = await Promise.all(rows.map(async r => {
+    const jobs = (await Promise.all((await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date))
+      .filter(j => j.vehicle_class).map(async j => ({ ...j, computed: await computeJob(j) }))));
     const gross = jobs.reduce((s, j) => s + j.computed.totalPrice, 0);
     const comm = jobs.reduce((s, j) => s + j.computed.detailerComm, 0);
-    const expenses = db.prepare('SELECT SUM(amount) t FROM expenses WHERE expense_date=?').get(r.job_date).t || 0;
+    const expenses = (await db.prepare('SELECT SUM(amount) t FROM expenses WHERE expense_date=?').get(r.job_date)).t || 0;
     return { date: r.job_date, vehicles: r.vehicles, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
-  });
+  }));
 
   const totals = days.reduce((a, d) => ({
     vehicles: a.vehicles + d.vehicles, grossSales: a.grossSales + d.grossSales,
@@ -249,18 +251,18 @@ app.get('/api/weekly', (req, res) => {
 
 // ---------- Employees & Payroll ----------
 
-app.get('/api/employees', (req, res) => {
-  res.json(db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all());
+app.get('/api/employees', async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all());
 });
 
-app.post('/api/employees', (req, res) => {
+app.post('/api/employees', async (req, res) => {
   const e = req.body;
-  const info = db.prepare('INSERT INTO employees (name, rate_per_day, construction_rate) VALUES (?,?,?)')
+  const info = await db.prepare('INSERT INTO employees (name, rate_per_day, construction_rate) VALUES (?,?,?)')
     .run(e.name, e.rate_per_day || 0, e.construction_rate || 0);
-  res.json(db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid));
+  res.json(await db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid));
 });
 
-app.put('/api/employees/:id', (req, res) => {
+app.put('/api/employees/:id', async (req, res) => {
   const fields = ['name', 'role', 'rate_per_day', 'construction_rate'];
   const updates = fields.filter(f => f in req.body);
   if (!updates.length) return res.status(400).json({ error: 'No employee fields supplied' });
@@ -268,12 +270,12 @@ app.put('/api/employees/:id', (req, res) => {
   for (const field of ['rate_per_day', 'construction_rate']) {
     if (field in values) values[field] = Number(values[field] || 0);
   }
-  db.prepare(`UPDATE employees SET ${updates.map(f => `${f}=@${f}`).join(', ')} WHERE id=@id`).run(values);
-  res.json(db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id));
+  await db.prepare(`UPDATE employees SET ${updates.map(f => `${f}=@${f}`).join(', ')} WHERE id=@id`).run(values);
+  res.json(await db.prepare('SELECT * FROM employees WHERE id=?').get(req.params.id));
 });
 
-app.delete('/api/employees/:id', (req, res) => {
-  db.prepare('UPDATE employees SET active=0 WHERE id=?').run(req.params.id);
+app.delete('/api/employees/:id', async (req, res) => {
+  await db.prepare('UPDATE employees SET active=0 WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -296,9 +298,9 @@ function attendanceObject(entry) {
   try { return JSON.parse(entry.attendance || '{}'); } catch (_) { return {}; }
 }
 
-app.get('/api/payroll/:periodLabel', (req, res) => {
-  const employees = db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all();
-  const entries = db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(req.params.periodLabel);
+app.get('/api/payroll/:periodLabel', async (req, res) => {
+  const employees = await db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all();
+  const entries = await db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(req.params.periodLabel);
   const merged = employees.map(emp => {
     const entry = entries.find(e => e.employee_id === emp.id) || {
       employee_id: emp.id, period_label: req.params.periodLabel, attendance: '{}', days_worked: 0, half_days: 0,
@@ -326,13 +328,13 @@ app.get('/api/payroll/:periodLabel', (req, res) => {
   res.json({ periodLabel: req.params.periodLabel, rows: merged, totalNetPay });
 });
 
-app.put('/api/payroll/:periodLabel/:employeeId', (req, res) => {
+app.put('/api/payroll/:periodLabel/:employeeId', async (req, res) => {
   const { periodLabel, employeeId } = req.params;
   const b = req.body;
-  const existing = db.prepare('SELECT id FROM payroll_entries WHERE employee_id=? AND period_label=?').get(employeeId, periodLabel);
+  const existing = await db.prepare('SELECT id FROM payroll_entries WHERE employee_id=? AND period_label=?').get(employeeId, periodLabel);
 
   if (existing) {
-    db.prepare(`UPDATE payroll_entries SET attendance=@attendance, days_worked=@days_worked, half_days=@half_days,
+    await db.prepare(`UPDATE payroll_entries SET attendance=@attendance, days_worked=@days_worked, half_days=@half_days,
       absences=@absences, day_off=@day_off, ot_hours=@ot_hours,
       cw_ot_hours=@cw_ot_hours, cn_ot_hours=@cn_ot_hours,
       construction_days=@construction_days, deductions=@deductions, notes=@notes WHERE id=@id`)
@@ -351,7 +353,7 @@ app.put('/api/payroll/:periodLabel/:employeeId', (req, res) => {
         id: existing.id,
       });
   } else {
-    db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, attendance, days_worked, half_days, absences, day_off, ot_hours, cw_ot_hours, cn_ot_hours, construction_days, deductions, notes)
+    await db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, attendance, days_worked, half_days, absences, day_off, ot_hours, cw_ot_hours, cn_ot_hours, construction_days, deductions, notes)
       VALUES (@employee_id,@period_label,@attendance,@days_worked,@half_days,@absences,@day_off,@ot_hours,@cw_ot_hours,@cn_ot_hours,@construction_days,@deductions,@notes)`).run({
         employee_id: Number(employeeId),
         period_label: periodLabel,
@@ -371,5 +373,9 @@ app.put('/api/payroll/:periodLabel/:employeeId', (req, res) => {
   res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`GM QA running on port ${PORT}`));
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`GM QA running on port ${PORT}`));
+}
+
+module.exports = app;

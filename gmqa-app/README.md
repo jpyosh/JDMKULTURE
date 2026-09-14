@@ -34,9 +34,9 @@ no longer depends on Google Sheets formulas at all.
 - **Payroll**: rate/day × days worked, plus construction days × construction rate, minus
   deductions, per pay period.
 
-Data lives in a small SQLite file (`data/gmqa.sqlite`) that the server creates automatically
-on first run. On a real host, keep this on a **persistent disk** (see deploy steps) so it
-isn't wiped on redeploy.
+Production uses Supabase Postgres through the server-only `DATABASE_URL` environment variable.
+Never commit, print, or put that connection string in frontend code. Without `DATABASE_URL`,
+local development keeps using the existing SQLite file at `data/gmqa.sqlite`.
 
 ## Run it locally first (optional, to see it before deploying)
 
@@ -50,54 +50,44 @@ npm start
 
 Then open `http://localhost:3000` in your browser.
 
-## Getting a real website URL (free, ~10 minutes) — Render.com
+To run locally against Supabase, export `DATABASE_URL` in the shell with the Supabase Postgres
+connection string and start the app. `.env.example` is a reference only; this app does not load
+dotenv files. Never commit the real connection string.
 
-Render is the simplest option because it supports a small **persistent disk**, which
-SQLite needs (unlike some free hosts that reset the filesystem on every deploy).
+## Import existing SQLite data
 
-1. **Put the code on GitHub.**
-   - Create a free GitHub account if you don't have one: https://github.com
-   - Create a new repository (e.g. `gm-qa-ops`), and upload this whole `gmqa-app` folder to
-     it (GitHub's web "Add file → Upload files" works fine, no command line needed).
+1. Create the tables by running `supabase/schema.sql` in the Supabase SQL Editor.
+2. Install dependencies with `npm install`.
+3. Set `DATABASE_URL` and, if needed, `SQLITE_PATH` in the shell. The default SQLite path is
+   `data/gmqa.sqlite`.
+4. Run `npm run migrate` from `gmqa-app`.
 
-2. **Create a Render account:** https://render.com — sign up free with GitHub.
+The migration preserves primary keys and foreign-key relationships, is transactional, and does
+not run automatically. It uses the existing `better-sqlite3` package only for this migration and
+does not require or accept credentials on the command line.
 
-3. **New → Web Service** → connect your `gm-qa-ops` repository.
+## Deploy to Vercel
 
-4. Fill in:
-   - **Name:** `gm-qa` (this becomes part of your URL)
-   - **Runtime:** Node
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-   - **Instance Type:** Free
+1. Import the repository into Vercel and set the project root to `gmqa-app`.
+2. Add `DATABASE_URL` as a Vercel Production environment variable. Treat it as a secret and do
+   not add it to Git, `vercel.json`, or browser JavaScript.
+3. Deploy. `api/index.js` exports the Express app; `vercel.json` routes `/api/*` to it and serves
+   the existing `public` files.
 
-5. **Add a persistent disk** (so your data survives restarts/redeploys):
-   - In the service settings, go to **Disks → Add Disk**
-   - **Mount Path:** `/opt/render/project/src/data`
-   - **Size:** 1 GB is plenty
+The Supabase schema must be applied before the first production request. The application does not
+run migrations or seed production data at startup.
 
-6. Click **Create Web Service**. Render will build and deploy it — takes a few minutes.
-   You'll get a live URL like `https://gm-qa.onrender.com`. That's your website.
+## Legacy SQLite hosting
 
-7. Bookmark it, and optionally point your own domain at it later from Render's Settings →
-   Custom Domain tab if you buy one.
-
-**Note on the free tier:** Render's free web services sleep after 15 minutes of no traffic
-and take ~30–60 seconds to wake up on the next visit. That's fine for a shop tool used a
-few times a day. If that wake-up delay ever bothers your supervisors, Render's cheapest paid
-tier ($7/mo) removes it.
-
-### Alternative: Railway.app
-Same idea — connect the GitHub repo, it auto-detects Node, add a volume mounted at `/app/data`
-for the SQLite file. Railway's free tier is usage-credit based rather than always-free.
+The no-`DATABASE_URL` SQLite mode remains useful for local development. It is not suitable for
+Vercel's ephemeral filesystem; use Supabase Postgres for deployed data.
 
 ## Evolving it day by day
 
 Since this is now real code (not a spreadsheet), the way to "evolve" it is to tell me what
 you want changed or added — e.g. "add a loyalty punch-card counter per plate number," "add
 the Petty Cash Fund tracker from the handover doc," "add login so only supervisors can edit
-Pricing." I can write the change, you re-upload the updated files to GitHub, and Render
-redeploys automatically.
+Pricing." I can write the change, you push the update to GitHub, and Vercel redeploys automatically.
 
 ## Known gaps to fill in next
 - No login/authentication yet — anyone with the URL can edit everything. Worth adding once

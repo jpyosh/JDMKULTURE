@@ -1,3 +1,6 @@
+if (process.env.DATABASE_URL) {
+  module.exports = require('./pg-db');
+} else {
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
@@ -217,3 +220,4 @@ function seedIfEmpty() {
 }
 
 module.exports = { db, init, CLASSES };
+}

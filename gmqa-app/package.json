@@ -4,13 +4,15 @@
   "description": "JDM Kulture GM QA - Carwash Ops Console (Daily Log, Pricing Matrix, EOD Reconciliation, Payroll)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "migrate": "node scripts/migrate-sqlite.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "pg": "^8.16.3"
   }
 }
