@@ -44,7 +44,60 @@
       <div class="metrics-row" id="daily-metrics"></div>
 
       <div class="card">
-        <h2>Job Orders</h2>
+        <div class="section-header">
+          <h2>Quick Job Entry</h2>
+        </div>
+        <div class="entry-grid">
+          <div>
+            <label>Time</label>
+            <input type="time" id="new-job-time" value="12:00">
+          </div>
+          <div>
+            <label>Vehicle Class</label>
+            <select id="new-job-class">
+              <option value="">Select</option>
+              <option value="S">S</option>
+              <option value="M">M</option>
+              <option value="L">L</option>
+              <option value="XL">XL</option>
+              <option value="MOTO">MOTO</option>
+              <option value="BIG_MOTO">BIG MOTO</option>
+            </select>
+          </div>
+          <div>
+            <label>Plate</label>
+            <input type="text" id="new-job-plate" placeholder="e.g. NDR7377">
+          </div>
+          <div>
+            <label>Service</label>
+            <select id="new-job-service"></select>
+          </div>
+          <div>
+            <label>Add-On</label>
+            <select id="new-job-addon"><option value="">None</option></select>
+          </div>
+          <div>
+            <label>Payment</label>
+            <select id="new-job-payment">
+              <option value="Cash">Cash</option>
+              <option value="GCash">GCash</option>
+              <option value="Maya">Maya</option>
+            </select>
+          </div>
+          <div>
+            <label>Detailer</label>
+            <input type="text" id="new-job-detailer" placeholder="Name">
+          </div>
+          <div class="submit-cell">
+            <button class="btn" id="add-job-btn">+ Add Job</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-header">
+          <h2>Job Orders</h2>
+        </div>
         <div style="overflow-x:auto;">
           <table>
             <thead>
@@ -57,9 +110,6 @@
             <tbody id="jobs-tbody"></tbody>
           </table>
         </div>
-        <div style="margin-top:14px;">
-          <button class="btn" id="add-job-btn">+ Add Job Order</button>
-        </div>
       </div>
     </section>
 
@@ -68,38 +118,67 @@
       <div class="view-header">
         <div>
           <h1>Pricing &amp; Commission Matrix</h1>
-          <div class="desc">The brain. Edit any cell — Daily Log pulls live from here.</div>
+          <div class="desc">The brain of the shop. Edit any value and the Daily Log updates instantly.</div>
         </div>
       </div>
 
+      <div class="pricing-summary">
+        <div class="summary-card">
+          <span>Services</span>
+          <strong id="pricing-service-count">0</strong>
+        </div>
+        <div class="summary-card">
+          <span>Add-Ons</span>
+          <strong id="pricing-addon-count">0</strong>
+        </div>
+        <div class="summary-card">
+          <span>Vehicle Classes</span>
+          <strong>6</strong>
+        </div>
+        <div class="summary-card accent">
+          <span>System</span>
+          <strong>Live Pricing</strong>
+        </div>
+      </div>
+
+      <div class="matrix-guide">
+        <span class="guide-pill">Price</span>
+        <span class="guide-pill muted">Commission</span>
+        <span class="guide-text">Tip: edit values directly in the table below. The log reads from this matrix automatically.</span>
+      </div>
+
       <div class="card">
-        <h2>Services</h2>
-        <div style="overflow-x:auto;">
-          <table id="services-table">
+        <div class="section-header">
+          <h2>Services</h2>
+          <button class="btn ghost" id="add-service-btn">+ Add Service</button>
+        </div>
+        <div class="table-wrap">
+          <table id="services-table" class="matrix-table">
             <thead>
-              <tr><th>Service Name</th><th colspan="5" style="text-align:center">Price</th><th colspan="5" style="text-align:center">Commission</th></tr>
-              <tr><th></th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th>
-                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th></tr>
+              <tr><th class="sticky-name">Service Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th></tr>
+              <tr><th class="sticky-name sub-head">&nbsp;</th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th>
+                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th></tr>
             </thead>
             <tbody id="services-tbody"></tbody>
           </table>
         </div>
-        <div style="margin-top:12px;"><button class="btn ghost" id="add-service-btn">+ Add Service</button></div>
       </div>
 
       <div class="card">
-        <h2>Add-Ons</h2>
-        <div style="overflow-x:auto;">
-          <table id="addons-table">
+        <div class="section-header">
+          <h2>Add-Ons</h2>
+          <button class="btn ghost" id="add-addon-btn">+ Add Add-On</button>
+        </div>
+        <div class="table-wrap">
+          <table id="addons-table" class="matrix-table">
             <thead>
-              <tr><th>Add-On Name</th><th colspan="5" style="text-align:center">Price</th><th colspan="5" style="text-align:center">Commission</th></tr>
-              <tr><th></th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th>
-                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th></tr>
+              <tr><th class="sticky-name">Add-On Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th></tr>
+              <tr><th class="sticky-name sub-head">&nbsp;</th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th>
+                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th></tr>
             </thead>
             <tbody id="addons-tbody"></tbody>
           </table>
         </div>
-        <div style="margin-top:12px;"><button class="btn ghost" id="add-addon-btn">+ Add Add-On</button></div>
       </div>
     </section>
 

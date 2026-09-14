@@ -1,12 +1,16 @@
 const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
+
+const dataDir = path.join(__dirname, 'data');
+fs.mkdirSync(dataDir, { recursive: true });
 
 // SQLite file lives next to the app so it persists on disk (Render/Railway with a
 // persistent volume, or just the local filesystem in dev).
-const db = new Database(path.join(__dirname, 'data', 'gmqa.sqlite'));
+const db = new Database(path.join(dataDir, 'gmqa.sqlite'));
 db.pragma('journal_mode = WAL');
 
-const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO'];
+const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO', 'BIG_MOTO'];
 
 function init() {
   db.exec(`
@@ -14,9 +18,9 @@ function init() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL,
       price_S REAL DEFAULT 0, price_M REAL DEFAULT 0, price_L REAL DEFAULT 0,
-      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0,
+      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0, price_BIG_MOTO REAL DEFAULT 0,
       comm_S REAL DEFAULT 0, comm_M REAL DEFAULT 0, comm_L REAL DEFAULT 0,
-      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0,
+      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0, comm_BIG_MOTO REAL DEFAULT 0,
       is_custom INTEGER DEFAULT 0,
       active INTEGER DEFAULT 1
     );
@@ -25,9 +29,9 @@ function init() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL,
       price_S REAL DEFAULT 0, price_M REAL DEFAULT 0, price_L REAL DEFAULT 0,
-      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0,
+      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0, price_BIG_MOTO REAL DEFAULT 0,
       comm_S REAL DEFAULT 0, comm_M REAL DEFAULT 0, comm_L REAL DEFAULT 0,
-      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0,
+      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0, comm_BIG_MOTO REAL DEFAULT 0,
       active INTEGER DEFAULT 1
     );
 
@@ -90,45 +94,55 @@ function init() {
     );
   `);
 
+  ensureSchemaColumns();
   seedIfEmpty();
+}
+
+function ensureSchemaColumns() {
+  const addColumnIfMissing = (table, column, type) => {
+    const exists = db.prepare(`PRAGMA table_info(${table})`).all().some(col => col.name === column);
+    if (!exists) {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
+    }
+  };
+
+  addColumnIfMissing('services', 'price_BIG_MOTO', 'REAL DEFAULT 0');
+  addColumnIfMissing('services', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
+  addColumnIfMissing('addons', 'price_BIG_MOTO', 'REAL DEFAULT 0');
+  addColumnIfMissing('addons', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
 }
 
 function seedIfEmpty() {
   const svcCount = db.prepare('SELECT COUNT(*) c FROM services').get().c;
   if (svcCount === 0) {
     const insertSvc = db.prepare(`INSERT INTO services
-      (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, is_custom)
-      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO, @is_custom)`);
+      (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO, is_custom)
+      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @price_BIG_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO, @comm_BIG_MOTO, @is_custom)`);
 
     const services = [
-      { name: 'Standard Wash', price: [250, 300, 350, 400, 150], comm: [0, 0, 0, 0, 0] },
-      { name: 'Premium Wash', price: [600, 650, 700, 750, 400], comm: [100, 100, 100, 100, 50] },
-      { name: 'Wash and Wax: MTX NanoSil', price: [600, 750, 900, 1050, 550], comm: [100, 100, 100, 100, 100] },
-      { name: 'Wash and Wax: Soft99 Fusso Coat', price: [800, 950, 1100, 1250, 550], comm: [150, 150, 150, 150, 100] },
-      { name: 'Quick Ext. Detail', price: [2500, 3000, 3500, 4000, 2000], comm: [500, 600, 700, 800, 400] },
-      { name: 'Paint Correction', price: [4500, 5000, 5500, 6000, 0], comm: [900, 1000, 1100, 1200, 0] },
-      { name: 'Glass Watermarks Removal', price: [2500, 3000, 3500, 4000, 0], comm: [500, 600, 700, 800, 0] },
-      { name: 'Full Exterior Detailing', price: [6500, 7500, 8500, 9500, 0], comm: [1300, 1500, 1700, 1900, 0] },
-      { name: 'Interior Detailing', price: [3000, 3500, 4000, 4500, 0], comm: [600, 700, 800, 900, 0] },
-      { name: 'Full Interior Detailing', price: [5500, 6000, 6500, 7000, 0], comm: [1100, 1200, 1300, 1400, 0] },
-      { name: 'Soft99 H9 Dual Layer Glass Coat', price: [20000, 23000, 26000, 31000, 0], comm: [3000, 3500, 4000, 4500, 0] },
-      { name: 'Graphene Ceramic Coating', price: [15000, 18000, 21000, 24000, 0], comm: [3000, 3500, 4000, 4500, 0] },
-      // FIX (audit bug): MOTO commission was 0 despite MOTO price being charged (₱3,000).
-      // Set consistent with the ~20% flat-rate rule used for the S/M/L tiers of this same service.
-      { name: 'Ceramic Coating: Motorcycle', price: [3000, 4000, 5000, 0, 3000], comm: [600, 800, 1000, 0, 600] },
-      // FIX (audit bug - orphan row): this had a commission row but no price row, so it was
-      // unreachable/unusable. Priced here in line with the Graphene Ceramic Coating tiers minus
-      // the maintenance step this variant skips. Flagged in README — confirm real pricing.
-      { name: 'Ceramic Coating w/o maintenance', price: [10000, 12000, 14000, 16000, 0], comm: [2000, 2500, 3000, 3500, 0] },
-      { name: 'CUSTOM', price: [0, 0, 0, 0, 0], comm: [0, 0, 0, 0, 0], is_custom: 1 },
+      { name: 'Standard Wash', price: [250, 300, 350, 400, 150, 220], comm: [0, 0, 0, 0, 0, 0] },
+      { name: 'Premium Wash', price: [600, 650, 700, 750, 400, 500], comm: [100, 100, 100, 100, 50, 60] },
+      { name: 'Wash and Wax: MTX NanoSil', price: [600, 750, 900, 1050, 550, 650], comm: [100, 100, 100, 100, 100, 120] },
+      { name: 'Wash and Wax: Soft99 Fusso Coat', price: [800, 950, 1100, 1250, 550, 700], comm: [150, 150, 150, 150, 100, 120] },
+      { name: 'Quick Ext. Detail', price: [2500, 3000, 3500, 4000, 2000, 2800], comm: [500, 600, 700, 800, 400, 520] },
+      { name: 'Paint Correction', price: [4500, 5000, 5500, 6000, 0, 0], comm: [900, 1000, 1100, 1200, 0, 0] },
+      { name: 'Glass Watermarks Removal', price: [2500, 3000, 3500, 4000, 0, 0], comm: [500, 600, 700, 800, 0, 0] },
+      { name: 'Full Exterior Detailing', price: [6500, 7500, 8500, 9500, 0, 0], comm: [1300, 1500, 1700, 1900, 0, 0] },
+      { name: 'Interior Detailing', price: [3000, 3500, 4000, 4500, 0, 0], comm: [600, 700, 800, 900, 0, 0] },
+      { name: 'Full Interior Detailing', price: [5500, 6000, 6500, 7000, 0, 0], comm: [1100, 1200, 1300, 1400, 0, 0] },
+      { name: 'Soft99 H9 Dual Layer Glass Coat', price: [20000, 23000, 26000, 31000, 0, 0], comm: [3000, 3500, 4000, 4500, 0, 0] },
+      { name: 'Graphene Ceramic Coating', price: [15000, 18000, 21000, 24000, 0, 0], comm: [3000, 3500, 4000, 4500, 0, 0] },
+      { name: 'Ceramic Coating: Motorcycle', price: [3000, 4000, 5000, 0, 3000, 4200], comm: [600, 800, 1000, 0, 600, 800] },
+      { name: 'Ceramic Coating w/o maintenance', price: [10000, 12000, 14000, 16000, 0, 0], comm: [2000, 2500, 3000, 3500, 0, 0] },
+      { name: 'CUSTOM', price: [0, 0, 0, 0, 0, 0], comm: [0, 0, 0, 0, 0, 0], is_custom: 1 },
     ];
 
     const tx = db.transaction((rows) => {
       for (const s of rows) {
         insertSvc.run({
           name: s.name,
-          price_S: s.price[0], price_M: s.price[1], price_L: s.price[2], price_XL: s.price[3], price_MOTO: s.price[4],
-          comm_S: s.comm[0], comm_M: s.comm[1], comm_L: s.comm[2], comm_XL: s.comm[3], comm_MOTO: s.comm[4],
+          price_S: s.price[0], price_M: s.price[1], price_L: s.price[2], price_XL: s.price[3], price_MOTO: s.price[4], price_BIG_MOTO: s.price[5],
+          comm_S: s.comm[0], comm_M: s.comm[1], comm_L: s.comm[2], comm_XL: s.comm[3], comm_MOTO: s.comm[4], comm_BIG_MOTO: s.comm[5],
           is_custom: s.is_custom || 0,
         });
       }
@@ -139,24 +153,23 @@ function seedIfEmpty() {
   const addonCount = db.prepare('SELECT COUNT(*) c FROM addons').get().c;
   if (addonCount === 0) {
     const insertAddon = db.prepare(`INSERT INTO addons
-      (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO)
-      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO)`);
+      (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
+      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @price_BIG_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO, @comm_BIG_MOTO)`);
 
     const addons = [
-      { name: 'Asphalt Removal', price: [300, 400, 500, 600, 0], comm: [100, 100, 100, 150, 0] },
-      { name: 'Headlight Restoration', price: [2000, 2000, 2000, 2000, 0], comm: [400, 400, 400, 400, 0] },
-      { name: 'Waterless Engine Detail', price: [2500, 2500, 2500, 2500, 0], comm: [500, 500, 500, 500, 0] },
-      { name: 'Engine Wash', price: [800, 800, 800, 800, 300], comm: [150, 150, 150, 150, 0] },
-      // Flat-rate trick per handover: same price/commission repeated across all classes.
-      { name: 'Bac 2 Zero', price: [600, 600, 600, 600, 600], comm: [100, 100, 100, 100, 0] },
+      { name: 'Asphalt Removal', price: [300, 400, 500, 600, 0, 0], comm: [100, 100, 100, 150, 0, 0] },
+      { name: 'Headlight Restoration', price: [2000, 2000, 2000, 2000, 0, 0], comm: [400, 400, 400, 400, 0, 0] },
+      { name: 'Waterless Engine Detail', price: [2500, 2500, 2500, 2500, 0, 0], comm: [500, 500, 500, 500, 0, 0] },
+      { name: 'Engine Wash', price: [800, 800, 800, 800, 300, 500], comm: [150, 150, 150, 150, 0, 0] },
+      { name: 'Bac 2 Zero', price: [600, 600, 600, 600, 600, 800], comm: [100, 100, 100, 100, 0, 0] },
     ];
 
     const tx = db.transaction((rows) => {
       for (const a of rows) {
         insertAddon.run({
           name: a.name,
-          price_S: a.price[0], price_M: a.price[1], price_L: a.price[2], price_XL: a.price[3], price_MOTO: a.price[4],
-          comm_S: a.comm[0], comm_M: a.comm[1], comm_L: a.comm[2], comm_XL: a.comm[3], comm_MOTO: a.comm[4],
+          price_S: a.price[0], price_M: a.price[1], price_L: a.price[2], price_XL: a.price[3], price_MOTO: a.price[4], price_BIG_MOTO: a.price[5],
+          comm_S: a.comm[0], comm_M: a.comm[1], comm_L: a.comm[2], comm_XL: a.comm[3], comm_MOTO: a.comm[4], comm_BIG_MOTO: a.comm[5],
         });
       }
     });

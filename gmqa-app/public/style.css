@@ -64,11 +64,39 @@ body{
 .view-header h1{font-family:'Oswald', sans-serif; font-weight:600; font-size:26px; margin:0;}
 .view-header .desc{color:var(--muted); font-size:13px; margin-top:4px;}
 
+.pricing-summary{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin:0 0 18px;}
+.summary-card{
+  background:linear-gradient(180deg, rgba(47,217,176,0.08), rgba(36,42,52,0.85));
+  border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px;
+}
+.summary-card span{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;}
+.summary-card strong{font-family:'Oswald', sans-serif; font-size:28px; font-weight:600; color:var(--text);}
+.summary-card.accent{background:linear-gradient(180deg, rgba(242,169,59,0.12), rgba(36,42,52,0.9));}
+.matrix-guide{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:0 4px 14px; color:var(--muted); font-size:12px;
+}
+.guide-pill{
+  display:inline-flex; align-items:center; justify-content:center; min-width:52px; padding:4px 8px; border-radius:999px; background:rgba(47,217,176,0.12); color:var(--teal); font-weight:600; border:1px solid rgba(47,217,176,0.3);
+}
+.guide-pill.muted{background:rgba(242,169,59,0.10); color:var(--amber); border-color:rgba(242,169,59,0.3);}
+.guide-text{margin-left:4px;}
+
 input[type=date], input[type=text], input[type=number], input[type=time], select, textarea{
   background:var(--surface-alt); border:1px solid var(--border); color:var(--text);
   border-radius:6px; padding:7px 10px; font-family:'Inter', sans-serif; font-size:13px;
+  width:100%;
 }
 input:focus, select:focus, textarea:focus{outline:2px solid var(--teal-dim); outline-offset:1px;}
+
+.section-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;}
+.section-header h2{margin:0;}
+.entry-grid{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; align-items:end;
+}
+.entry-grid label{display:block; font-size:11px; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em;}
+.submit-cell{display:flex; align-items:flex-end; justify-content:flex-start;}
+.field-stack{display:flex; flex-direction:column; gap:5px; min-width:120px;}
+.compact-input{width:100%; min-width:110px;}
 
 button.btn{
   all:unset; cursor:pointer; padding:8px 16px; border-radius:6px;
@@ -95,13 +123,23 @@ button.icon-btn:hover{color:var(--red);}
 .card h2{font-family:'Oswald', sans-serif; font-size:16px; font-weight:600; margin:0 0 12px;}
 
 /* ---------- Table ---------- */
-table{width:100%; border-collapse:collapse; font-size:13px;}
-th{
-  text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em;
-  color:var(--muted); font-weight:500; padding:8px 8px; border-bottom:1px solid var(--border);
+.table-wrap{overflow:auto; border:1px solid var(--border); border-radius:8px; background:rgba(14,17,22,0.6);}
+.matrix-table{width:100%; border-collapse:separate; border-spacing:0; font-size:12px; min-width:900px;}
+.matrix-table thead th{position:sticky; top:0; z-index:2; background:rgba(25,30,38,0.96); backdrop-filter:blur(10px);}
+.matrix-table th{
+  text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
+  color:var(--muted); font-weight:600; padding:10px 8px; border-bottom:1px solid var(--border); border-right:1px solid var(--border);
 }
-td{padding:7px 8px; border-bottom:1px solid var(--border); vertical-align:middle;}
-tr:last-child td{border-bottom:none;}
+.matrix-table td{padding:8px 8px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); vertical-align:middle; background:rgba(25,30,38,0.2);}
+.matrix-table tr:last-child td{border-bottom:none;}
+.matrix-table tr:hover td{background:rgba(36,42,52,0.6);}
+.matrix-table .sticky-name{position:sticky; left:0; z-index:1; min-width:170px; background:rgba(25,30,38,0.96);}
+.matrix-table .sub-head{font-size:9px; color:var(--muted);}
+.matrix-table .group-head{background:rgba(47,217,176,0.08); color:var(--text); text-align:center;}
+.table-actions{display:flex; justify-content:center;}
+.matrix-table input{min-width:52px; width:100%; background:rgba(36,42,52,0.8); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:6px 6px; font-family:var(--mono); text-align:right;}
+.matrix-table input:focus{outline:2px solid rgba(47,217,176,0.35); outline-offset:1px;}
+.matrix-table tbody td:first-child input{max-width:170px; text-align:left; font-family:'Inter', sans-serif;}
 td.num, th.num{text-align:right; font-family:var(--mono);}
 .jo-number{font-family:var(--mono); color:var(--teal); font-size:12px;}
 tbody tr:hover{background:var(--surface-alt);}

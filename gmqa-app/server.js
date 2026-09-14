@@ -56,7 +56,7 @@ app.get('/api/pricing', (req, res) => {
 });
 
 app.put('/api/pricing/service/:id', (req, res) => {
-  const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO'];
+  const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   db.prepare(`UPDATE services SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
@@ -65,13 +65,13 @@ app.put('/api/pricing/service/:id', (req, res) => {
 
 app.post('/api/pricing/service', (req, res) => {
   const s = req.body;
-  const info = db.prepare(`INSERT INTO services (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO)
-    VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO)`).run(s);
+  const info = db.prepare(`INSERT INTO services (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
+    VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(s);
   res.json(db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
 });
 
 app.put('/api/pricing/addon/:id', (req, res) => {
-  const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO'];
+  const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   db.prepare(`UPDATE addons SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
@@ -80,8 +80,8 @@ app.put('/api/pricing/addon/:id', (req, res) => {
 
 app.post('/api/pricing/addon', (req, res) => {
   const a = req.body;
-  const info = db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO)
-    VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO)`).run(a);
+  const info = db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
+    VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(a);
   res.json(db.prepare('SELECT * FROM addons WHERE id=?').get(info.lastInsertRowid));
 });
 

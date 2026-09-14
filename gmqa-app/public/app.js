@@ -1,4 +1,4 @@
-const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO'];
+const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO', 'BIG_MOTO'];
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -29,7 +29,17 @@ async function ensurePricing() {
   if (!pricing.services.length && !pricing.addons.length) {
     pricing = await fetch('/api/pricing').then(r => r.json());
   }
+  populateQuickJobSelectors();
   return pricing;
+}
+
+function populateQuickJobSelectors() {
+  const serviceEl = document.getElementById('new-job-service');
+  const addonEl = document.getElementById('new-job-addon');
+  if (!serviceEl || !addonEl) return;
+
+  serviceEl.innerHTML = '<option value="">Select service</option>' + pricing.services.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  addonEl.innerHTML = '<option value="">None</option>' + pricing.addons.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
 }
 
 async function loadDaily() {
@@ -90,9 +100,13 @@ function rowHtml(j) {
     <td><input type="text" data-field="plate" value="${j.plate || ''}" style="width:110px"></td>
     <td><select data-field="service_id" style="width:170px">${selectOptions(pricing.services, j.service_id, 'Select…')}</select></td>
     <td><select data-field="addon_id" style="width:140px">${selectOptions(pricing.addons, j.addon_id, 'None')}</select></td>
-    <td><input type="text" data-field="custom_addon_name" value="${j.custom_addon_name || ''}" placeholder="custom" style="width:100px">
-        <input type="number" data-field="custom_price" value="${j.custom_price || ''}" placeholder="₱" class="mini-input" style="width:70px;margin-top:4px">
-        <input type="number" data-field="custom_comm" value="${j.custom_comm || ''}" placeholder="comm" class="mini-input" style="width:70px;margin-top:4px"></td>
+    <td>
+      <div class="field-stack">
+        <input type="text" data-field="custom_addon_name" value="${j.custom_addon_name || ''}" placeholder="custom item" class="compact-input">
+        <input type="number" data-field="custom_price" value="${j.custom_price || ''}" placeholder="₱ price" class="mini-input compact-input">
+        <input type="number" data-field="custom_comm" value="${j.custom_comm || ''}" placeholder="comm" class="mini-input compact-input">
+      </div>
+    </td>
     <td class="num"><input type="number" data-field="discount" value="${j.discount || ''}" class="mini-input" style="width:70px"></td>
     <td><select data-field="payment_method" style="width:90px">
         ${['Cash', 'GCash', 'Maya'].map(p => `<option ${j.payment_method === p ? 'selected' : ''}>${p}</option>`).join('')}
@@ -107,10 +121,27 @@ function rowHtml(j) {
 
 document.getElementById('add-job-btn').addEventListener('click', async () => {
   const date = dailyDateEl.value;
+  const payload = {
+    job_date: date,
+    time_in: document.getElementById('new-job-time').value || null,
+    vehicle_class: document.getElementById('new-job-class').value || null,
+    plate: document.getElementById('new-job-plate').value || null,
+    service_id: document.getElementById('new-job-service').value || null,
+    addon_id: document.getElementById('new-job-addon').value || null,
+    payment_method: document.getElementById('new-job-payment').value || 'Cash',
+    detailer: document.getElementById('new-job-detailer').value || null,
+  };
+
   await fetch('/api/jobs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_date: date, payment_method: 'Cash' }),
+    body: JSON.stringify(payload),
   });
+
+  document.getElementById('new-job-plate').value = '';
+  document.getElementById('new-job-detailer').value = '';
+  document.getElementById('new-job-service').value = '';
+  document.getElementById('new-job-addon').value = '';
+  document.getElementById('new-job-class').value = '';
   loadDaily();
 });
 
