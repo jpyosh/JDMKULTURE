@@ -261,7 +261,7 @@ app.post('/api/employees', (req, res) => {
 });
 
 app.put('/api/employees/:id', (req, res) => {
-  const fields = ['name', 'rate_per_day', 'construction_rate'];
+  const fields = ['name', 'role', 'rate_per_day', 'construction_rate'];
   const updates = fields.filter(f => f in req.body);
   if (!updates.length) return res.status(400).json({ error: 'No employee fields supplied' });
   const values = { ...req.body, id: req.params.id };
@@ -277,21 +277,50 @@ app.delete('/api/employees/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+function attendanceTotals(entry) {
+  let attendance = {};
+  try { attendance = JSON.parse(entry.attendance || '{}'); } catch (_) { attendance = {}; }
+  const totals = { full: 0, half: 0, construction: 0, constructionHalf: 0, absences: 0, daysOff: 0 };
+  for (const code of Object.values(attendance)) {
+    if (code === 'P') totals.full += 1;
+    else if (code === '0.5P') totals.half += 1;
+    else if (code === 'CN') totals.construction += 1;
+    else if (code === '0.5CN') totals.constructionHalf += 1;
+    else if (code === 'A') totals.absences += 1;
+    else if (code === 'OFF') totals.daysOff += 1;
+  }
+  return totals;
+}
+
+function attendanceObject(entry) {
+  try { return JSON.parse(entry.attendance || '{}'); } catch (_) { return {}; }
+}
+
 app.get('/api/payroll/:periodLabel', (req, res) => {
   const employees = db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all();
   const entries = db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(req.params.periodLabel);
   const merged = employees.map(emp => {
     const entry = entries.find(e => e.employee_id === emp.id) || {
-      employee_id: emp.id, period_label: req.params.periodLabel, days_worked: 0, half_days: 0,
+      employee_id: emp.id, period_label: req.params.periodLabel, attendance: '{}', days_worked: 0, half_days: 0,
       absences: 0, day_off: 0, ot_hours: 0,
-      construction_days: 0, deductions: 0, notes: '',
+      cw_ot_hours: 0, cn_ot_hours: 0, construction_days: 0, deductions: 0, notes: '',
     };
-    const regularPay = Number(emp.rate_per_day) * Number(entry.days_worked || 0);
-    const halfDayPay = Number(emp.rate_per_day) * Number(entry.half_days || 0) * 0.5;
-    const otPay = Number(emp.rate_per_day) / 8 * 1.25 * Number(entry.ot_hours || 0);
-    const constructionPay = Number(emp.construction_rate) * Number(entry.construction_days || 0);
-    const finalSalary = regularPay + halfDayPay + otPay + constructionPay - Number(entry.deductions || 0);
-    return { employee: emp, entry, regularPay, halfDayPay, otPay, constructionPay, finalSalary };
+    const attendance = attendanceObject(entry);
+    const hasAttendance = Object.keys(attendance).length > 0;
+    const totals = attendanceTotals(entry);
+    const fullDays = hasAttendance ? totals.full : Number(entry.days_worked || 0);
+    const halfDays = hasAttendance ? totals.half : Number(entry.half_days || 0);
+    const constructionDays = hasAttendance ? totals.construction : Number(entry.construction_days || 0);
+    const regularPay = Number(emp.rate_per_day) * fullDays;
+    const halfDayPay = Number(emp.rate_per_day) * (halfDays + totals.constructionHalf) * 0.5;
+    const cwOtPay = Number(emp.rate_per_day) / 8 * 1.25 * Number(entry.cw_ot_hours || entry.ot_hours || 0);
+    const cnOtPay = Number(emp.construction_rate) / 8 * 1.25 * Number(entry.cn_ot_hours || 0);
+    const constructionPay = Number(emp.construction_rate) * constructionDays;
+    const finalAbsences = hasAttendance ? totals.absences : Number(entry.absences || 0);
+    const finalDaysOff = hasAttendance ? totals.daysOff : Number(entry.day_off || 0);
+    const computedEntry = { ...entry, days_worked: fullDays, half_days: halfDays, construction_days: constructionDays, absences: finalAbsences, day_off: finalDaysOff };
+    const finalSalary = regularPay + halfDayPay + cwOtPay + cnOtPay + constructionPay - Number(entry.deductions || 0);
+    return { employee: emp, entry: computedEntry, regularPay, halfDayPay, cwOtPay, cnOtPay, constructionPay, finalSalary };
   });
   const totalNetPay = merged.reduce((s, m) => s + m.finalSalary, 0);
   res.json({ periodLabel: req.params.periodLabel, rows: merged, totalNetPay });
@@ -303,30 +332,37 @@ app.put('/api/payroll/:periodLabel/:employeeId', (req, res) => {
   const existing = db.prepare('SELECT id FROM payroll_entries WHERE employee_id=? AND period_label=?').get(employeeId, periodLabel);
 
   if (existing) {
-    db.prepare(`UPDATE payroll_entries SET days_worked=@days_worked, half_days=@half_days,
+    db.prepare(`UPDATE payroll_entries SET attendance=@attendance, days_worked=@days_worked, half_days=@half_days,
       absences=@absences, day_off=@day_off, ot_hours=@ot_hours,
+      cw_ot_hours=@cw_ot_hours, cn_ot_hours=@cn_ot_hours,
       construction_days=@construction_days, deductions=@deductions, notes=@notes WHERE id=@id`)
       .run({
+        attendance: JSON.stringify(b.attendance || {}),
         days_worked: Number(b.days_worked || 0),
         half_days: Number(b.half_days || 0),
         absences: Number(b.absences || 0),
         day_off: Number(b.day_off || 0),
         ot_hours: Number(b.ot_hours || 0),
+        cw_ot_hours: Number(b.cw_ot_hours || 0),
+        cn_ot_hours: Number(b.cn_ot_hours || 0),
         construction_days: Number(b.construction_days || 0),
         deductions: Number(b.deductions || 0),
         notes: b.notes || '',
         id: existing.id,
       });
   } else {
-    db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, days_worked, half_days, absences, day_off, ot_hours, construction_days, deductions, notes)
-      VALUES (@employee_id,@period_label,@days_worked,@half_days,@absences,@day_off,@ot_hours,@construction_days,@deductions,@notes)`).run({
+    db.prepare(`INSERT INTO payroll_entries (employee_id, period_label, attendance, days_worked, half_days, absences, day_off, ot_hours, cw_ot_hours, cn_ot_hours, construction_days, deductions, notes)
+      VALUES (@employee_id,@period_label,@attendance,@days_worked,@half_days,@absences,@day_off,@ot_hours,@cw_ot_hours,@cn_ot_hours,@construction_days,@deductions,@notes)`).run({
         employee_id: Number(employeeId),
         period_label: periodLabel,
+        attendance: JSON.stringify(b.attendance || {}),
         days_worked: Number(b.days_worked || 0),
         half_days: Number(b.half_days || 0),
         absences: Number(b.absences || 0),
         day_off: Number(b.day_off || 0),
         ot_hours: Number(b.ot_hours || 0),
+        cw_ot_hours: Number(b.cw_ot_hours || 0),
+        cn_ot_hours: Number(b.cn_ot_hours || 0),
         construction_days: Number(b.construction_days || 0),
         deductions: Number(b.deductions || 0),
         notes: b.notes || '',

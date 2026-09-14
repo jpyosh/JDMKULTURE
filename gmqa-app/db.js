@@ -78,6 +78,7 @@ function init() {
     CREATE TABLE IF NOT EXISTS employees (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL,
+      role TEXT DEFAULT '',
       rate_per_day REAL DEFAULT 0,
       construction_rate REAL DEFAULT 700,
       active INTEGER DEFAULT 1
@@ -87,11 +88,14 @@ function init() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       employee_id INTEGER NOT NULL,
       period_label TEXT NOT NULL,
+      attendance TEXT DEFAULT '{}',
       days_worked REAL DEFAULT 0,
       half_days REAL DEFAULT 0,
       absences REAL DEFAULT 0,
       day_off INTEGER DEFAULT 0,
       ot_hours REAL DEFAULT 0,
+      cw_ot_hours REAL DEFAULT 0,
+      cn_ot_hours REAL DEFAULT 0,
       construction_days REAL DEFAULT 0,
       deductions REAL DEFAULT 0,
       notes TEXT
@@ -118,6 +122,10 @@ function ensureSchemaColumns() {
   addColumnIfMissing('payroll_entries', 'half_days', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'absences', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'ot_hours', 'REAL DEFAULT 0');
+  addColumnIfMissing('payroll_entries', 'attendance', "TEXT DEFAULT '{}' ");
+  addColumnIfMissing('payroll_entries', 'cw_ot_hours', 'REAL DEFAULT 0');
+  addColumnIfMissing('payroll_entries', 'cn_ot_hours', 'REAL DEFAULT 0');
+  addColumnIfMissing('employees', 'role', "TEXT DEFAULT ''");
 }
 
 function seedIfEmpty() {

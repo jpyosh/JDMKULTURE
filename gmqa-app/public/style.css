@@ -181,6 +181,17 @@ tbody tr:hover{background:var(--surface-alt);}
 .mini-input{width:90px;}
 .payroll-note{min-width:150px;}
 .employee-name{min-width:110px;}
+.employee-role{min-width:110px;}
+.attendance-legend{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; font-size:11px; color:var(--muted);}
+.attendance-code{padding:4px 7px; border-radius:4px; border:1px solid var(--border);}
+.attendance-code.present{color:#173a18; background:#9bcf81;}.attendance-code.half{color:#593b00; background:#f0c76b;}
+.attendance-code.construction{color:#082d53; background:#82b7e8;}.attendance-code.absence{color:#631b1b; background:#e47c7c;}.attendance-code.off{color:var(--muted); background:var(--surface-alt);}
+.payroll-table{min-width:1280px; font-size:11px;}
+.payroll-table th,.payroll-table td{padding:8px 6px; white-space:nowrap;}
+.payroll-table input,.payroll-table select{font-size:11px; padding:6px 4px; min-width:0;}
+.payroll-table .attendance-day{min-width:58px; text-align:center;}.attendance-day small{display:block;color:var(--muted);font-weight:400;margin-top:2px;}
+.attendance-select{width:58px; text-align:center; font-weight:700;}
+.attendance-cell:has(option[value="P"]:checked){background:rgba(155,207,129,.35);}.attendance-cell:has(option[value="CN"]:checked){background:rgba(130,183,232,.35);}
 @media (max-width: 1050px){.daily-table{min-width:1060px; table-layout:auto;}.daily-table th,.daily-table td{padding:8px;}}
 .form-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:10px; align-items:end;}
 .form-grid label{display:block; font-size:11px; color:var(--muted); margin-bottom:4px;}

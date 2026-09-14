@@ -268,22 +268,22 @@
     <section id="view-payroll" class="view">
       <div class="view-header">
         <div>
-          <h1>Payroll</h1>
-          <div class="desc">Track attendance and compute pay from full days, half days, overtime, construction work, and deductions.</div>
+          <h1>Payroll &amp; Attendance</h1>
+          <div class="desc">Mark each day, enter overtime and deductions, and payroll calculates the weekly net pay.</div>
         </div>
         <div>
-          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Pay Period Label</label>
-          <input type="text" id="payroll-period" placeholder="e.g. Sep 13 2026">
+          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Week Starting</label>
+          <input type="date" id="payroll-period">
         </div>
       </div>
       <div class="card">
         <div style="overflow-x:auto;">
-          <table>
-            <thead>
-                  <tr><th>Name</th><th class="num">Rate/Day</th><th class="num">Full Days</th><th class="num">Half Days</th>
-                  <th class="num">OT Hours</th><th class="num">Absences</th><th class="num">Days Off</th><th class="num">Constr. Days</th>
-                    <th class="num">Constr. Rate</th><th class="num">Deductions</th><th class="num">Final Salary</th><th>Notes</th><th></th></tr>
-            </thead>
+          <div class="attendance-legend">
+            <span class="attendance-code present">P = Full Carwash</span><span class="attendance-code half">0.5P = Half Carwash</span>
+            <span class="attendance-code construction">CN = Construction</span><span class="attendance-code absence">A = Absent</span><span class="attendance-code off">OFF = Day Off</span>
+          </div>
+          <table class="payroll-table">
+            <thead id="payroll-head"></thead>
             <tbody id="payroll-tbody"></tbody>
           </table>
         </div>

@@ -344,30 +344,50 @@ async function loadWeekly() {
 // PAYROLL
 // ================================================================
 const payrollPeriodEl = document.getElementById('payroll-period');
-payrollPeriodEl.value = todayStr();
+function mondayOf(dateString) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const day = date.getDay();
+  date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
+  return date.toISOString().slice(0, 10);
+}
+function weekDates(start) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(`${start}T00:00:00`);
+    date.setDate(date.getDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+const attendanceCodes = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
+payrollPeriodEl.value = mondayOf(todayStr());
 payrollPeriodEl.addEventListener('change', loadPayroll);
 
 async function loadPayroll() {
   if (!payrollPeriodEl.value) return;
   const { rows, totalNetPay } = await fetch('/api/payroll/' + encodeURIComponent(payrollPeriodEl.value)).then(r => r.json());
+  const dates = weekDates(payrollPeriodEl.value);
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  document.getElementById('payroll-head').innerHTML = `<tr>
+    <th>Employee</th><th>Role</th>${dates.map((date, index) => `<th class="attendance-day">${dayNames[index]}<small>${date.slice(5)}</small></th>`).join('')}
+    <th class="num">CW Days</th><th class="num">CN Days</th><th class="num">CW Rate</th><th class="num">CN Rate</th><th class="num">CW OT</th><th class="num">CN OT</th><th class="num">Gross Pay</th><th class="num">Deductions</th><th class="num">Net Pay</th><th></th>
+  </tr>`;
   const tbody = document.getElementById('payroll-tbody');
   tbody.innerHTML = rows.map(r => `
     <tr data-emp="${r.employee.id}">
       <td><input type="text" data-employee-field="name" value="${r.employee.name}" class="employee-name"></td>
-      <td class="num"><input type="number" class="mini-input" data-employee-field="rate_per_day" value="${r.employee.rate_per_day}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="days_worked" value="${r.entry.days_worked}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="half_days" value="${r.entry.half_days || 0}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="ot_hours" value="${r.entry.ot_hours || 0}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="absences" value="${r.entry.absences || 0}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="day_off" value="${r.entry.day_off}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="construction_days" value="${r.entry.construction_days}"></td>
+      <td><input type="text" data-employee-field="role" value="${r.employee.role || ''}" placeholder="Role" class="employee-role"></td>
+      ${dates.map(date => `<td class="attendance-cell"><select data-attendance-date="${date}" class="attendance-select">${attendanceCodes.map(code => `<option value="${code}" ${(JSON.parse(r.entry.attendance || '{}')[date] || '') === code ? 'selected' : ''}>${code || '—'}</option>`).join('')}</select></td>`).join('')}
+      <td class="num">${r.entry.days_worked + (r.entry.half_days || 0) * 0.5}</td>
+      <td class="num">${r.entry.construction_days}</td>
+      <td class="num"><input type="number" class="mini-input" data-employee-field="rate_per_day" value="${r.employee.rate_per_day}" aria-label="Carwash rate"></td>
       <td class="num"><input type="number" class="mini-input" data-employee-field="construction_rate" value="${r.employee.construction_rate}"></td>
-      <td class="num"><input type="number" class="mini-input" data-field="deductions" value="${r.entry.deductions}"></td>
+      <td class="num"><input type="number" class="mini-input" data-field="cw_ot_hours" value="${r.entry.cw_ot_hours || 0}"></td>
+      <td class="num"><input type="number" class="mini-input" data-field="cn_ot_hours" value="${r.entry.cn_ot_hours || 0}"></td>
+      <td class="num money">${peso(r.finalSalary + Number(r.entry.deductions || 0))}</td>
+      <td class="num"><input type="number" class="mini-input" data-field="deductions" value="${r.entry.deductions || 0}"></td>
       <td class="num money pos">${peso(r.finalSalary)}</td>
-      <td><input type="text" data-field="notes" value="${r.entry.notes || ''}" placeholder="Optional" class="payroll-note"></td>
       <td><button class="icon-btn remove-employee" title="Deactivate employee">✕</button></td>
     </tr>`).join('');
-  tbody.querySelectorAll('input').forEach(el => el.addEventListener('change', () => savePayrollCell(el)));
+  tbody.querySelectorAll('[data-field], [data-attendance-date]').forEach(el => el.addEventListener('change', () => savePayrollCell(el)));
   tbody.querySelectorAll('[data-employee-field]').forEach(el => el.addEventListener('change', () => saveEmployeeCell(el)));
   tbody.querySelectorAll('.remove-employee').forEach(el => el.addEventListener('click', () => removeEmployee(el.closest('tr').dataset.emp)));
   document.getElementById('payroll-total').textContent = peso(totalNetPay);
@@ -375,9 +395,11 @@ async function loadPayroll() {
 
 async function savePayrollCell(el) {
   const empId = el.closest('tr').dataset.emp;
-  const row = [...document.querySelectorAll(`tr[data-emp="${empId}"] [data-field]`)];
+  const row = document.querySelector(`tr[data-emp="${empId}"]`);
   const body = {};
-  row.forEach(i => body[i.dataset.field] = i.dataset.field === 'notes' ? i.value : Number(i.value || 0));
+  row.querySelectorAll('[data-field]').forEach(i => { body[i.dataset.field] = Number(i.value || 0); });
+  body.attendance = {};
+  row.querySelectorAll('[data-attendance-date]').forEach(i => { body.attendance[i.dataset.attendanceDate] = i.value; });
   await fetch(`/api/payroll/${encodeURIComponent(payrollPeriodEl.value)}/${empId}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
@@ -387,7 +409,7 @@ async function savePayrollCell(el) {
 async function saveEmployeeCell(el) {
   await fetch(`/api/employees/${el.closest('tr').dataset.emp}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ [el.dataset.employeeField]: el.dataset.employeeField === 'name' ? el.value.trim() : Number(el.value || 0) }),
+      body: JSON.stringify({ [el.dataset.employeeField]: ['name', 'role'].includes(el.dataset.employeeField) ? el.value.trim() : Number(el.value || 0) }),
   });
   loadPayroll();
 }
