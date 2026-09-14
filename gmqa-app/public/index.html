@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GM QA — JDM Kulture Ops Console</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="wordmark">
+      <div class="name">JDM KULTURE</div>
+      <div class="sub">GM QA — Ops Console</div>
+    </div>
+    <div class="nav">
+      <button data-view="daily" class="active">Daily Log</button>
+      <button data-view="pricing">Pricing Matrix</button>
+      <button data-view="eod">EOD Dashboard</button>
+      <button data-view="weekly">Weekly Rollup</button>
+      <button data-view="payroll">Payroll</button>
+    </div>
+    <div class="rail-footer">
+      Built from the GM QA handover.<br>
+      Bugs fixed: double commission subtraction, dynamic vehicle count, MOTO ceramic commission gap.
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- ===================== DAILY LOG ===================== -->
+    <section id="view-daily" class="view active">
+      <div class="view-header">
+        <div>
+          <h1>Daily Sales &amp; Operations Log</h1>
+          <div class="desc">Job orders auto-price and auto-commission from the Pricing Matrix.</div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Date</label>
+          <input type="date" id="daily-date">
+        </div>
+      </div>
+
+      <div class="metrics-row" id="daily-metrics"></div>
+
+      <div class="card">
+        <h2>Job Orders</h2>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>JO#</th><th>Time</th><th>Class</th><th>Plate</th><th>Service</th><th>Add-On</th>
+                <th>Custom</th><th class="num">Discount</th><th>Pay</th><th>Detailer</th>
+                <th class="num">Total</th><th class="num">Comm</th><th class="num">Net</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="jobs-tbody"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:14px;">
+          <button class="btn" id="add-job-btn">+ Add Job Order</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PRICING MATRIX ===================== -->
+    <section id="view-pricing" class="view">
+      <div class="view-header">
+        <div>
+          <h1>Pricing &amp; Commission Matrix</h1>
+          <div class="desc">The brain. Edit any cell — Daily Log pulls live from here.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Services</h2>
+        <div style="overflow-x:auto;">
+          <table id="services-table">
+            <thead>
+              <tr><th>Service Name</th><th colspan="5" style="text-align:center">Price</th><th colspan="5" style="text-align:center">Commission</th></tr>
+              <tr><th></th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th>
+                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th></tr>
+            </thead>
+            <tbody id="services-tbody"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px;"><button class="btn ghost" id="add-service-btn">+ Add Service</button></div>
+      </div>
+
+      <div class="card">
+        <h2>Add-Ons</h2>
+        <div style="overflow-x:auto;">
+          <table id="addons-table">
+            <thead>
+              <tr><th>Add-On Name</th><th colspan="5" style="text-align:center">Price</th><th colspan="5" style="text-align:center">Commission</th></tr>
+              <tr><th></th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th>
+                  <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th></tr>
+            </thead>
+            <tbody id="addons-tbody"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px;"><button class="btn ghost" id="add-addon-btn">+ Add Add-On</button></div>
+      </div>
+    </section>
+
+    <!-- ===================== EOD DASHBOARD ===================== -->
+    <section id="view-eod" class="view">
+      <div class="view-header">
+        <div>
+          <h1>Daily Closing &amp; Cash Reconciliation</h1>
+          <div class="desc">Variance must always equal ₱0.</div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Date</label>
+          <input type="date" id="eod-date">
+        </div>
+      </div>
+
+      <div class="metrics-row" id="eod-metrics"></div>
+
+      <div class="two-col">
+        <div class="card">
+          <h2>Deductions — Cash Out</h2>
+          <div id="cash-expenses"></div>
+          <div class="form-grid" style="margin-top:10px;">
+            <div><label>Description</label><input type="text" id="exp-cash-desc"></div>
+            <div><label>Amount</label><input type="number" id="exp-cash-amt" class="mini-input"></div>
+            <div><button class="btn ghost" id="add-cash-exp">+ Add</button></div>
+          </div>
+          <h2 style="margin-top:20px;">Deductions — GCash Out</h2>
+          <div id="gcash-expenses"></div>
+          <div class="form-grid" style="margin-top:10px;">
+            <div><label>Description</label><input type="text" id="exp-gcash-desc"></div>
+            <div><label>Amount</label><input type="number" id="exp-gcash-amt" class="mini-input"></div>
+            <div><button class="btn ghost" id="add-gcash-exp">+ Add</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Setup</h2>
+          <div class="form-grid">
+            <div><label>Supervisor</label><input type="text" id="meta-supervisor"></div>
+            <div><label>Cash Float</label><input type="number" id="meta-float"></div>
+            <div><label>GCash Tips to Distribute</label><input type="number" id="meta-tips"></div>
+          </div>
+
+          <h2 style="margin-top:20px;">Expected (System Math)</h2>
+          <div id="expected-block"></div>
+
+          <h2 style="margin-top:20px;">Actual (Physical Count)</h2>
+          <div class="form-grid">
+            <div><label>Actual Cash</label><input type="number" id="meta-actual-cash"></div>
+            <div><label>Actual GCash</label><input type="number" id="meta-actual-gcash"></div>
+            <div><button class="btn" id="save-meta">Save</button></div>
+          </div>
+
+          <h2 style="margin-top:20px;">Variance</h2>
+          <div id="variance-block"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== WEEKLY ===================== -->
+    <section id="view-weekly" class="view">
+      <div class="view-header">
+        <div>
+          <h1>Weekly Rollup</h1>
+          <div class="desc">True Net Profit = Gross Sales − Commissions − Other Expenses.</div>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Start</label><input type="date" id="week-start"></div>
+          <div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">End</label><input type="date" id="week-end"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Date</th><th class="num">Vehicles</th><th class="num">Gross Sales</th><th class="num">Commissions</th><th class="num">Other Expenses</th><th class="num">True Net Profit</th></tr></thead>
+            <tbody id="weekly-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PAYROLL ===================== -->
+    <section id="view-payroll" class="view">
+      <div class="view-header">
+        <div>
+          <h1>Payroll</h1>
+          <div class="desc">Final Salary = (Rate/Day × Days Worked) + (Construction Rate × Construction Days) − Deductions.</div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Pay Period Label</label>
+          <input type="text" id="payroll-period" placeholder="e.g. Sep 13 2026">
+        </div>
+      </div>
+      <div class="card">
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr><th>Name</th><th class="num">Rate/Day</th><th class="num">Days Worked</th><th class="num">Day Off</th>
+                  <th class="num">Constr. Days</th><th class="num">Constr. Rate</th><th class="num">Deductions</th><th class="num">Final Salary</th></tr>
+            </thead>
+            <tbody id="payroll-tbody"></tbody>
+          </table>
+        </div>
+        <div class="row-line total" style="margin-top:14px;">
+          <span>Total Net Pay</span><span class="money" id="payroll-total">₱0.00</span>
+        </div>
+        <div style="margin-top:14px;"><button class="btn ghost" id="add-employee-btn">+ Add Employee</button></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+const Database = require('better-sqlite3');
+const path = require('path');
+
+// SQLite file lives next to the app so it persists on disk (Render/Railway with a
+// persistent volume, or just the local filesystem in dev).
+const db = new Database(path.join(__dirname, 'data', 'gmqa.sqlite'));
+db.pragma('journal_mode = WAL');
+
+const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO'];
+
+function init() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS services (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      price_S REAL DEFAULT 0, price_M REAL DEFAULT 0, price_L REAL DEFAULT 0,
+      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0,
+      comm_S REAL DEFAULT 0, comm_M REAL DEFAULT 0, comm_L REAL DEFAULT 0,
+      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0,
+      is_custom INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS addons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      price_S REAL DEFAULT 0, price_M REAL DEFAULT 0, price_L REAL DEFAULT 0,
+      price_XL REAL DEFAULT 0, price_MOTO REAL DEFAULT 0,
+      comm_S REAL DEFAULT 0, comm_M REAL DEFAULT 0, comm_L REAL DEFAULT 0,
+      comm_XL REAL DEFAULT 0, comm_MOTO REAL DEFAULT 0,
+      active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jo_number TEXT,
+      job_date TEXT NOT NULL,
+      time_in TEXT,
+      vehicle_class TEXT,
+      plate TEXT,
+      service_id INTEGER,
+      addon_id INTEGER,
+      addon_price_override REAL,
+      custom_addon_name TEXT,
+      custom_price REAL DEFAULT 0,
+      custom_comm REAL DEFAULT 0,
+      discount REAL DEFAULT 0,
+      discount_reason TEXT,
+      tip_gcash REAL DEFAULT 0,
+      payment_method TEXT DEFAULT 'Cash',
+      detailer TEXT,
+      remarks TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expense_date TEXT NOT NULL,
+      side TEXT NOT NULL, -- 'cash' or 'gcash'
+      description TEXT,
+      amount REAL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_meta (
+      job_date TEXT PRIMARY KEY,
+      supervisor TEXT,
+      cash_float REAL DEFAULT 0,
+      actual_cash REAL,
+      actual_gcash REAL,
+      gcash_tips_to_distribute REAL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      rate_per_day REAL DEFAULT 0,
+      construction_rate REAL DEFAULT 700,
+      active INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS payroll_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      period_label TEXT NOT NULL,
+      days_worked REAL DEFAULT 0,
+      day_off INTEGER DEFAULT 0,
+      construction_days REAL DEFAULT 0,
+      deductions REAL DEFAULT 0,
+      notes TEXT
+    );
+  `);
+
+  seedIfEmpty();
+}
+
+function seedIfEmpty() {
+  const svcCount = db.prepare('SELECT COUNT(*) c FROM services').get().c;
+  if (svcCount === 0) {
+    const insertSvc = db.prepare(`INSERT INTO services
+      (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, is_custom)
+      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO, @is_custom)`);
+
+    const services = [
+      { name: 'Standard Wash', price: [250, 300, 350, 400, 150], comm: [0, 0, 0, 0, 0] },
+      { name: 'Premium Wash', price: [600, 650, 700, 750, 400], comm: [100, 100, 100, 100, 50] },
+      { name: 'Wash and Wax: MTX NanoSil', price: [600, 750, 900, 1050, 550], comm: [100, 100, 100, 100, 100] },
+      { name: 'Wash and Wax: Soft99 Fusso Coat', price: [800, 950, 1100, 1250, 550], comm: [150, 150, 150, 150, 100] },
+      { name: 'Quick Ext. Detail', price: [2500, 3000, 3500, 4000, 2000], comm: [500, 600, 700, 800, 400] },
+      { name: 'Paint Correction', price: [4500, 5000, 5500, 6000, 0], comm: [900, 1000, 1100, 1200, 0] },
+      { name: 'Glass Watermarks Removal', price: [2500, 3000, 3500, 4000, 0], comm: [500, 600, 700, 800, 0] },
+      { name: 'Full Exterior Detailing', price: [6500, 7500, 8500, 9500, 0], comm: [1300, 1500, 1700, 1900, 0] },
+      { name: 'Interior Detailing', price: [3000, 3500, 4000, 4500, 0], comm: [600, 700, 800, 900, 0] },
+      { name: 'Full Interior Detailing', price: [5500, 6000, 6500, 7000, 0], comm: [1100, 1200, 1300, 1400, 0] },
+      { name: 'Soft99 H9 Dual Layer Glass Coat', price: [20000, 23000, 26000, 31000, 0], comm: [3000, 3500, 4000, 4500, 0] },
+      { name: 'Graphene Ceramic Coating', price: [15000, 18000, 21000, 24000, 0], comm: [3000, 3500, 4000, 4500, 0] },
+      // FIX (audit bug): MOTO commission was 0 despite MOTO price being charged (₱3,000).
+      // Set consistent with the ~20% flat-rate rule used for the S/M/L tiers of this same service.
+      { name: 'Ceramic Coating: Motorcycle', price: [3000, 4000, 5000, 0, 3000], comm: [600, 800, 1000, 0, 600] },
+      // FIX (audit bug - orphan row): this had a commission row but no price row, so it was
+      // unreachable/unusable. Priced here in line with the Graphene Ceramic Coating tiers minus
+      // the maintenance step this variant skips. Flagged in README — confirm real pricing.
+      { name: 'Ceramic Coating w/o maintenance', price: [10000, 12000, 14000, 16000, 0], comm: [2000, 2500, 3000, 3500, 0] },
+      { name: 'CUSTOM', price: [0, 0, 0, 0, 0], comm: [0, 0, 0, 0, 0], is_custom: 1 },
+    ];
+
+    const tx = db.transaction((rows) => {
+      for (const s of rows) {
+        insertSvc.run({
+          name: s.name,
+          price_S: s.price[0], price_M: s.price[1], price_L: s.price[2], price_XL: s.price[3], price_MOTO: s.price[4],
+          comm_S: s.comm[0], comm_M: s.comm[1], comm_L: s.comm[2], comm_XL: s.comm[3], comm_MOTO: s.comm[4],
+          is_custom: s.is_custom || 0,
+        });
+      }
+    });
+    tx(services);
+  }
+
+  const addonCount = db.prepare('SELECT COUNT(*) c FROM addons').get().c;
+  if (addonCount === 0) {
+    const insertAddon = db.prepare(`INSERT INTO addons
+      (name, price_S, price_M, price_L, price_XL, price_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO)
+      VALUES (@name, @price_S, @price_M, @price_L, @price_XL, @price_MOTO, @comm_S, @comm_M, @comm_L, @comm_XL, @comm_MOTO)`);
+
+    const addons = [
+      { name: 'Asphalt Removal', price: [300, 400, 500, 600, 0], comm: [100, 100, 100, 150, 0] },
+      { name: 'Headlight Restoration', price: [2000, 2000, 2000, 2000, 0], comm: [400, 400, 400, 400, 0] },
+      { name: 'Waterless Engine Detail', price: [2500, 2500, 2500, 2500, 0], comm: [500, 500, 500, 500, 0] },
+      { name: 'Engine Wash', price: [800, 800, 800, 800, 300], comm: [150, 150, 150, 150, 0] },
+      // Flat-rate trick per handover: same price/commission repeated across all classes.
+      { name: 'Bac 2 Zero', price: [600, 600, 600, 600, 600], comm: [100, 100, 100, 100, 0] },
+    ];
+
+    const tx = db.transaction((rows) => {
+      for (const a of rows) {
+        insertAddon.run({
+          name: a.name,
+          price_S: a.price[0], price_M: a.price[1], price_L: a.price[2], price_XL: a.price[3], price_MOTO: a.price[4],
+          comm_S: a.comm[0], comm_M: a.comm[1], comm_L: a.comm[2], comm_XL: a.comm[3], comm_MOTO: a.comm[4],
+        });
+      }
+    });
+    tx(addons);
+  }
+
+  const empCount = db.prepare('SELECT COUNT(*) c FROM employees').get().c;
+  if (empCount === 0) {
+    const insertEmp = db.prepare('INSERT INTO employees (name, rate_per_day, construction_rate) VALUES (?, ?, ?)');
+    const tx = db.transaction((rows) => {
+      for (const e of rows) insertEmp.run(e.name, e.rate, e.construction_rate);
+    });
+    tx([
+      { name: 'JP', rate: 700, construction_rate: 0 },
+      { name: 'Menan', rate: 560, construction_rate: 1000 },
+      { name: 'Ernesto', rate: 300, construction_rate: 700 },
+      { name: 'Jokjok', rate: 250, construction_rate: 700 },
+      { name: 'Aljane', rate: 250, construction_rate: 700 },
+      { name: 'Michael', rate: 250, construction_rate: 700 },
+      { name: 'Joy', rate: 200, construction_rate: 0 },
+    ]);
+  }
+}
+
+module.exports = { db, init, CLASSES };
