@@ -2,12 +2,18 @@ const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
+
+const dbPath = path.join(dataDir, 'gmqa.sqlite');
+const bundledDbPath = path.join(__dirname, 'data', 'gmqa.sqlite');
+if (process.env.DATA_DIR && !fs.existsSync(dbPath) && fs.existsSync(bundledDbPath)) {
+  fs.copyFileSync(bundledDbPath, dbPath);
+}
 
 // SQLite file lives next to the app so it persists on disk (Render/Railway with a
 // persistent volume, or just the local filesystem in dev).
-const db = new Database(path.join(dataDir, 'gmqa.sqlite'));
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
 const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO', 'BIG_MOTO'];
