@@ -322,7 +322,7 @@ tbody tr:hover{background:var(--surface-alt);}
   --shadow:0 12px 30px rgba(22,23,24,.08);
 }
 body{background:var(--bg);color:var(--text);font-size:14px;}
-.app{max-width:1600px;margin:0 auto;background:var(--bg);}
+.app{width:100%;max-width:none;margin:0;background:var(--bg);}
 .rail{width:248px;background:#18191b;border-right:0;padding:24px 16px;gap:26px;position:sticky;top:0;height:100vh;}
 .brand-lockup{display:flex;align-items:center;gap:10px;}
 .brand-lockup img{width:42px;height:42px;border-radius:50%;background:#fff;}
@@ -330,6 +330,7 @@ body{background:var(--bg);color:var(--text);font-size:14px;}
 .wordmark .sub{color:#9e9fa2;font-size:11px;letter-spacing:.04em;}
 .auth-panel{background:#222326;border-color:#36373a;}
 .auth-status{color:#c7c8c9;}
+.auth-email{font-size:11px;color:#f1f1ef;overflow-wrap:anywhere;line-height:1.35;margin:2px 0 10px;}
 .nav{gap:6px;}
 .nav button{display:flex;align-items:center;gap:10px;border-left:0;border-radius:7px;color:#aeb0b3;padding:11px 12px;}
 .nav button:hover{background:#2a2b2e;color:#fff;}
@@ -337,7 +338,7 @@ body{background:var(--bg);color:var(--text);font-size:14px;}
 .nav-icon{font-family:var(--mono);font-size:10px;opacity:.7;width:20px;}
 .nav button.active .nav-icon{color:var(--teal);}
 .rail-footer{color:#77797d;}
-.main{max-width:none;padding:34px 42px 56px;min-width:0;background:var(--bg);}
+.main{width:100%;max-width:1440px;padding:34px 42px 56px;min-width:0;background:var(--bg);}
 .view-header{border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:22px;}
 .view-header h1{font-size:32px;letter-spacing:.01em;color:var(--text);}
 .view-header h1::first-letter{color:var(--red);}
@@ -387,6 +388,7 @@ button.icon-btn:hover{background:#3a2023;color:var(--red);}
 .app-toast{position:fixed;right:26px;bottom:24px;z-index:20;max-width:360px;padding:13px 16px;border-radius:7px;background:#18191b;color:#fff;box-shadow:0 12px 30px rgba(0,0,0,.2);opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .2s ease,transform .2s ease;}
 .app-toast.show{opacity:1;transform:translateY(0);}
 .app-toast.error{background:#b31925;}
+.auth-signout{width:auto !important;max-width:100%;white-space:nowrap;text-align:center;}
 .eyebrow{display:block;color:var(--red);font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:4px;}
 .modal{max-height:calc(100vh - 28px);}
 .modal-card{background:var(--surface);border-color:var(--border);box-shadow:0 20px 70px rgba(0,0,0,.5);}
@@ -408,6 +410,7 @@ button.icon-btn:hover{background:#3a2023;color:var(--red);}
   .brand-lockup img{width:34px;height:34px;}
   .wordmark .name{font-size:17px;}
   .auth-panel{position:static;width:auto;padding:9px;}
+  .auth-email{max-width:100%;}
   .auth-panel .login-form{grid-template-columns:1fr 1fr auto;align-items:center;}
   .auth-panel .login-form .auth-error{grid-column:1/-1;}
   .auth-panel .login-form .btn{padding:8px 12px;}

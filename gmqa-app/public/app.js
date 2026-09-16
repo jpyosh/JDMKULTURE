@@ -37,8 +37,11 @@ window.addEventListener('unhandledrejection', event => {
 
 function applyAccessState() {
   const readOnly = !currentSession;
+  const authEmail = document.getElementById('auth-email');
   document.body.classList.toggle('read-only', readOnly);
   document.getElementById('auth-label').textContent = readOnly ? 'Read-only access' : 'Signed in';
+  authEmail.textContent = currentSession?.user?.email || '';
+  authEmail.hidden = readOnly;
   document.querySelector('.status-dot').classList.toggle('online', !readOnly);
   document.getElementById('login-form').hidden = !readOnly;
   document.getElementById('signout-btn').hidden = readOnly;
@@ -83,6 +86,11 @@ document.getElementById('signout-btn').addEventListener('click', () => authClien
 // ---------------- Nav ----------------
 document.querySelectorAll('.nav button').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (!currentSession && ['weekly', 'payroll'].includes(btn.dataset.view)) {
+      showToast('Sign in to access Weekly Rollup and Payroll', 'error');
+      document.getElementById('login-email').focus();
+      return;
+    }
     document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
