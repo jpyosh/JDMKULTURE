@@ -318,7 +318,7 @@ tbody tr:hover{background:var(--surface-alt);}
   --red:#b31925;
   --text:#f1f1ef;
   --muted:#a2a4a7;
-  --ink:#171819;
+  --ink:#f1f1ef;
   --shadow:0 12px 30px rgba(22,23,24,.08);
 }
 body{background:var(--bg);color:var(--text);font-size:14px;}
@@ -339,7 +339,8 @@ body{background:var(--bg);color:var(--text);font-size:14px;}
 .rail-footer{color:#77797d;}
 .main{max-width:none;padding:34px 42px 56px;min-width:0;background:var(--bg);}
 .view-header{border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:22px;}
-.view-header h1{font-size:32px;letter-spacing:.01em;color:var(--ink);}
+.view-header h1{font-size:32px;letter-spacing:.01em;color:var(--text);}
+.view-header h1::first-letter{color:var(--red);}
 .view-header .desc{color:var(--muted);font-size:13px;}
 input[type=date],input[type=text],input[type=number],input[type=time],select,textarea{background:#252629;border-color:#45474a;color:var(--text);min-height:38px;}
 input:focus,select:focus,textarea:focus{outline:2px solid rgba(197,31,43,.25);border-color:var(--teal);}
@@ -361,7 +362,7 @@ button.icon-btn:hover{background:#3a2023;color:var(--red);}
 .summary-card.accent{background:#18191b;color:#fff;}
 .summary-card.accent span,.summary-card.accent strong{color:#fff;}
 .guide-pill{background:#3a2023;color:#f19aa0;border-color:#7d3036;}
-.guide-pill.muted{background:#ededeb;color:#55575a;border-color:#d6d6d3;}
+.guide-pill.muted{background:#2b2c2f;color:#d4d5d6;border-color:#45474a;}
 .table-wrap{background:var(--surface);border-color:var(--border);}
 .daily-table thead th,.matrix-table thead th,.weekly-table thead th,.payroll-table thead th{background:#202124;color:#fff;}
 .daily-table th,.daily-table td{padding:10px 6px;}

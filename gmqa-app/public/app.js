@@ -13,6 +13,7 @@ function showToast(message, type = 'success') {
 }
 
 let pricing = { services: [], addons: [] };
+let currentEod = null;
 let authClient = null;
 let currentSession = null;
 const nativeFetch = window.fetch.bind(window);
@@ -376,6 +377,7 @@ async function loadEod() {
     fetch('/api/eod/' + date).then(r => r.json()),
     fetch('/api/meta/' + date).then(r => r.json()),
   ]);
+  currentEod = eod;
 
   document.getElementById('eod-metrics').innerHTML = `
     <div class="metric"><div class="label">Vehicles Serviced</div><div class="value">${eod.totalVehicles}</div></div>
@@ -439,6 +441,18 @@ async function loadEod() {
 }
 function varClass(v) { if (v == null) return 'money'; return v === 0 ? 'variance-ok' : 'variance-bad'; }
 
+function renderLiveVariance() {
+  if (!currentEod) return;
+  const actualCashValue = document.getElementById('meta-actual-cash').value;
+  const actualGcashValue = document.getElementById('meta-actual-gcash').value;
+  const cashVariance = actualCashValue === '' ? null : Number(actualCashValue) - currentEod.expectedCashAfter;
+  const gcashVariance = actualGcashValue === '' ? null : Number(actualGcashValue) - currentEod.expectedGcashAfter;
+  document.getElementById('variance-block').innerHTML = `
+    <div class="row-line"><span class="k">Cash Variance</span><span class="${varClass(cashVariance)}">${cashVariance == null ? '—' : peso(cashVariance)}</span></div>
+    <div class="row-line"><span class="k">GCash Variance</span><span class="${varClass(gcashVariance)}">${gcashVariance == null ? '—' : peso(gcashVariance)}</span></div>
+  `;
+}
+
 function expenseListHtml(list) {
   if (!list.length) return `<div class="empty-state" style="padding:10px;">No entries yet.</div>`;
   return list.map(e => `
@@ -492,6 +506,9 @@ document.getElementById('save-meta').addEventListener('click', async event => {
     loadEod();
   } finally { button.disabled = false; }
 });
+
+document.getElementById('meta-actual-cash').addEventListener('input', renderLiveVariance);
+document.getElementById('meta-actual-gcash').addEventListener('input', renderLiveVariance);
 
 // ================================================================
 // WEEKLY ROLLUP
