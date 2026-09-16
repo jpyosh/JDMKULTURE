@@ -401,8 +401,9 @@ async function loadEod() {
     <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
     <div class="row-line total"><span>Expected Cash (After Deductions)</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
     <div class="row-line" style="margin-top:8px;"><span class="k">GCash / Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
+    <div class="row-line"><span class="k">+ Customer Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
     <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
-    <div class="row-line"><span class="k">− GCash Tips to Distribute</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
+    <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
     <div class="row-line total"><span>Expected GCash (After Deductions)</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
     <div class="row-line total" style="border-top:2px solid var(--border);margin-top:10px;"><span>EXPECTED TOTAL</span><span class="money">${peso(eod.expectedTotal)}</span></div>
   `;
@@ -417,8 +418,9 @@ async function loadEod() {
     </div>
     <div class="breakdown-card"><h2>GCash Reconciliation</h2>
       <div class="row-line"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
+      <div class="row-line"><span class="k">+ Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
       <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
-      <div class="row-line"><span class="k">− Tips to Distribute</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
+      <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
       <div class="row-line total"><span>Expected GCash</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
     </div>
     <div class="breakdown-card tips"><h2>GCash Tips to Distribute</h2>

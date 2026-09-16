@@ -239,10 +239,12 @@ app.get('/api/eod/:date', async (req, res) => {
   const jobGcashTips = servicedJobs.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
   const manualGcashTips = Number(meta.gcash_tips_to_distribute || 0);
   const gcashTipsToDistribute = manualGcashTips + jobGcashTips;
+  const gcashTipsReceived = jobGcashTips + manualGcashTips;
 
   const expectedCashPre = Number(meta.cash_float || 0) + cashSales;
   const expectedCashAfter = expectedCashPre - totalComm - cashExpenses;
-  const expectedGcashPre = digitalSales;
+  // Customer tips are included in the GCash balance first, then removed when distributed.
+  const expectedGcashPre = digitalSales + gcashTipsReceived;
   const expectedGcashAfter = expectedGcashPre - gcashExpenses - gcashTipsToDistribute;
   const expectedTotal = expectedCashAfter + expectedGcashAfter;
 
@@ -260,7 +262,7 @@ app.get('/api/eod/:date', async (req, res) => {
     expectedCashPre, expectedCashAfter, expectedGcashPre, expectedGcashAfter, expectedTotal,
     actualCash, actualGcash, actualTotal,
     cashVariance, gcashVariance,
-    gcashTipsToDistribute, jobGcashTips, manualGcashTips,
+    gcashTipsToDistribute, gcashTipsReceived, jobGcashTips, manualGcashTips,
   });
 });
 
