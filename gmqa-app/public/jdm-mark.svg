@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title>JDM Kulture</title>
+  <circle cx="50" cy="50" r="46" fill="#f6f6f4" stroke="#18191b" stroke-width="5"/>
+  <circle cx="50" cy="50" r="38" fill="none" stroke="#c51f2b" stroke-width="2"/>
+  <path d="M20 36h16l-9 9h-7zM43 36h14l-8 8h-6zM63 36h17l-8 9H55z" fill="#18191b"/>
+  <path d="M70 36h10l-8 9H62z" fill="#c51f2b"/>
+  <path d="M22 58h56" stroke="#18191b" stroke-width="3"/>
+  <text x="50" y="70" fill="#18191b" font-family="Arial,sans-serif" font-size="10" font-weight="700" text-anchor="middle" letter-spacing="3">KULTURE</text>
+</svg>

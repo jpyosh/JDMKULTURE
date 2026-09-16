@@ -4,14 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GM QA — JDM Kulture Ops Console</title>
+<link rel="icon" href="jdm-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
   <nav class="rail">
     <div class="wordmark">
-      <div class="name">JDM KULTURE</div>
+      <div class="brand-lockup"><img src="jdm-mark.svg" alt="JDM Kulture"><div><div class="name">JDM KULTURE</div>
       <div class="sub">GM QA — Ops Console</div>
+      </div></div>
     </div>
     <div class="auth-panel" id="auth-panel">
       <div class="auth-status"><span class="status-dot"></span><span id="auth-label">Read-only access</span></div>
@@ -23,12 +25,12 @@
       </form>
       <button class="btn ghost auth-signout" id="signout-btn" type="button">Sign out</button>
     </div>
-    <div class="nav">
-      <button data-view="daily" class="active">Daily Log</button>
-      <button data-view="pricing">Pricing Matrix</button>
-      <button data-view="eod">EOD Dashboard</button>
-      <button data-view="weekly">Weekly Rollup</button>
-      <button data-view="payroll">Payroll</button>
+    <div class="nav" aria-label="Main navigation">
+      <button data-view="daily" class="active"><span class="nav-icon">01</span>Daily Log</button>
+      <button data-view="pricing"><span class="nav-icon">02</span>Pricing Matrix</button>
+      <button data-view="eod"><span class="nav-icon">03</span>EOD Dashboard</button>
+      <button data-view="weekly"><span class="nav-icon">04</span>Weekly Rollup</button>
+      <button data-view="payroll"><span class="nav-icon">05</span>Payroll</button>
     </div>
     <div class="rail-footer">
       Built from the GM QA handover.<br>
@@ -344,11 +346,26 @@
   </main>
 </div>
 
+<div id="app-toast" class="app-toast" role="status" aria-live="polite"></div>
+
 <dialog id="job-review-modal" class="modal">
   <form method="dialog" class="modal-card" id="job-review-form">
     <div class="modal-header"><div><h2>Review Job Order</h2><p>Check the full entry before adding it.</p></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
     <div id="job-review-details" class="review-details"></div>
     <div class="modal-actions"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" id="confirm-add-job" value="default">Add Job</button></div>
+  </form>
+</dialog>
+
+<dialog id="employee-modal" class="modal">
+  <form method="dialog" class="modal-card" id="employee-form">
+    <div class="modal-header"><div><span class="eyebrow">Team setup</span><h2>Add employee</h2><p>Create a payroll profile before recording attendance.</p></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
+    <div class="form-grid modal-form-grid">
+      <div><label for="employee-name">Name</label><input id="employee-name" required></div>
+      <div><label for="employee-role">Role</label><input id="employee-role" placeholder="Detailer"></div>
+      <div><label for="employee-rate">Carwash rate / day</label><input id="employee-rate" type="number" min="0" step="0.01" value="250" required></div>
+      <div><label for="employee-construction-rate">Construction rate / day</label><input id="employee-construction-rate" type="number" min="0" step="0.01" value="700" required></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" id="confirm-add-employee" value="default">Add employee</button></div>
   </form>
 </dialog>
 

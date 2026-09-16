@@ -129,6 +129,11 @@ app.get('/api/jobs/:date', async (req, res) => {
 app.post('/api/jobs', async (req, res) => {
   const j = req.body;
   if (!j.job_date) return res.status(400).json({ error: 'job_date required' });
+  if (j.vehicle_class && !CLASSES.includes(j.vehicle_class)) return res.status(400).json({ error: 'Invalid vehicle class' });
+  if (j.payment_method && !['Cash', 'GCash'].includes(j.payment_method)) return res.status(400).json({ error: 'Invalid payment method' });
+  for (const field of ['custom_price', 'custom_comm', 'discount', 'tip_gcash']) {
+    if (Number(j[field] || 0) < 0) return res.status(400).json({ error: `${field} cannot be negative` });
+  }
 
   const seq = Number((await db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date)).c) + 1;
   const jo_number = joNumber(j.job_date, seq);
@@ -177,6 +182,8 @@ app.get('/api/expenses/:date', async (req, res) => {
 
 app.post('/api/expenses', async (req, res) => {
   const e = req.body;
+  if (!e.expense_date || !['cash', 'gcash'].includes(e.side)) return res.status(400).json({ error: 'Valid expense date and side required' });
+  if (!Number.isFinite(Number(e.amount)) || Number(e.amount) <= 0) return res.status(400).json({ error: 'Expense amount must be greater than zero' });
   const info = await db.prepare('INSERT INTO expenses (expense_date, side, description, amount) VALUES (?,?,?,?)')
     .run(e.expense_date, e.side, e.description || '', e.amount || 0);
   res.json(await db.prepare('SELECT * FROM expenses WHERE id=?').get(info.lastInsertRowid));
@@ -262,17 +269,18 @@ app.get('/api/eod/:date', async (req, res) => {
 app.get('/api/weekly', async (req, res) => {
   const { start, end } = req.query;
   const rows = await db.prepare(`
-    SELECT job_date,
-      SUM(CASE WHEN vehicle_class IS NOT NULL AND vehicle_class != '' THEN 1 ELSE 0 END) as vehicles
-    FROM jobs WHERE job_date BETWEEN ? AND ? GROUP BY job_date`).all(start, end);
+    SELECT job_date FROM jobs WHERE job_date BETWEEN ? AND ?
+    UNION SELECT expense_date AS job_date FROM expenses WHERE expense_date BETWEEN ? AND ?
+    ORDER BY job_date`).all(start, end, start, end);
 
   const days = await Promise.all(rows.map(async r => {
-    const jobs = (await Promise.all((await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date))
+    const dayJobs = await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date);
+    const jobs = (await Promise.all(dayJobs
       .filter(j => j.vehicle_class).map(async j => ({ ...j, computed: await computeJob(j) }))));
     const gross = jobs.reduce((s, j) => s + j.computed.totalPrice, 0);
     const comm = jobs.reduce((s, j) => s + j.computed.detailerComm, 0);
     const expenses = (await db.prepare('SELECT SUM(amount) t FROM expenses WHERE expense_date=?').get(r.job_date)).t || 0;
-    return { date: r.job_date, vehicles: r.vehicles, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
+    return { date: r.job_date, vehicles: jobs.length, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
   }));
 
   const totals = days.reduce((a, d) => ({
@@ -292,8 +300,9 @@ app.get('/api/employees', async (req, res) => {
 
 app.post('/api/employees', async (req, res) => {
   const e = req.body;
-  const info = await db.prepare('INSERT INTO employees (name, rate_per_day, construction_rate) VALUES (?,?,?)')
-    .run(e.name, e.rate_per_day || 0, e.construction_rate || 0);
+  if (!e.name || !String(e.name).trim()) return res.status(400).json({ error: 'Employee name required' });
+  const info = await db.prepare('INSERT INTO employees (name, role, rate_per_day, construction_rate) VALUES (?,?,?,?)')
+    .run(String(e.name).trim(), e.role || '', e.rate_per_day || 0, e.construction_rate || 0);
   res.json(await db.prepare('SELECT * FROM employees WHERE id=?').get(info.lastInsertRowid));
 });
 
@@ -359,15 +368,16 @@ app.get('/api/payroll/:periodLabel', async (req, res) => {
     const halfDays = totals.half;
     const constructionDays = totals.construction;
     const regularPay = Number(emp.rate_per_day) * fullDays;
-    const halfDayPay = Number(emp.rate_per_day) * (halfDays + totals.constructionHalf) * 0.5;
+    const halfDayPay = Number(emp.rate_per_day) * halfDays * 0.5;
+    const constructionHalfPay = Number(emp.construction_rate) * totals.constructionHalf * 0.5;
     const cwOtPay = Number(emp.rate_per_day) / 8 * 1.25 * Number(entry.cw_ot_hours || entry.ot_hours || 0);
     const cnOtPay = Number(emp.construction_rate) / 8 * 1.25 * Number(entry.cn_ot_hours || 0);
     const constructionPay = Number(emp.construction_rate) * constructionDays;
     const finalAbsences = totals.absences;
     const finalDaysOff = totals.daysOff;
     const computedEntry = { ...entry, days_worked: fullDays, half_days: halfDays, construction_days: constructionDays, absences: finalAbsences, day_off: finalDaysOff };
-    const finalSalary = regularPay + halfDayPay + cwOtPay + cnOtPay + constructionPay - Number(entry.deductions || 0);
-    return { employee: emp, entry: computedEntry, regularPay, halfDayPay, cwOtPay, cnOtPay, constructionPay, finalSalary };
+    const finalSalary = regularPay + halfDayPay + constructionHalfPay + cwOtPay + cnOtPay + constructionPay - Number(entry.deductions || 0);
+    return { employee: emp, entry: computedEntry, regularPay, halfDayPay, constructionHalfPay, cwOtPay, cnOtPay, constructionPay, finalSalary };
   });
   const totalNetPay = merged.reduce((s, m) => s + m.finalSalary, 0);
   res.json({ periodLabel, rows: merged, totalNetPay });

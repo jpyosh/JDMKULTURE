@@ -1,6 +1,16 @@
 const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO', 'BIG_MOTO'];
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+let toastTimer;
+
+function showToast(message, type = 'success') {
+  const toast = document.getElementById('app-toast');
+  toast.textContent = message;
+  toast.className = `app-toast show ${type === 'error' ? 'error' : ''}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.className = 'app-toast'; }, 3200);
+}
 
 let pricing = { services: [], addons: [] };
 let authClient = null;
@@ -10,8 +20,19 @@ const nativeFetch = window.fetch.bind(window);
 window.fetch = async (input, init = {}) => {
   const headers = new Headers(init.headers || {});
   if (currentSession?.access_token) headers.set('Authorization', `Bearer ${currentSession.access_token}`);
-  return nativeFetch(input, { ...init, headers });
+  const response = await nativeFetch(input, { ...init, headers });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try { message = (await response.clone().json()).error || message; } catch {}
+    showToast(message, 'error');
+    throw new Error(message);
+  }
+  return response;
 };
+
+window.addEventListener('unhandledrejection', event => {
+  showToast(event.reason?.message || 'Something went wrong. Please try again.', 'error');
+});
 
 function applyAccessState() {
   const readOnly = !currentSession;
@@ -92,8 +113,8 @@ function populateQuickJobSelectors() {
   const addonEl = document.getElementById('new-job-addon');
   if (!serviceEl || !addonEl) return;
 
-  serviceEl.innerHTML = '<option value="">Select service</option>' + pricing.services.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-  addonEl.innerHTML = '<option value="">None</option>' + pricing.addons.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+  serviceEl.innerHTML = '<option value="">Select service</option>' + pricing.services.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  addonEl.innerHTML = '<option value="">None</option>' + pricing.addons.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
 }
 
 async function loadDaily() {
@@ -122,7 +143,7 @@ function renderDailyMetrics(jobs) {
 function selectOptions(list, selectedId, placeholder) {
   let html = `<option value="">${placeholder}</option>`;
   for (const item of list) {
-    html += `<option value="${item.id}" ${item.id == selectedId ? 'selected' : ''}>${item.name}</option>`;
+    html += `<option value="${item.id}" ${item.id == selectedId ? 'selected' : ''}>${esc(item.name)}</option>`;
   }
   return html;
 }
@@ -147,22 +168,22 @@ function rowHtml(j) {
   const c = j.computed;
   return `<tr data-id="${j.id}">
     <td class="jo-number">${j.jo_number || '—'}</td>
-    <td><input type="time" data-field="time_in" value="${j.time_in || ''}"></td>
-    <td><input type="time" data-field="time_out" value="${j.time_out || ''}"></td>
+    <td><input type="time" data-field="time_in" value="${esc(j.time_in)}"></td>
+    <td><input type="time" data-field="time_out" value="${esc(j.time_out)}"></td>
     <td>
       <select data-field="vehicle_class">
         <option value="">—</option>
         ${CLASSES.map(c2 => `<option value="${c2}" ${j.vehicle_class === c2 ? 'selected' : ''}>${c2}</option>`).join('')}
       </select>
     </td>
-    <td><input type="text" data-field="plate" value="${j.plate || ''}"></td>
+    <td><input type="text" data-field="plate" value="${esc(j.plate)}"></td>
     <td><select data-field="service_id">${selectOptions(pricing.services, j.service_id, 'Select…')}</select></td>
     <td><select data-field="addon_id">${selectOptions(pricing.addons, j.addon_id, 'None')}</select></td>
     <td>
       <details class="extras-menu">
         <summary>${j.custom_addon_name || j.discount || j.tip_gcash ? 'Edit extras' : 'Add extras'}</summary>
         <div class="extras-fields">
-          <input type="text" data-field="custom_addon_name" value="${j.custom_addon_name || ''}" placeholder="Custom item">
+          <input type="text" data-field="custom_addon_name" value="${esc(j.custom_addon_name)}" placeholder="Custom item">
           <input type="number" data-field="custom_price" value="${j.custom_price || ''}" placeholder="Custom price">
           <input type="number" data-field="custom_comm" value="${j.custom_comm || ''}" placeholder="Custom comm.">
           <input type="number" data-field="discount" value="${j.discount || ''}" placeholder="Discount">
@@ -173,7 +194,7 @@ function rowHtml(j) {
     <td><select data-field="payment_method">
         ${['Cash', 'GCash'].map(p => `<option ${j.payment_method === p ? 'selected' : ''}>${p}</option>`).join('')}
       </select></td>
-    <td><input type="text" data-field="detailer" value="${j.detailer || ''}"></td>
+    <td><input type="text" data-field="detailer" value="${esc(j.detailer)}"></td>
     <td class="num money">${peso(c.totalPrice)}</td>
     <td class="num money amber-text">${peso(c.detailerComm)}</td>
     <td class="num money pos">${peso(c.netRevenue)}</td>
@@ -184,7 +205,7 @@ function rowHtml(j) {
 let pendingJobPayload = null;
 
 function reviewDetail(label, value, full = false) {
-  return `<div class="review-detail${full ? ' full' : ''}"><span class="label">${label}</span><span class="value">${value || '—'}</span></div>`;
+  return `<div class="review-detail${full ? ' full' : ''}"><span class="label">${esc(label)}</span><span class="value">${esc(value || '—')}</span></div>`;
 }
 
 document.getElementById('add-job-btn').addEventListener('click', () => {
@@ -264,8 +285,10 @@ async function updateJob(id, field, value) {
 }
 
 async function deleteJob(id) {
+  if (!window.confirm('Delete this job order? This removes it from daily totals and cannot be undone.')) return;
   await fetch('/api/jobs/' + id, { method: 'DELETE' });
-  loadDaily();
+  showToast('Job order deleted');
+  await loadDaily();
 }
 
 // ================================================================
@@ -273,6 +296,8 @@ async function deleteJob(id) {
 // ================================================================
 async function loadPricingView() {
   pricing = await fetch('/api/pricing').then(r => r.json());
+  document.getElementById('pricing-service-count').textContent = pricing.services.length;
+  document.getElementById('pricing-addon-count').textContent = pricing.addons.length;
   renderPricingTable('services', pricing.services, 'services-tbody');
   renderPricingTable('addons', pricing.addons, 'addons-tbody');
 }
@@ -281,7 +306,7 @@ function renderPricingTable(kind, rows, tbodyId) {
   const tbody = document.getElementById(tbodyId);
   tbody.innerHTML = rows.map(r => `
     <tr data-id="${r.id}" data-kind="${kind}">
-      <td><input type="text" data-field="name" value="${r.name}" style="width:220px"></td>
+      <td><input type="text" data-field="name" value="${esc(r.name)}" style="width:220px"></td>
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="price_${c}" value="${r['price_' + c]}" class="mini-input"></td>`).join('')}
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="comm_${c}" value="${r['comm_' + c]}" class="mini-input"></td>`).join('')}
       <td class="table-actions"><button class="icon-btn del-pricing" title="Delete ${kind === 'services' ? 'service' : 'add-on'}" aria-label="Delete">✕</button></td>
@@ -304,6 +329,7 @@ async function deletePricing(row) {
   renderPricingTable('services', pricing.services, 'services-tbody');
   renderPricingTable('addons', pricing.addons, 'addons-tbody');
   populateQuickJobSelectors();
+  showToast(`${kind === 'service' ? 'Service' : 'Add-on'} archived`);
 }
 
 async function savePricingCell(el) {
@@ -415,13 +441,15 @@ function expenseListHtml(list) {
   if (!list.length) return `<div class="empty-state" style="padding:10px;">No entries yet.</div>`;
   return list.map(e => `
     <div class="row-line">
-      <span class="k">${e.description || 'ITEM'}</span>
+      <span class="k">${esc(e.description || 'ITEM')}</span>
       <span>${peso(e.amount)} <button class="icon-btn del-exp" data-id="${e.id}">✕</button></span>
     </div>`).join('');
 }
 
 async function deleteExpense(id) {
+  if (!window.confirm('Delete this expense? It will be removed from the EOD reconciliation.')) return;
   await fetch('/api/expenses/' + id, { method: 'DELETE' });
+  showToast('Expense deleted');
   loadEod();
 }
 
@@ -445,8 +473,10 @@ async function addExpense(side, descId, amtId) {
   } finally { button.disabled = false; }
 }
 
-document.getElementById('save-meta').addEventListener('click', async () => {
-  await fetch('/api/meta/' + eodDateEl.value, {
+document.getElementById('save-meta').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await fetch('/api/meta/' + eodDateEl.value, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       supervisor: document.getElementById('meta-supervisor').value,
@@ -456,7 +486,9 @@ document.getElementById('save-meta').addEventListener('click', async () => {
       actual_gcash: document.getElementById('meta-actual-gcash').value === '' ? null : Number(document.getElementById('meta-actual-gcash').value),
     }),
   });
-  loadEod();
+    showToast('EOD details saved');
+    loadEod();
+  } finally { button.disabled = false; }
 });
 
 // ================================================================
@@ -540,8 +572,8 @@ async function loadPayroll() {
   const tbody = document.getElementById('payroll-tbody');
   tbody.innerHTML = rows.map(r => `
     <tr data-emp="${r.employee.id}">
-      <td><input type="text" data-employee-field="name" value="${r.employee.name}" class="employee-name"></td>
-      <td><input type="text" data-employee-field="role" value="${r.employee.role || ''}" placeholder="Role" class="employee-role"></td>
+      <td><input type="text" data-employee-field="name" value="${esc(r.employee.name)}" class="employee-name"></td>
+      <td><input type="text" data-employee-field="role" value="${esc(r.employee.role)}" placeholder="Role" class="employee-role"></td>
       ${dates.map(date => `<td class="attendance-cell"><select data-attendance-date="${date}" class="attendance-select">${attendanceCodes.map(code => `<option value="${code}" ${(JSON.parse(r.entry.attendance || '{}')[date] || '') === code ? 'selected' : ''}>${code || '—'}</option>`).join('')}</select></td>`).join('')}
       <td class="num">${r.entry.days_worked + (r.entry.half_days || 0) * 0.5}</td>
       <td class="num">${r.entry.construction_days}</td>
@@ -588,15 +620,28 @@ async function removeEmployee(id) {
   loadPayroll();
 }
 
-document.getElementById('add-employee-btn').addEventListener('click', async () => {
-  const name = prompt('Employee name:');
+document.getElementById('add-employee-btn').addEventListener('click', () => {
+  document.getElementById('employee-form').reset();
+  document.getElementById('employee-rate').value = '250';
+  document.getElementById('employee-construction-rate').value = '700';
+  document.getElementById('employee-modal').showModal();
+});
+
+document.getElementById('confirm-add-employee').addEventListener('click', async event => {
+  event.preventDefault();
+  const name = document.getElementById('employee-name').value.trim();
   if (!name) return;
-  const rate = Number(prompt('Rate per day:', '250') || 0);
-  await fetch('/api/employees', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, rate_per_day: rate, construction_rate: 700 }),
-  });
-  loadPayroll();
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await fetch('/api/employees', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, role: document.getElementById('employee-role').value.trim(), rate_per_day: Number(document.getElementById('employee-rate').value || 0), construction_rate: Number(document.getElementById('employee-construction-rate').value || 0) }),
+    });
+    document.getElementById('employee-modal').close();
+    showToast('Employee added');
+    loadPayroll();
+  } finally { button.disabled = false; }
 });
 
 // ---------------- init ----------------
