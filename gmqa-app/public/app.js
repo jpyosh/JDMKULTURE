@@ -323,20 +323,25 @@ weekEndEl.addEventListener('change', loadWeekly);
 async function loadWeekly() {
   const { days, totals } = await fetch(`/api/weekly?start=${weekStartEl.value}&end=${weekEndEl.value}`).then(r => r.json());
   const tbody = document.getElementById('weekly-tbody');
+  document.getElementById('weekly-summary').innerHTML = `
+    <div class="weekly-stat"><span class="weekly-stat-label">Vehicles serviced</span><strong>${totals.vehicles}</strong><span class="weekly-stat-note">Across selected days</span></div>
+    <div class="weekly-stat"><span class="weekly-stat-label">Gross sales</span><strong>${peso(totals.grossSales)}</strong><span class="weekly-stat-note">Total collected</span></div>
+    <div class="weekly-stat"><span class="weekly-stat-label">Total deductions</span><strong class="amber-text">${peso(totals.commissions + totals.otherExpenses)}</strong><span class="weekly-stat-note">Commissions + expenses</span></div>
+    <div class="weekly-stat weekly-stat-profit"><span class="weekly-stat-label">True net profit</span><strong class="pos">${peso(totals.netProfit)}</strong><span class="weekly-stat-note">After all deductions</span></div>
+  `;
   if (!days.length) {
     tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No job data in this range yet.</div></td></tr>`;
     return;
   }
   tbody.innerHTML = days.map(d => `
     <tr>
-      <td>${d.date}</td><td class="num">${d.vehicles}</td><td class="num money">${peso(d.grossSales)}</td>
-      <td class="num money">${peso(d.commissions)}</td><td class="num money">${peso(d.otherExpenses)}</td>
-      <td class="num money pos">${peso(d.netProfit)}</td>
+      <td><strong class="weekly-date">${d.date}</strong></td><td class="num" data-label="Vehicles serviced">${d.vehicles}</td><td class="num money" data-label="Gross sales">${peso(d.grossSales)}</td>
+      <td class="num money" data-label="Commissions">${peso(d.commissions)}</td><td class="num money" data-label="Other expenses">${peso(d.otherExpenses)}</td><td class="num money pos weekly-profit" data-label="True net profit">${peso(d.netProfit)}</td>
     </tr>`).join('') + `
-    <tr style="font-weight:600;">
-      <td>Total</td><td class="num">${totals.vehicles}</td><td class="num money">${peso(totals.grossSales)}</td>
+    <tr class="weekly-total">
+      <td><strong>Total for period</strong></td><td class="num">${totals.vehicles}</td><td class="num money">${peso(totals.grossSales)}</td>
       <td class="num money">${peso(totals.commissions)}</td><td class="num money">${peso(totals.otherExpenses)}</td>
-      <td class="num money pos">${peso(totals.netProfit)}</td>
+      <td class="num money pos weekly-profit">${peso(totals.netProfit)}</td>
     </tr>`;
 }
 

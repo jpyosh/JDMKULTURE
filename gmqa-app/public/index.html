@@ -249,15 +249,31 @@
           <h1>Weekly Rollup</h1>
           <div class="desc">True Net Profit = Gross Sales − Commissions − Other Expenses.</div>
         </div>
-        <div style="display:flex; gap:10px;">
-          <div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Start</label><input type="date" id="week-start"></div>
-          <div><label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">End</label><input type="date" id="week-end"></div>
+        <div class="date-range-picker">
+          <div><label for="week-start">Start date</label><input type="date" id="week-start"></div>
+          <span class="range-arrow" aria-hidden="true">→</span>
+          <div><label for="week-end">End date</label><input type="date" id="week-end"></div>
         </div>
       </div>
-      <div class="card">
-        <div style="overflow-x:auto;">
-          <table>
-            <thead><tr><th>Date</th><th class="num">Vehicles</th><th class="num">Gross Sales</th><th class="num">Commissions</th><th class="num">Other Expenses</th><th class="num">True Net Profit</th></tr></thead>
+      <div class="weekly-summary" id="weekly-summary"></div>
+      <div class="card weekly-card">
+        <div class="section-header weekly-section-header">
+          <div>
+            <h2>Daily performance</h2>
+            <p>Review sales, deductions, and profit day by day.</p>
+          </div>
+          <span class="subtle-badge">Live rollup</span>
+        </div>
+        <div class="table-wrap weekly-table-wrap">
+          <table class="weekly-table">
+            <thead><tr>
+              <th><span>Date</span><small>Trading day</small></th>
+              <th class="num"><span>Vehicles</span><small>Serviced</small></th>
+              <th class="num"><span>Gross sales</span><small>Before deductions</small></th>
+              <th class="num"><span>Commissions</span><small>Labor cost</small></th>
+              <th class="num"><span>Other expenses</span><small>Operating cost</small></th>
+              <th class="num"><span>True net profit</span><small>After deductions</small></th>
+            </tr></thead>
             <tbody id="weekly-tbody"></tbody>
           </table>
         </div>

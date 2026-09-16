@@ -197,3 +197,47 @@ tbody tr:hover{background:var(--surface-alt);}
 .form-grid label{display:block; font-size:11px; color:var(--muted); margin-bottom:4px;}
 
 .empty-state{color:var(--muted); font-size:13px; padding:24px; text-align:center; border:1px dashed var(--border); border-radius:10px;}
+
+/* ---------- Weekly rollup ---------- */
+.date-range-picker{display:flex; align-items:flex-end; gap:10px;}
+.date-range-picker label{display:block; color:var(--muted); font-size:11px; margin-bottom:5px;}
+.date-range-picker input{min-width:142px;}
+.range-arrow{color:var(--teal); font-size:16px; padding-bottom:8px;}
+.weekly-summary{display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin-bottom:18px;}
+.weekly-stat{display:flex; flex-direction:column; gap:5px; min-width:0; padding:14px 16px; background:var(--surface); border:1px solid var(--border); border-radius:10px;}
+.weekly-stat-label{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.07em;}
+.weekly-stat strong{font-family:var(--mono); font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.weekly-stat-note{font-size:11px; color:var(--muted);}
+.weekly-stat-profit{border-color:rgba(47,217,176,.35); background:linear-gradient(135deg, rgba(47,217,176,.11), var(--surface));}
+.amber-text{color:var(--amber);}
+.weekly-section-header{align-items:flex-start;}
+.weekly-section-header h2{margin-bottom:4px;}
+.weekly-section-header p{margin:0; color:var(--muted); font-size:12px;}
+.weekly-table{width:100%; border-collapse:separate; border-spacing:0; font-size:13px;}
+.weekly-table thead th{padding:14px 16px; background:rgba(25,30,38,.96); border-bottom:1px solid var(--border); color:var(--text); text-align:left;}
+.weekly-table thead th:first-child{border-top-left-radius:7px;}
+.weekly-table thead th:last-child{border-top-right-radius:7px;}
+.weekly-table th span{display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em;}
+.weekly-table th small{display:block; margin-top:4px; color:var(--muted); font-size:10px; font-weight:400; text-transform:none; letter-spacing:0;}
+.weekly-table td{padding:15px 16px; border-bottom:1px solid var(--border); background:rgba(25,30,38,.2);}
+.weekly-table tbody tr:hover td{background:rgba(36,42,52,.7);}
+.weekly-table tbody tr:last-child td{border-bottom:none;}
+.weekly-table .weekly-date{font-family:var(--mono); font-size:12px; color:var(--text);}
+.weekly-table .weekly-profit{font-weight:600;}
+.weekly-table .weekly-total td{background:rgba(47,217,176,.06); border-top:1px solid rgba(47,217,176,.2); font-weight:600;}
+.weekly-table .weekly-total td:first-child{color:var(--teal);}
+
+@media (max-width: 760px){
+  .weekly-summary{grid-template-columns:repeat(2, minmax(0, 1fr));}
+  .date-range-picker{width:100%;}
+  .date-range-picker > div{flex:1;}
+  .date-range-picker input{min-width:0;}
+  .weekly-table-wrap{border:none; overflow:visible; background:none;}
+  .weekly-table, .weekly-table tbody, .weekly-table tr, .weekly-table td{display:block; width:100%;}
+  .weekly-table thead{display:none;}
+  .weekly-table tr{margin-bottom:10px; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:rgba(25,30,38,.35);}
+  .weekly-table td{display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid var(--border); text-align:right;}
+  .weekly-table td:first-child{display:block; text-align:left; background:rgba(47,217,176,.07);}
+  .weekly-table td:not(:first-child)::before{content:attr(data-label); color:var(--muted); font-size:11px; text-align:left;}
+  .weekly-table .weekly-total td:first-child{background:rgba(47,217,176,.1);}
+}
