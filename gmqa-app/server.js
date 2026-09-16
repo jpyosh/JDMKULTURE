@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { db, init, CLASSES } = require('./db');
+const { createClient } = require('@supabase/supabase-js');
 
 fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
 const ready = Promise.resolve().then(() => init());
@@ -48,11 +49,32 @@ function joNumber(dateStr, seq) {
   return `JO-${m}${d}${y.slice(2)}-${String(seq).padStart(3, '0')}`;
 }
 
+const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
+  : null;
+
+async function requireAuth(req, res, next) {
+  if (!supabaseAuth) return res.status(503).json({ error: 'Authentication is not configured on the server' });
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  const { data, error } = await supabaseAuth.auth.getUser(token);
+  if (error || !data.user) return res.status(401).json({ error: 'Invalid or expired session' });
+  req.user = data.user;
+  next();
+}
+
+app.get('/api/auth/config', (req, res) => {
+  res.json({ url: process.env.SUPABASE_URL || '', anonKey: process.env.SUPABASE_ANON_KEY || '' });
+});
+
+// GET requests remain available for read-only access; every mutation requires a valid Supabase session.
+app.use('/api', (req, res, next) => req.method === 'GET' ? next() : requireAuth(req, res, next));
+
 // ---------- Pricing Matrix ----------
 
 app.get('/api/pricing', async (req, res) => {
-  const services = await db.prepare('SELECT * FROM services ORDER BY id').all();
-  const addons = await db.prepare('SELECT * FROM addons ORDER BY id').all();
+  const services = await db.prepare('SELECT * FROM services WHERE active=1 ORDER BY id').all();
+  const addons = await db.prepare('SELECT * FROM addons WHERE active=1 ORDER BY id').all();
   res.json({ classes: CLASSES, services, addons });
 });
 
@@ -71,6 +93,11 @@ app.post('/api/pricing/service', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
 });
 
+app.delete('/api/pricing/service/:id', async (req, res) => {
+  await db.prepare('UPDATE services SET active=0 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.put('/api/pricing/addon/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
@@ -84,6 +111,11 @@ app.post('/api/pricing/addon', async (req, res) => {
   const info = await db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(a);
   res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(info.lastInsertRowid));
+});
+
+app.delete('/api/pricing/addon/:id', async (req, res) => {
+  await db.prepare('UPDATE addons SET active=0 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ---------- Daily Log / Jobs ----------
@@ -197,11 +229,14 @@ app.get('/api/eod/:date', async (req, res) => {
 
   const cashExpenses = expenses.filter(e => e.side === 'cash').reduce((s, e) => s + Number(e.amount || 0), 0);
   const gcashExpenses = expenses.filter(e => e.side === 'gcash').reduce((s, e) => s + Number(e.amount || 0), 0);
+  const jobGcashTips = servicedJobs.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
+  const manualGcashTips = Number(meta.gcash_tips_to_distribute || 0);
+  const gcashTipsToDistribute = manualGcashTips + jobGcashTips;
 
   const expectedCashPre = Number(meta.cash_float || 0) + cashSales;
   const expectedCashAfter = expectedCashPre - totalComm - cashExpenses;
   const expectedGcashPre = digitalSales;
-  const expectedGcashAfter = expectedGcashPre - gcashExpenses - Number(meta.gcash_tips_to_distribute || 0);
+  const expectedGcashAfter = expectedGcashPre - gcashExpenses - gcashTipsToDistribute;
   const expectedTotal = expectedCashAfter + expectedGcashAfter;
 
   const actualCash = meta.actual_cash;
@@ -218,7 +253,7 @@ app.get('/api/eod/:date', async (req, res) => {
     expectedCashPre, expectedCashAfter, expectedGcashPre, expectedGcashAfter, expectedTotal,
     actualCash, actualGcash, actualTotal,
     cashVariance, gcashVariance,
-    gcashTipsToDistribute: Number(meta.gcash_tips_to_distribute || 0),
+    gcashTipsToDistribute, jobGcashTips, manualGcashTips,
   });
 });
 
@@ -298,38 +333,49 @@ function attendanceObject(entry) {
   try { return JSON.parse(entry.attendance || '{}'); } catch (_) { return {}; }
 }
 
+function mondayPeriod(periodLabel) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(periodLabel || '');
+  if (!match) return periodLabel;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return date.toISOString().slice(0, 10);
+}
+
 app.get('/api/payroll/:periodLabel', async (req, res) => {
+  const periodLabel = mondayPeriod(req.params.periodLabel);
   const employees = await db.prepare('SELECT * FROM employees WHERE active=1 ORDER BY id').all();
-  const entries = await db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(req.params.periodLabel);
+  const entries = await db.prepare('SELECT * FROM payroll_entries WHERE period_label=?').all(periodLabel);
   const merged = employees.map(emp => {
     const entry = entries.find(e => e.employee_id === emp.id) || {
-      employee_id: emp.id, period_label: req.params.periodLabel, attendance: '{}', days_worked: 0, half_days: 0,
+      employee_id: emp.id, period_label: periodLabel, attendance: '{}', days_worked: 0, half_days: 0,
       absences: 0, day_off: 0, ot_hours: 0,
       cw_ot_hours: 0, cn_ot_hours: 0, construction_days: 0, deductions: 0, notes: '',
     };
     const attendance = attendanceObject(entry);
     const hasAttendance = Object.keys(attendance).length > 0;
     const totals = attendanceTotals(entry);
-    const fullDays = hasAttendance ? totals.full : Number(entry.days_worked || 0);
-    const halfDays = hasAttendance ? totals.half : Number(entry.half_days || 0);
-    const constructionDays = hasAttendance ? totals.construction : Number(entry.construction_days || 0);
+    const fullDays = totals.full;
+    const halfDays = totals.half;
+    const constructionDays = totals.construction;
     const regularPay = Number(emp.rate_per_day) * fullDays;
     const halfDayPay = Number(emp.rate_per_day) * (halfDays + totals.constructionHalf) * 0.5;
     const cwOtPay = Number(emp.rate_per_day) / 8 * 1.25 * Number(entry.cw_ot_hours || entry.ot_hours || 0);
     const cnOtPay = Number(emp.construction_rate) / 8 * 1.25 * Number(entry.cn_ot_hours || 0);
     const constructionPay = Number(emp.construction_rate) * constructionDays;
-    const finalAbsences = hasAttendance ? totals.absences : Number(entry.absences || 0);
-    const finalDaysOff = hasAttendance ? totals.daysOff : Number(entry.day_off || 0);
+    const finalAbsences = totals.absences;
+    const finalDaysOff = totals.daysOff;
     const computedEntry = { ...entry, days_worked: fullDays, half_days: halfDays, construction_days: constructionDays, absences: finalAbsences, day_off: finalDaysOff };
     const finalSalary = regularPay + halfDayPay + cwOtPay + cnOtPay + constructionPay - Number(entry.deductions || 0);
     return { employee: emp, entry: computedEntry, regularPay, halfDayPay, cwOtPay, cnOtPay, constructionPay, finalSalary };
   });
   const totalNetPay = merged.reduce((s, m) => s + m.finalSalary, 0);
-  res.json({ periodLabel: req.params.periodLabel, rows: merged, totalNetPay });
+  res.json({ periodLabel, rows: merged, totalNetPay });
 });
 
 app.put('/api/payroll/:periodLabel/:employeeId', async (req, res) => {
-  const { periodLabel, employeeId } = req.params;
+  const periodLabel = mondayPeriod(req.params.periodLabel);
+  const { employeeId } = req.params;
   const b = req.body;
   const existing = await db.prepare('SELECT id FROM payroll_entries WHERE employee_id=? AND period_label=?').get(employeeId, periodLabel);
 

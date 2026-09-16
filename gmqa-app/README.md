@@ -38,6 +38,21 @@ Production uses Supabase Postgres through the server-only `DATABASE_URL` environ
 Never commit, print, or put that connection string in frontend code. Without `DATABASE_URL`,
 local development keeps using the existing SQLite file at `data/gmqa.sqlite`.
 
+### Authentication
+
+Supabase Auth protects every API mutation. Visitors can read the dashboards, but must sign in
+with an email/password Supabase user before they can add jobs, edit pricing, reconcile EOD,
+manage payroll, or change expenses. Configure these public project settings alongside
+`DATABASE_URL`:
+
+```
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+```
+
+Create users in Supabase Dashboard -> Authentication -> Users. The anon key is intended for
+browser use; never expose the service-role key or the database connection string.
+
 ## Run it locally first (optional, to see it before deploying)
 
 You need [Node.js](https://nodejs.org) 18+ installed.

@@ -13,6 +13,16 @@
       <div class="name">JDM KULTURE</div>
       <div class="sub">GM QA — Ops Console</div>
     </div>
+    <div class="auth-panel" id="auth-panel">
+      <div class="auth-status"><span class="status-dot"></span><span id="auth-label">Read-only access</span></div>
+      <form id="login-form" class="login-form">
+        <input type="email" id="login-email" placeholder="Email" autocomplete="email" required>
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
+        <button class="btn" type="submit">Sign in</button>
+        <div class="auth-error" id="auth-error" role="alert"></div>
+      </form>
+      <button class="btn ghost auth-signout" id="signout-btn" type="button">Sign out</button>
+    </div>
     <div class="nav">
       <button data-view="daily" class="active">Daily Log</button>
       <button data-view="pricing">Pricing Matrix</button>
@@ -46,7 +56,7 @@
       <div class="card">
         <div class="section-header">
           <h2>Quick Job Entry</h2>
-          <span class="subtle-badge">Service + payment + tip</span>
+          <span class="subtle-badge">Job details + payment</span>
         </div>
         <div class="entry-grid">
           <div>
@@ -89,11 +99,30 @@
             <input type="number" id="new-job-tip" min="0" step="0.01" placeholder="0.00">
           </div>
           <div>
+            <label>Custom item</label>
+            <input type="text" id="new-job-custom-name" placeholder="Optional extra">
+          </div>
+          <div>
+            <label>Custom price</label>
+            <input type="number" id="new-job-custom-price" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <div>
+            <label>Custom comm.</label>
+            <input type="number" id="new-job-custom-comm" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <div class="entry-group">
+            <div class="entry-group-title">Discount</div>
+            <label>Amount</label>
+            <input type="number" id="new-job-discount" min="0" step="0.01" placeholder="0.00">
+            <label>Notes</label>
+            <input type="text" id="new-job-discount-notes" placeholder="Reason (optional)">
+          </div>
+          <div>
             <label>Detailer</label>
             <input type="text" id="new-job-detailer" placeholder="Name">
           </div>
           <div class="submit-cell">
-            <button class="btn" id="add-job-btn">+ Add Job</button>
+            <button class="btn" id="add-job-btn" type="button">+ Review Job</button>
           </div>
         </div>
       </div>
@@ -158,7 +187,7 @@
         <div class="table-wrap">
           <table id="services-table" class="matrix-table">
             <thead>
-              <tr><th class="sticky-name">Service Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th></tr>
+              <tr><th class="sticky-name">Service Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th><th rowspan="2">Actions</th></tr>
               <tr><th class="sticky-name sub-head">&nbsp;</th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th>
                   <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th></tr>
             </thead>
@@ -175,7 +204,7 @@
         <div class="table-wrap">
           <table id="addons-table" class="matrix-table">
             <thead>
-              <tr><th class="sticky-name">Add-On Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th></tr>
+              <tr><th class="sticky-name">Add-On Name</th><th colspan="6" class="group-head">Price</th><th colspan="6" class="group-head">Commission</th><th rowspan="2">Actions</th></tr>
               <tr><th class="sticky-name sub-head">&nbsp;</th><th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th>
                   <th class="num">S</th><th class="num">M</th><th class="num">L</th><th class="num">XL</th><th class="num">MOTO</th><th class="num">BIG MOTO</th></tr>
             </thead>
@@ -199,6 +228,8 @@
       </div>
 
       <div class="metrics-row" id="eod-metrics"></div>
+
+      <div class="eod-breakdowns" id="eod-breakdowns"></div>
 
       <div class="two-col">
         <div class="card">
@@ -313,6 +344,15 @@
   </main>
 </div>
 
+<dialog id="job-review-modal" class="modal">
+  <form method="dialog" class="modal-card" id="job-review-form">
+    <div class="modal-header"><div><h2>Review Job Order</h2><p>Check the full entry before adding it.</p></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
+    <div id="job-review-details" class="review-details"></div>
+    <div class="modal-actions"><button class="btn ghost" value="cancel">Cancel</button><button class="btn" id="confirm-add-job" value="default">Add Job</button></div>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -3,6 +3,60 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 let pricing = { services: [], addons: [] };
+let authClient = null;
+let currentSession = null;
+const nativeFetch = window.fetch.bind(window);
+
+window.fetch = async (input, init = {}) => {
+  const headers = new Headers(init.headers || {});
+  if (currentSession?.access_token) headers.set('Authorization', `Bearer ${currentSession.access_token}`);
+  return nativeFetch(input, { ...init, headers });
+};
+
+function applyAccessState() {
+  const readOnly = !currentSession;
+  document.body.classList.toggle('read-only', readOnly);
+  document.getElementById('auth-label').textContent = readOnly ? 'Read-only access' : 'Signed in';
+  document.querySelector('.status-dot').classList.toggle('online', !readOnly);
+  document.getElementById('login-form').hidden = !readOnly;
+  document.getElementById('signout-btn').hidden = readOnly;
+  document.querySelectorAll('.view input:not([type="date"]), .view select, .view textarea, .view button').forEach(el => {
+    el.disabled = readOnly;
+  });
+}
+
+async function initAuth() {
+  const config = await nativeFetch('/api/auth/config').then(r => r.json());
+  if (config.url && config.anonKey && window.supabase) {
+    authClient = window.supabase.createClient(config.url, config.anonKey);
+    const result = await authClient.auth.getSession();
+    currentSession = result.data.session;
+    authClient.auth.onAuthStateChange((_event, session) => {
+      currentSession = session;
+      applyAccessState();
+      loadDaily();
+    });
+  }
+  applyAccessState();
+  loadDaily();
+}
+
+document.getElementById('login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const errorEl = document.getElementById('auth-error');
+  errorEl.textContent = '';
+  if (!authClient) {
+    errorEl.textContent = 'Supabase Auth is not configured.';
+    return;
+  }
+  const { error } = await authClient.auth.signInWithPassword({
+    email: document.getElementById('login-email').value.trim(),
+    password: document.getElementById('login-password').value,
+  });
+  if (error) errorEl.textContent = error.message;
+});
+
+document.getElementById('signout-btn').addEventListener('click', () => authClient?.auth.signOut());
 
 // ---------------- Nav ----------------
 document.querySelectorAll('.nav button').forEach(btn => {
@@ -86,6 +140,7 @@ function renderJobs(jobs) {
   tbody.querySelectorAll('.del-job').forEach(el => {
     el.addEventListener('click', () => deleteJob(el.closest('tr').dataset.id));
   });
+  applyAccessState();
 }
 
 function rowHtml(j) {
@@ -126,24 +181,65 @@ function rowHtml(j) {
   </tr>`;
 }
 
-document.getElementById('add-job-btn').addEventListener('click', async () => {
+let pendingJobPayload = null;
+
+function reviewDetail(label, value, full = false) {
+  return `<div class="review-detail${full ? ' full' : ''}"><span class="label">${label}</span><span class="value">${value || '—'}</span></div>`;
+}
+
+document.getElementById('add-job-btn').addEventListener('click', () => {
+  if (!currentSession) return;
   const date = dailyDateEl.value;
-  const payload = {
+  pendingJobPayload = {
     job_date: date,
     time_in: document.getElementById('new-job-time').value || null,
     vehicle_class: document.getElementById('new-job-class').value || null,
     plate: document.getElementById('new-job-plate').value || null,
     service_id: document.getElementById('new-job-service').value || null,
     addon_id: document.getElementById('new-job-addon').value || null,
+    custom_addon_name: document.getElementById('new-job-custom-name').value.trim() || null,
+    custom_price: Number(document.getElementById('new-job-custom-price').value || 0),
+    custom_comm: Number(document.getElementById('new-job-custom-comm').value || 0),
+    discount: Number(document.getElementById('new-job-discount').value || 0),
+    discount_reason: document.getElementById('new-job-discount-notes').value.trim() || null,
     payment_method: document.getElementById('new-job-payment').value || 'Cash',
     tip_gcash: Number(document.getElementById('new-job-tip').value || 0),
     detailer: document.getElementById('new-job-detailer').value || null,
   };
 
-  await fetch('/api/jobs', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const service = pricing.services.find(item => String(item.id) === pendingJobPayload.service_id);
+  const addon = pricing.addons.find(item => String(item.id) === pendingJobPayload.addon_id);
+  document.getElementById('job-review-details').innerHTML = [
+    reviewDetail('Date', pendingJobPayload.job_date),
+    reviewDetail('Time', pendingJobPayload.time_in),
+    reviewDetail('Vehicle', `${pendingJobPayload.vehicle_class || 'Not selected'}${pendingJobPayload.plate ? ` (${pendingJobPayload.plate})` : ''}`),
+    reviewDetail('Service', service?.name),
+    reviewDetail('Add-on', addon?.name),
+    reviewDetail('Payment', pendingJobPayload.payment_method),
+    reviewDetail('Custom item', pendingJobPayload.custom_addon_name ? `${pendingJobPayload.custom_addon_name} - ${peso(pendingJobPayload.custom_price)}` : null),
+    reviewDetail('Custom comm.', pendingJobPayload.custom_comm ? peso(pendingJobPayload.custom_comm) : null),
+    reviewDetail('Discount', pendingJobPayload.discount ? `${peso(pendingJobPayload.discount)}${pendingJobPayload.discount_reason ? ` - ${pendingJobPayload.discount_reason}` : ''}` : null, true),
+    reviewDetail('GCash tip', peso(pendingJobPayload.tip_gcash)),
+    reviewDetail('Detailer', pendingJobPayload.detailer),
+  ].join('');
+  document.getElementById('job-review-modal').showModal();
+});
+
+document.getElementById('confirm-add-job').addEventListener('click', async event => {
+  event.preventDefault();
+  if (!pendingJobPayload) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await fetch('/api/jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingJobPayload),
+    });
+    document.getElementById('job-review-modal').close();
+    pendingJobPayload = null;
+  } finally {
+    button.disabled = false;
+  }
 
   document.getElementById('new-job-plate').value = '';
   document.getElementById('new-job-detailer').value = '';
@@ -151,6 +247,11 @@ document.getElementById('add-job-btn').addEventListener('click', async () => {
   document.getElementById('new-job-addon').value = '';
   document.getElementById('new-job-class').value = '';
   document.getElementById('new-job-tip').value = '';
+  document.getElementById('new-job-custom-name').value = '';
+  document.getElementById('new-job-custom-price').value = '';
+  document.getElementById('new-job-custom-comm').value = '';
+  document.getElementById('new-job-discount').value = '';
+  document.getElementById('new-job-discount-notes').value = '';
   loadDaily();
 });
 
@@ -183,10 +284,26 @@ function renderPricingTable(kind, rows, tbodyId) {
       <td><input type="text" data-field="name" value="${r.name}" style="width:220px"></td>
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="price_${c}" value="${r['price_' + c]}" class="mini-input"></td>`).join('')}
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="comm_${c}" value="${r['comm_' + c]}" class="mini-input"></td>`).join('')}
+      <td class="table-actions"><button class="icon-btn del-pricing" title="Delete ${kind === 'services' ? 'service' : 'add-on'}" aria-label="Delete">✕</button></td>
     </tr>`).join('');
   tbody.querySelectorAll('input').forEach(el => {
     el.addEventListener('change', () => savePricingCell(el));
   });
+  tbody.querySelectorAll('.del-pricing').forEach(el => {
+    el.addEventListener('click', () => deletePricing(el.closest('tr')));
+  });
+  applyAccessState();
+}
+
+async function deletePricing(row) {
+  const kind = row.dataset.kind === 'services' ? 'service' : 'addon';
+  const label = row.querySelector('[data-field="name"]').value;
+  if (!window.confirm(`Delete ${kind === 'service' ? 'service' : 'add-on'} "${label}"? Existing job records will keep their saved details.`)) return;
+  await fetch(`/api/pricing/${kind}/${row.dataset.id}`, { method: 'DELETE' });
+  pricing = await fetch('/api/pricing').then(r => r.json());
+  renderPricingTable('services', pricing.services, 'services-tbody');
+  renderPricingTable('addons', pricing.addons, 'addons-tbody');
+  populateQuickJobSelectors();
 }
 
 async function savePricingCell(el) {
@@ -200,16 +317,24 @@ async function savePricingCell(el) {
 }
 
 document.getElementById('add-service-btn').addEventListener('click', async () => {
+  const button = document.getElementById('add-service-btn');
   const body = { name: 'New Service' };
   CLASSES.forEach(c => { body['price_' + c] = 0; body['comm_' + c] = 0; });
-  await fetch('/api/pricing/service', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  loadPricingView();
+  button.disabled = true;
+  try {
+    await fetch('/api/pricing/service', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    loadPricingView();
+  } finally { button.disabled = false; }
 });
 document.getElementById('add-addon-btn').addEventListener('click', async () => {
+  const button = document.getElementById('add-addon-btn');
   const body = { name: 'New Add-On' };
   CLASSES.forEach(c => { body['price_' + c] = 0; body['comm_' + c] = 0; });
-  await fetch('/api/pricing/addon', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  loadPricingView();
+  button.disabled = true;
+  try {
+    await fetch('/api/pricing/addon', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    loadPricingView();
+  } finally { button.disabled = false; }
 });
 
 // ================================================================
@@ -244,13 +369,37 @@ async function loadEod() {
   document.querySelectorAll('.del-exp').forEach(el => el.addEventListener('click', () => deleteExpense(el.dataset.id)));
 
   document.getElementById('expected-block').innerHTML = `
-    <div class="row-line"><span class="k">Cash Float + Cash Sales</span><span class="money">${peso(eod.expectedCashPre)}</span></div>
-    <div class="row-line"><span class="k">− Commissions − Cash Expenses</span><span class="money">${peso(eod.totalComm + eod.cashExpenses)}</span></div>
+    <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
+    <div class="row-line"><span class="k">+ Cash Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
+    <div class="row-line"><span class="k">− Commissions</span><span class="money">${peso(eod.totalComm)}</span></div>
+    <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
     <div class="row-line total"><span>Expected Cash (After Deductions)</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
-    <div class="row-line" style="margin-top:8px;"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
-    <div class="row-line"><span class="k">− GCash Expenses − Tips to Distribute</span><span class="money">${peso(eod.gcashExpenses + eod.gcashTipsToDistribute)}</span></div>
+    <div class="row-line" style="margin-top:8px;"><span class="k">GCash / Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
+    <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
+    <div class="row-line"><span class="k">− GCash Tips to Distribute</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
     <div class="row-line total"><span>Expected GCash (After Deductions)</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
     <div class="row-line total" style="border-top:2px solid var(--border);margin-top:10px;"><span>EXPECTED TOTAL</span><span class="money">${peso(eod.expectedTotal)}</span></div>
+  `;
+
+  document.getElementById('eod-breakdowns').innerHTML = `
+    <div class="breakdown-card"><h2>Cash Reconciliation</h2>
+      <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
+      <div class="row-line"><span class="k">+ Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
+      <div class="row-line"><span class="k">− Commission</span><span class="money">${peso(eod.totalComm)}</span></div>
+      <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
+      <div class="row-line total"><span>Expected Cash</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
+    </div>
+    <div class="breakdown-card"><h2>GCash Reconciliation</h2>
+      <div class="row-line"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
+      <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
+      <div class="row-line"><span class="k">− Tips to Distribute</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
+      <div class="row-line total"><span>Expected GCash</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
+    </div>
+    <div class="breakdown-card tips"><h2>GCash Tips to Distribute</h2>
+      <div class="row-line"><span class="k">Tips entered on jobs</span><span class="money">${peso(eod.jobGcashTips)}</span></div>
+      <div class="row-line"><span class="k">Other tips</span><span class="money">${peso(eod.manualGcashTips)}</span></div>
+      <div class="row-line total"><span>Total to distribute</span><span class="money teal-text">${peso(eod.gcashTipsToDistribute)}</span></div>
+    </div>
   `;
 
   const cashV = eod.cashVariance, gcashV = eod.gcashVariance;
@@ -258,6 +407,7 @@ async function loadEod() {
     <div class="row-line"><span class="k">Cash Variance</span><span class="${varClass(cashV)}">${cashV == null ? '—' : peso(cashV)}</span></div>
     <div class="row-line"><span class="k">GCash Variance</span><span class="${varClass(gcashV)}">${gcashV == null ? '—' : peso(gcashV)}</span></div>
   `;
+  applyAccessState();
 }
 function varClass(v) { if (v == null) return 'money'; return v === 0 ? 'variance-ok' : 'variance-bad'; }
 
@@ -282,13 +432,17 @@ async function addExpense(side, descId, amtId) {
   const description = document.getElementById(descId).value;
   const amount = Number(document.getElementById(amtId).value || 0);
   if (!amount) return;
-  await fetch('/api/expenses', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expense_date: eodDateEl.value, side, description, amount }),
-  });
-  document.getElementById(descId).value = '';
-  document.getElementById(amtId).value = '';
-  loadEod();
+  const button = document.getElementById(side === 'cash' ? 'add-cash-exp' : 'add-gcash-exp');
+  button.disabled = true;
+  try {
+    await fetch('/api/expenses', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expense_date: eodDateEl.value, side, description, amount }),
+    });
+    document.getElementById(descId).value = '';
+    document.getElementById(amtId).value = '';
+    loadEod();
+  } finally { button.disabled = false; }
 }
 
 document.getElementById('save-meta').addEventListener('click', async () => {
@@ -353,7 +507,10 @@ function mondayOf(dateString) {
   const date = new Date(`${dateString}T00:00:00`);
   const day = date.getDay();
   date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
 }
 function weekDates(start) {
   return Array.from({ length: 7 }, (_, index) => {
@@ -364,12 +521,17 @@ function weekDates(start) {
 }
 const attendanceCodes = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 payrollPeriodEl.value = mondayOf(todayStr());
-payrollPeriodEl.addEventListener('change', loadPayroll);
+payrollPeriodEl.addEventListener('change', () => {
+  payrollPeriodEl.value = mondayOf(payrollPeriodEl.value);
+  loadPayroll();
+});
 
 async function loadPayroll() {
   if (!payrollPeriodEl.value) return;
-  const { rows, totalNetPay } = await fetch('/api/payroll/' + encodeURIComponent(payrollPeriodEl.value)).then(r => r.json());
-  const dates = weekDates(payrollPeriodEl.value);
+  const periodLabel = mondayOf(payrollPeriodEl.value);
+  payrollPeriodEl.value = periodLabel;
+  const { rows, totalNetPay } = await fetch('/api/payroll/' + encodeURIComponent(periodLabel)).then(r => r.json());
+  const dates = weekDates(periodLabel);
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   document.getElementById('payroll-head').innerHTML = `<tr>
     <th>Employee</th><th>Role</th>${dates.map((date, index) => `<th class="attendance-day">${dayNames[index]}<small>${date.slice(5)}</small></th>`).join('')}
@@ -396,6 +558,7 @@ async function loadPayroll() {
   tbody.querySelectorAll('[data-employee-field]').forEach(el => el.addEventListener('change', () => saveEmployeeCell(el)));
   tbody.querySelectorAll('.remove-employee').forEach(el => el.addEventListener('click', () => removeEmployee(el.closest('tr').dataset.emp)));
   document.getElementById('payroll-total').textContent = peso(totalNetPay);
+  applyAccessState();
 }
 
 async function savePayrollCell(el) {
@@ -405,7 +568,7 @@ async function savePayrollCell(el) {
   row.querySelectorAll('[data-field]').forEach(i => { body[i.dataset.field] = Number(i.value || 0); });
   body.attendance = {};
   row.querySelectorAll('[data-attendance-date]').forEach(i => { body.attendance[i.dataset.attendanceDate] = i.value; });
-  await fetch(`/api/payroll/${encodeURIComponent(payrollPeriodEl.value)}/${empId}`, {
+  await fetch(`/api/payroll/${encodeURIComponent(mondayOf(payrollPeriodEl.value))}/${empId}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   loadPayroll();
@@ -437,4 +600,4 @@ document.getElementById('add-employee-btn').addEventListener('click', async () =
 });
 
 // ---------------- init ----------------
-loadDaily();
+initAuth();
