@@ -108,6 +108,10 @@ document.querySelectorAll('.nav button').forEach(btn => {
 const dailyDateEl = document.getElementById('daily-date');
 dailyDateEl.value = todayStr();
 dailyDateEl.addEventListener('change', loadDaily);
+['daily-detailer-filter', 'daily-payment-filter', 'daily-payment-status-filter'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', loadDaily);
+  document.getElementById(id)?.addEventListener('change', loadDaily);
+});
 
 async function ensurePricing() {
   if (!pricing.services.length && !pricing.addons.length) {
@@ -146,19 +150,26 @@ function updateQuickEstimate() {
 async function loadDaily() {
   await ensurePricing();
   const date = dailyDateEl.value;
-  const jobs = await fetch('/api/jobs/' + date).then(r => r.json());
-  renderJobs(jobs);
-  renderDailyMetrics(jobs);
+  const query = new URLSearchParams({
+    payment: document.getElementById('daily-payment-filter')?.value || '',
+    paymentStatus: document.getElementById('daily-payment-status-filter')?.value || '',
+  });
+  const detailer = document.getElementById('daily-detailer-filter')?.value.trim().toLowerCase();
+  const jobs = await fetch('/api/jobs/' + date + '?' + query).then(r => r.json());
+  const visibleJobs = detailer ? jobs.filter(job => String(job.detailer || '').toLowerCase().includes(detailer)) : jobs;
+  renderJobs(visibleJobs);
+  renderDailyMetrics(visibleJobs);
 }
 
 function renderDailyMetrics(jobs) {
   const serviced = jobs.filter(j => j.vehicle_class);
-  const gross = serviced.reduce((s, j) => s + j.computed.totalPrice, 0);
-  const comm = serviced.reduce((s, j) => s + j.computed.detailerComm, 0);
+  const paid = serviced.filter(j => Number(j.payment_received) === 1);
+  const gross = paid.reduce((s, j) => s + j.computed.totalPrice, 0);
+  const comm = paid.reduce((s, j) => s + j.computed.detailerComm, 0);
   const net = gross - comm;
-  const gcashTips = serviced.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
+  const gcashTips = paid.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
   document.getElementById('daily-metrics').innerHTML = `
-    <div class="metric"><div class="label">Vehicles Serviced</div><div class="value">${serviced.length}</div></div>
+    <div class="metric"><div class="label">Customer Paid Jobs</div><div class="value">${paid.length}</div></div>
     <div class="metric"><div class="label">Gross Sales</div><div class="value">${peso(gross)}</div></div>
     <div class="metric"><div class="label">Total Commissions</div><div class="value amber">${peso(comm)}</div></div>
     <div class="metric"><div class="label">GCash Tips</div><div class="value teal">${peso(gcashTips)}</div></div>
@@ -224,9 +235,10 @@ function rowHtml(j) {
     <td class="num money">${peso(c.totalPrice)}</td>
     <td class="num money amber-text">${peso(c.detailerComm)}</td>
     <td class="num money pos">${peso(c.netRevenue)}</td>
-    <td class="commission-cell"><input type="number" min="0" step="0.01" data-field="commission_cash_paid" value="${j.commission_cash_paid ?? ''}" placeholder="Cash paid" title="Cash commission paid">
-      <input type="number" min="0" step="0.01" data-field="commission_gcash_paid" value="${j.commission_gcash_paid ?? ''}" placeholder="GCash paid" title="GCash commission paid">
-      <label class="paid-toggle"><input type="checkbox" data-field="commission_paid" ${Number(j.commission_paid) === 1 ? 'checked' : ''}> Paid</label>
+    <td class="commission-cell"><label class="paid-toggle customer-paid"><input type="checkbox" data-field="payment_received" ${Number(j.payment_received) === 1 ? 'checked' : ''}> Customer paid</label>
+      <input type="number" min="0" step="0.01" data-field="commission_gcash_paid" value="${j.commission_gcash_paid ?? ''}" placeholder="GCash commission" title="GCash commission paid; remaining commission is Cash">
+      <span class="paid-toggle">Cash: ${peso(Math.max(0, c.detailerComm - Number(j.commission_gcash_paid || 0)))}</span>
+      <label class="paid-toggle"><input type="checkbox" data-field="commission_paid" ${Number(j.commission_paid) === 1 ? 'checked' : ''}> Detailer paid</label>
       <button class="icon-btn del-job" title="Delete">✕</button></td>
   </tr>`;
 }
@@ -253,8 +265,8 @@ document.getElementById('add-job-btn').addEventListener('click', () => {
     discount: Number(document.getElementById('new-job-discount').value || 0),
     discount_reason: document.getElementById('new-job-discount-notes').value.trim() || null,
     payment_method: document.getElementById('new-job-payment').value || 'Cash',
+    payment_received: 0,
     commission_paid: 0,
-    commission_cash_paid: Number(document.getElementById('new-job-commission-cash').value || 0),
     commission_gcash_paid: Number(document.getElementById('new-job-commission-gcash').value || 0),
     tip_gcash: Number(document.getElementById('new-job-tip').value || 0),
     detailer: document.getElementById('new-job-detailer').value || null,
@@ -318,18 +330,21 @@ document.getElementById('confirm-add-job').addEventListener('click', async event
   document.getElementById('new-job-discount-notes').value = '';
   document.getElementById('new-job-time').value = '12:00';
   document.getElementById('new-job-payment').value = 'Cash';
-  document.getElementById('new-job-commission-cash').value = '';
   document.getElementById('new-job-commission-gcash').value = '';
   pendingJobPayload = null;
   loadDaily();
 });
 
 async function updateJob(id, field, value) {
-  await fetch('/api/jobs/' + id, {
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  row?.classList.add('saving');
+  try { await fetch('/api/jobs/' + id, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ [field]: value }),
   });
-  loadDaily();
+    showToast('Job saved');
+    await loadDaily();
+  } finally { row?.classList.remove('saving'); }
 }
 
 async function deleteJob(id) {
@@ -573,9 +588,13 @@ const weekEndEl = document.getElementById('week-end');
 })();
 weekStartEl.addEventListener('change', loadWeekly);
 weekEndEl.addEventListener('change', loadWeekly);
+['weekly-payment-filter', 'weekly-payment-status-filter'].forEach(id => document.getElementById(id)?.addEventListener('change', loadWeekly));
 
 async function loadWeekly() {
-  const { days, totals } = await fetch(`/api/weekly?start=${weekStartEl.value}&end=${weekEndEl.value}`).then(r => r.json());
+  const weeklyQuery = new URLSearchParams({ start: weekStartEl.value, end: weekEndEl.value,
+    payment: document.getElementById('weekly-payment-filter')?.value || '',
+    paymentStatus: document.getElementById('weekly-payment-status-filter')?.value || '' });
+  const { days, totals } = await fetch(`/api/weekly?${weeklyQuery}`).then(r => r.json());
   const tbody = document.getElementById('weekly-tbody');
   document.getElementById('weekly-summary').innerHTML = `
     <div class="weekly-stat"><span class="weekly-stat-label">Vehicles serviced</span><strong>${totals.vehicles}</strong><span class="weekly-stat-note">Across selected days</span></div>

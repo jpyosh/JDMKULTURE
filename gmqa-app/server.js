@@ -61,6 +61,16 @@ function joNumber(dateStr, seq) {
   return `JO-${m}${d}${y.slice(2)}-${String(seq).padStart(3, '0')}`;
 }
 
+function validateCommissionPayment(job, computed) {
+  const gcash = Number(job.commission_gcash_paid || 0);
+  if (gcash < 0) return 'GCash commission cannot be negative';
+  if (gcash > computed.detailerComm + 0.005) return 'GCash commission cannot exceed the calculated commission';
+  if (Number(job.commission_paid) === 1 && gcash + 0.005 < computed.detailerComm && Number(job.commission_cash_paid || 0) < computed.detailerComm - gcash - 0.005) {
+    return 'Enter the full commission amount before marking it Paid';
+  }
+  return null;
+}
+
 const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
   : null;
@@ -89,10 +99,10 @@ app.get('/api/pricing', async (req, res) => {
   const addons = await db.prepare('SELECT * FROM addons WHERE active=1 ORDER BY id').all();
   res.json({ classes: CLASSES, services, addons });
 });
-
 app.put('/api/pricing/service/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
+  if (!updates.length) return res.status(400).json({ error: 'No pricing fields supplied' });
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   await db.prepare(`UPDATE services SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(req.params.id));
@@ -104,7 +114,6 @@ app.post('/api/pricing/service', async (req, res) => {
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(s);
   res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
 });
-
 app.delete('/api/pricing/service/:id', async (req, res) => {
   await db.prepare('UPDATE services SET active=0 WHERE id=?').run(req.params.id);
   res.json({ ok: true });
@@ -113,6 +122,7 @@ app.delete('/api/pricing/service/:id', async (req, res) => {
 app.put('/api/pricing/addon/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
+  if (!updates.length) return res.status(400).json({ error: 'No pricing fields supplied' });
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   await db.prepare(`UPDATE addons SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(req.params.id));
@@ -133,7 +143,14 @@ app.delete('/api/pricing/addon/:id', async (req, res) => {
 // ---------- Daily Log / Jobs ----------
 
 app.get('/api/jobs/:date', async (req, res) => {
-  const jobs = await db.prepare('SELECT * FROM jobs WHERE job_date=? ORDER BY id').all(req.params.date);
+  const filters = [];
+  const params = [req.params.date];
+  if (req.query.payment && ['Cash', 'GCash'].includes(req.query.payment)) {
+    filters.push('payment_method=?'); params.push(req.query.payment);
+  }
+  if (req.query.paymentStatus === 'paid') filters.push('payment_received=1');
+  if (req.query.paymentStatus === 'unpaid') filters.push('payment_received=0');
+  const jobs = await db.prepare(`SELECT * FROM jobs WHERE job_date=? ${filters.length ? `AND ${filters.join(' AND ')}` : ''} ORDER BY id`).all(...params);
   const enriched = await computeJobs(jobs);
   res.json(enriched);
 });
@@ -145,18 +162,20 @@ app.post('/api/jobs', async (req, res) => {
   if (j.payment_method && !['Cash', 'GCash'].includes(j.payment_method)) return res.status(400).json({ error: 'Invalid payment method' });
   if (j.commission_payment_method && !['Cash', 'GCash'].includes(j.commission_payment_method)) return res.status(400).json({ error: 'Invalid commission payment method' });
   for (const field of ['custom_price', 'custom_comm', 'discount', 'tip_gcash']) {
-    if (Number(j[field] || 0) < 0) return res.status(400).json({ error: `${field} cannot be negative` });
+    if (!Number.isFinite(Number(j[field] || 0)) || Number(j[field] || 0) < 0) return res.status(400).json({ error: `${field} must be a valid non-negative number` });
   }
-
+  const prospective = await computeJob(j);
+  const paymentError = validateCommissionPayment({ ...j, commission_paid: 0 }, prospective);
+  if (paymentError) return res.status(400).json({ error: paymentError });
   const seq = Number((await db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date)).c) + 1;
   const jo_number = joNumber(j.job_date, seq);
 
   const info = await db.prepare(`INSERT INTO jobs
     (jo_number, job_date, time_in, time_out, vehicle_class, plate, service_id, addon_id, addon_price_override,
-    custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method,
+    custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method, payment_received,
     commission_paid, commission_payment_method, commission_cash_paid, commission_gcash_paid, detailer, remarks)
     VALUES (@jo_number,@job_date,@time_in,@time_out,@vehicle_class,@plate,@service_id,@addon_id,@addon_price_override,
-    @custom_addon_name,@custom_price,@custom_comm,@discount,@discount_reason,@tip_gcash,@payment_method,
+    @custom_addon_name,@custom_price,@custom_comm,@discount,@discount_reason,@tip_gcash,@payment_method,@payment_received,
     @commission_paid,@commission_payment_method,@commission_cash_paid,@commission_gcash_paid,@detailer,@remarks)`)
     .run({
       jo_number, job_date: j.job_date, time_in: j.time_in || null, time_out: j.time_out || null, vehicle_class: j.vehicle_class || null,
@@ -164,8 +183,8 @@ app.post('/api/jobs', async (req, res) => {
       addon_price_override: j.addon_price_override ?? null, custom_addon_name: j.custom_addon_name || null,
       custom_price: j.custom_price || 0, custom_comm: j.custom_comm || 0, discount: j.discount || 0,
       discount_reason: j.discount_reason || null, tip_gcash: j.tip_gcash || 0,
-      payment_method: j.payment_method || 'Cash', commission_paid: 0,
-      commission_payment_method: j.commission_payment_method || 'Cash', commission_cash_paid: 0, commission_gcash_paid: 0,
+      payment_method: j.payment_method || 'Cash', payment_received: 0, commission_paid: 0,
+      commission_payment_method: 'Cash', commission_cash_paid: 0, commission_gcash_paid: Number(j.commission_gcash_paid || 0),
       detailer: j.detailer || null, remarks: j.remarks || null,
     });
 
@@ -176,7 +195,8 @@ app.post('/api/jobs', async (req, res) => {
 app.put('/api/jobs/:id', async (req, res) => {
   const fields = ['time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override',
     'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash',
-    'payment_method', 'commission_paid', 'commission_payment_method', 'commission_cash_paid', 'commission_gcash_paid', 'detailer', 'remarks'];
+    'payment_method', 'payment_received', 'commission_paid', 'commission_payment_method', 'commission_cash_paid', 'commission_gcash_paid', 'detailer', 'remarks'];
+  if ('payment_received' in req.body) req.body.payment_received = req.body.payment_received ? 1 : 0;
   if ('commission_paid' in req.body) req.body.commission_paid = req.body.commission_paid ? 1 : 0;
   for (const field of ['commission_cash_paid', 'commission_gcash_paid']) {
     if (field in req.body && (!Number.isFinite(Number(req.body[field])) || Number(req.body[field]) < 0)) {
@@ -184,6 +204,17 @@ app.put('/api/jobs/:id', async (req, res) => {
     }
   }
   const updates = fields.filter(f => f in req.body);
+  const existingJob = await db.prepare('SELECT * FROM jobs WHERE id=?').get(req.params.id);
+  if (!existingJob) return res.status(404).json({ error: 'Job not found' });
+  const candidate = { ...existingJob, ...req.body };
+  const computedCandidate = await computeJob(candidate);
+  if ('commission_gcash_paid' in req.body || 'commission_paid' in req.body) {
+    candidate.commission_gcash_paid = Number(req.body.commission_gcash_paid || 0);
+    candidate.commission_cash_paid = Math.max(0, computedCandidate.detailerComm - candidate.commission_gcash_paid);
+    req.body.commission_cash_paid = candidate.commission_cash_paid;
+  }
+  const candidatePaymentError = validateCommissionPayment(candidate, computedCandidate);
+  if (candidatePaymentError) return res.status(400).json({ error: candidatePaymentError });
   if (updates.length) {
     const set = updates.map(f => `${f}=@${f}`).join(', ');
     await db.prepare(`UPDATE jobs SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
@@ -247,8 +278,9 @@ app.get('/api/eod/:date', async (req, res) => {
     || { cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, supervisor: '' };
 
   const servicedJobs = jobs.filter(j => j.vehicle_class);
-  const totalVehicles = servicedJobs.length; // native dynamic count — replaces the broken COUNTUNIQUEIFS
-  const grossSales = servicedJobs.reduce((s, j) => s + j.computed.totalPrice, 0);
+  const paidJobs = servicedJobs.filter(j => Number(j.payment_received) === 1);
+  const totalVehicles = paidJobs.length;
+  const grossSales = paidJobs.reduce((s, j) => s + j.computed.totalPrice, 0);
   const totalComm = servicedJobs.reduce((s, j) => s + j.computed.detailerComm, 0);
   const paidCommissions = servicedJobs.filter(j => Number(j.commission_paid) === 1);
   const paidCommissionCash = paidCommissions.reduce((s, j) => s + (j.commission_cash_paid == null
@@ -261,12 +293,12 @@ app.get('/api/eod/:date', async (req, res) => {
   // per row (in Net Shop Revenue) AND again here, understating profit by a full day's commission.
   const totalNetRevenue = grossSales - totalComm;
 
-  const cashSales = servicedJobs.filter(j => j.payment_method === 'Cash').reduce((s, j) => s + j.computed.totalPrice, 0);
+  const cashSales = paidJobs.filter(j => j.payment_method === 'Cash').reduce((s, j) => s + j.computed.totalPrice, 0);
   const digitalSales = grossSales - cashSales; // GCash + Maya + anything not Cash
 
   const cashExpenses = expenses.filter(e => e.side === 'cash').reduce((s, e) => s + Number(e.amount || 0), 0);
   const gcashExpenses = expenses.filter(e => e.side === 'gcash').reduce((s, e) => s + Number(e.amount || 0), 0);
-  const jobGcashTips = servicedJobs.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
+  const jobGcashTips = paidJobs.reduce((s, j) => s + Number(j.tip_gcash || 0), 0);
   const manualGcashTips = Number(meta.gcash_tips_to_distribute || 0);
   const gcashTipsToDistribute = manualGcashTips + jobGcashTips;
   const gcashTipsReceived = jobGcashTips + manualGcashTips;
@@ -300,20 +332,28 @@ app.get('/api/eod/:date', async (req, res) => {
 
 app.get('/api/weekly', async (req, res) => {
   const { start, end } = req.query;
-  const rows = await db.prepare(`
-    SELECT job_date FROM jobs WHERE job_date BETWEEN ? AND ?
-    UNION SELECT expense_date AS job_date FROM expenses WHERE expense_date BETWEEN ? AND ?
-    ORDER BY job_date`).all(start, end, start, end);
-
-  const days = await Promise.all(rows.map(async r => {
-    const dayJobs = await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date);
-    const jobs = (await computeJobs(dayJobs)).filter(j => j.vehicle_class);
-    const gross = jobs.reduce((s, j) => s + j.computed.totalPrice, 0);
-    const comm = jobs.filter(j => Number(j.commission_paid) === 1).reduce((s, j) => s + (j.commission_cash_paid == null && j.commission_gcash_paid == null
+  if (!start || !end || start > end) return res.status(400).json({ error: 'Valid start and end dates are required' });
+  const filters = [];
+  const params = [start, end];
+  if (req.query.payment && ['Cash', 'GCash'].includes(req.query.payment)) {
+    filters.push('payment_method=?'); params.push(req.query.payment);
+  }
+  if (req.query.paymentStatus === 'paid') filters.push('payment_received=1');
+  if (req.query.paymentStatus === 'unpaid') filters.push('payment_received=0');
+  const rawJobs = await db.prepare(`SELECT * FROM jobs WHERE job_date BETWEEN ? AND ? ${filters.length ? `AND ${filters.join(' AND ')}` : ''} ORDER BY job_date, id`).all(...params);
+  const jobs = (await computeJobs(rawJobs)).filter(j => j.vehicle_class);
+  const expenseRows = await db.prepare('SELECT expense_date, SUM(amount) t FROM expenses WHERE expense_date BETWEEN ? AND ? GROUP BY expense_date').all(start, end);
+  const expenseByDate = new Map(expenseRows.map(row => [row.expense_date, Number(row.t || 0)]));
+  const dates = new Set([...rawJobs.map(job => job.job_date), ...expenseRows.map(row => row.expense_date)]);
+  const days = [...dates].sort().map(date => {
+    const dayJobs = jobs.filter(job => job.job_date === date);
+    const paidJobs = dayJobs.filter(j => Number(j.payment_received) === 1);
+    const gross = paidJobs.reduce((s, j) => s + j.computed.totalPrice, 0);
+    const comm = dayJobs.filter(j => Number(j.commission_paid) === 1).reduce((s, j) => s + (j.commission_cash_paid == null && j.commission_gcash_paid == null
       ? j.computed.detailerComm : Number(j.commission_cash_paid || 0) + Number(j.commission_gcash_paid || 0)), 0);
-    const expenses = (await db.prepare('SELECT SUM(amount) t FROM expenses WHERE expense_date=?').get(r.job_date)).t || 0;
-    return { date: r.job_date, vehicles: jobs.length, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
-  }));
+    const expenses = expenseByDate.get(date) || 0;
+    return { date, vehicles: paidJobs.length, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
+  });
 
   const totals = days.reduce((a, d) => ({
     vehicles: a.vehicles + d.vehicles, grossSales: a.grossSales + d.grossSales,

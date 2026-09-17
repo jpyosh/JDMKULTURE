@@ -10,7 +10,7 @@ const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
 const tables = [
   ['services', ['id', 'name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO', 'is_custom', 'active']],
   ['addons', ['id', 'name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO', 'active']],
-  ['jobs', ['id', 'jo_number', 'job_date', 'time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override', 'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash', 'payment_method', 'detailer', 'remarks', 'created_at']],
+  ['jobs', ['id', 'jo_number', 'job_date', 'time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override', 'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash', 'payment_method', 'payment_received', 'commission_paid', 'commission_payment_method', 'commission_cash_paid', 'commission_gcash_paid', 'detailer', 'remarks', 'created_at']],
   ['expenses', ['id', 'expense_date', 'side', 'description', 'amount']],
   ['daily_meta', ['job_date', 'supervisor', 'cash_float', 'actual_cash', 'actual_gcash', 'gcash_tips_to_distribute']],
   ['employees', ['id', 'name', 'role', 'rate_per_day', 'construction_rate', 'active']],

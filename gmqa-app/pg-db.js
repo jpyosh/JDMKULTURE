@@ -16,7 +16,7 @@ const numericColumns = new Set([
   'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO',
   'addon_price_override', 'custom_price', 'custom_comm', 'discount', 'tip_gcash',
   'amount', 'cash_float', 'actual_cash', 'actual_gcash', 'gcash_tips_to_distribute',
-  'commission_paid', 'commission_cash_paid', 'commission_gcash_paid',
+  'commission_paid', 'commission_cash_paid', 'commission_gcash_paid', 'payment_received',
   'rate_per_day', 'construction_rate', 'days_worked', 'half_days', 'absences',
   'ot_hours', 'cw_ot_hours', 'cn_ot_hours', 'construction_days', 'deductions',
   'c', 't', 'vehicles',

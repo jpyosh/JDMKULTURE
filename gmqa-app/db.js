@@ -62,6 +62,7 @@ function init() {
       discount_reason TEXT,
       tip_gcash REAL DEFAULT 0,
       payment_method TEXT DEFAULT 'Cash',
+      payment_received INTEGER DEFAULT 1,
       commission_paid INTEGER DEFAULT 1,
       commission_payment_method TEXT DEFAULT 'Cash',
       commission_cash_paid REAL,
@@ -116,6 +117,14 @@ function init() {
   `);
 
   ensureSchemaColumns();
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS jobs_job_date_idx ON jobs(job_date);
+    CREATE INDEX IF NOT EXISTS jobs_service_idx ON jobs(service_id);
+    CREATE INDEX IF NOT EXISTS jobs_addon_idx ON jobs(addon_id);
+    CREATE INDEX IF NOT EXISTS jobs_commission_paid_idx ON jobs(commission_paid);
+    CREATE INDEX IF NOT EXISTS jobs_payment_received_idx ON jobs(payment_received);
+    CREATE INDEX IF NOT EXISTS expenses_expense_date_idx ON expenses(expense_date);
+  `);
   seedIfEmpty();
 }
 
@@ -132,6 +141,7 @@ function ensureSchemaColumns() {
   addColumnIfMissing('addons', 'price_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('addons', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('jobs', 'time_out', 'TEXT');
+  addColumnIfMissing('jobs', 'payment_received', 'INTEGER DEFAULT 1');
   addColumnIfMissing('jobs', 'commission_paid', 'INTEGER DEFAULT 1');
   addColumnIfMissing('jobs', 'commission_payment_method', "TEXT DEFAULT 'Cash'");
   addColumnIfMissing('jobs', 'commission_cash_paid', 'REAL');
