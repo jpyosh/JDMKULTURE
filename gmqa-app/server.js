@@ -65,6 +65,18 @@ const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
   : null;
 
+const pricingFields = ['price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO',
+  'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
+function validatePricingBody(body) {
+  if (!body.name || !String(body.name).trim()) return 'Name is required';
+  for (const field of pricingFields) {
+    if (field in body && (!Number.isFinite(Number(body[field])) || Number(body[field]) < 0)) {
+      return `${field} must be a valid non-negative number`;
+    }
+  }
+  return null;
+}
+
 async function requireAuth(req, res, next) {
   if (!supabaseAuth) return res.status(503).json({ error: 'Authentication is not configured on the server' });
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -93,6 +105,8 @@ app.put('/api/pricing/service/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   if (!updates.length) return res.status(400).json({ error: 'No pricing fields supplied' });
+  const pricingError = validatePricingBody(req.body);
+  if (pricingError) return res.status(400).json({ error: pricingError });
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   await db.prepare(`UPDATE services SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(req.params.id));
@@ -100,6 +114,8 @@ app.put('/api/pricing/service/:id', async (req, res) => {
 
 app.post('/api/pricing/service', async (req, res) => {
   const s = req.body;
+  const pricingError = validatePricingBody(s);
+  if (pricingError) return res.status(400).json({ error: pricingError });
   const info = await db.prepare(`INSERT INTO services (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(s);
   res.json(await db.prepare('SELECT * FROM services WHERE id=?').get(info.lastInsertRowid));
@@ -113,6 +129,8 @@ app.put('/api/pricing/addon/:id', async (req, res) => {
   const fields = ['name', 'price_S', 'price_M', 'price_L', 'price_XL', 'price_MOTO', 'price_BIG_MOTO', 'comm_S', 'comm_M', 'comm_L', 'comm_XL', 'comm_MOTO', 'comm_BIG_MOTO'];
   const updates = fields.filter(f => f in req.body);
   if (!updates.length) return res.status(400).json({ error: 'No pricing fields supplied' });
+  const pricingError = validatePricingBody(req.body);
+  if (pricingError) return res.status(400).json({ error: pricingError });
   const set = updates.map(f => `${f}=@${f}`).join(', ');
   await db.prepare(`UPDATE addons SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(req.params.id));
@@ -120,6 +138,8 @@ app.put('/api/pricing/addon/:id', async (req, res) => {
 
 app.post('/api/pricing/addon', async (req, res) => {
   const a = req.body;
+  const pricingError = validatePricingBody(a);
+  if (pricingError) return res.status(400).json({ error: pricingError });
   const info = await db.prepare(`INSERT INTO addons (name, price_S, price_M, price_L, price_XL, price_MOTO, price_BIG_MOTO, comm_S, comm_M, comm_L, comm_XL, comm_MOTO, comm_BIG_MOTO)
     VALUES (@name,@price_S,@price_M,@price_L,@price_XL,@price_MOTO,@price_BIG_MOTO,@comm_S,@comm_M,@comm_L,@comm_XL,@comm_MOTO,@comm_BIG_MOTO)`).run(a);
   res.json(await db.prepare('SELECT * FROM addons WHERE id=?').get(info.lastInsertRowid));
@@ -279,8 +299,7 @@ app.get('/api/eod/:date', async (req, res) => {
   const gcashTipsToDistribute = manualGcashTips + jobGcashTips;
   const gcashTipsReceived = jobGcashTips + manualGcashTips;
 
-  const availableCash = Math.max(0, Number(meta.cash_float || 0) + cashSales - cashExpenses);
-  const paidCommissionCash = Math.min(Math.max(0, totalComm - paidCommissionGcash), availableCash);
+  const paidCommissionCash = Math.max(0, totalComm - paidCommissionGcash);
   const expectedCashPre = Number(meta.cash_float || 0) + cashSales;
   const expectedCashAfter = expectedCashPre - paidCommissionCash - cashExpenses;
   // Customer tips are included in the GCash balance first, then removed when distributed.

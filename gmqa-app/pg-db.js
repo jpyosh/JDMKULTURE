@@ -61,6 +61,16 @@ function prepare(sql) {
 
 async function init() {
   await pool.query('SELECT 1');
+  await pool.query(`
+    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS payment_received integer DEFAULT 1;
+    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_paid integer DEFAULT 1;
+    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_payment_method text DEFAULT 'Cash';
+    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_cash_paid numeric;
+    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_gcash_paid numeric;
+    ALTER TABLE public.daily_meta ADD COLUMN IF NOT EXISTS commission_gcash_paid numeric DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS jobs_payment_received_idx ON public.jobs(payment_received);
+    CREATE INDEX IF NOT EXISTS jobs_commission_paid_idx ON public.jobs(commission_paid);
+  `);
 }
 
 module.exports = { db: { prepare }, init, CLASSES, pool };
