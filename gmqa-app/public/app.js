@@ -510,6 +510,7 @@ function varClass(v) { if (v == null) return 'money'; return v === 0 ? 'variance
 
 function renderLiveVariance() {
   if (!currentEod) return;
+  updateCommissionPreview();
   const actualCashValue = document.getElementById('meta-actual-cash').value;
   const actualGcashValue = document.getElementById('meta-actual-gcash').value;
   const cashVariance = actualCashValue === '' ? null : Number(actualCashValue) - currentEod.expectedCashAfter;
@@ -526,6 +527,11 @@ function updateCommissionPreview() {
   const cash = Math.max(0, currentEod.totalComm - gcash);
   const cashExpected = currentEod.expectedCashPre - cash - currentEod.cashExpenses;
   const gcashExpected = currentEod.expectedGcashPre - gcash - currentEod.gcashExpenses - currentEod.gcashTipsToDistribute;
+  currentEod.paidCommissionCash = cash;
+  currentEod.paidCommissionGcash = gcash;
+  currentEod.expectedCashAfter = cashExpected;
+  currentEod.expectedGcashAfter = gcashExpected;
+  currentEod.expectedTotal = cashExpected + gcashExpected;
   document.getElementById('commission-cash-remaining').textContent = `Cash commission remaining: ${peso(cash)}`;
   document.getElementById('preview-paid-cash-commission').textContent = peso(cash);
   document.getElementById('preview-paid-gcash-commission').textContent = peso(gcash);
