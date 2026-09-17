@@ -555,8 +555,8 @@ async function addExpense(side, descId, amtId) {
   } finally { button.disabled = false; }
 }
 
-document.getElementById('save-meta').addEventListener('click', async event => {
-  const button = event.currentTarget;
+let metaSaveTimer;
+async function saveMeta(button = document.getElementById('save-meta')) {
   button.disabled = true;
   try { await fetch('/api/meta/' + eodDateEl.value, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -570,8 +570,14 @@ document.getElementById('save-meta').addEventListener('click', async event => {
     }),
   });
     showToast('EOD details saved');
-    loadEod();
+    await loadEod();
   } finally { button.disabled = false; }
+}
+
+document.getElementById('save-meta').addEventListener('click', event => saveMeta(event.currentTarget));
+document.getElementById('meta-commission-gcash').addEventListener('input', () => {
+  clearTimeout(metaSaveTimer);
+  metaSaveTimer = setTimeout(() => saveMeta(), 500);
 });
 
 document.getElementById('meta-actual-cash').addEventListener('input', renderLiveVariance);
