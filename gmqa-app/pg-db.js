@@ -5,6 +5,10 @@ const pool = new Pool({
   connectionString,
   ssl: { rejectUnauthorized: false },
   max: Number(process.env.PGPOOL_MAX || 5),
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 10000,
+  statement_timeout: 10000,
+  query_timeout: 10000,
 });
 
 const CLASSES = ['S', 'M', 'L', 'XL', 'MOTO', 'BIG_MOTO'];
@@ -49,31 +53,20 @@ function prepare(sql) {
   }
 
   return {
-    async all(...args) { return (await pool.query(text, parameters(args))).rows.map(normalizeRow); },
+    async all(...args) {
+      return (await pool.query({ text, values: parameters(args), query_timeout: 10000 })).rows.map(normalizeRow);
+    },
     async get(...args) { return (await this.all(...args))[0]; },
     async run(...args) {
       const query = /^\s*insert\b/i.test(text) && !/\breturning\b/i.test(text) ? `${text} RETURNING id` : text;
-      const result = await pool.query(query, parameters(args));
+      const result = await pool.query({ text: query, values: parameters(args), query_timeout: 10000 });
       return { changes: result.rowCount, lastInsertRowid: result.rows[0]?.id };
     },
   };
 }
 
 async function init() {
-  const migration = `
-    SET lock_timeout = '4000ms';
-    SET statement_timeout = '10000ms';
-    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS payment_received integer DEFAULT 1;
-    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_paid integer DEFAULT 1;
-    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_payment_method text DEFAULT 'Cash';
-    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_cash_paid numeric;
-    ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_gcash_paid numeric;
-    ALTER TABLE public.daily_meta ADD COLUMN IF NOT EXISTS commission_gcash_paid numeric DEFAULT 0;
-    CREATE INDEX IF NOT EXISTS jobs_payment_received_idx ON public.jobs(payment_received);
-    CREATE INDEX IF NOT EXISTS jobs_commission_paid_idx ON public.jobs(commission_paid);
-  `;
-  await pool.query({ text: 'SELECT 1', query_timeout: 10000 });
-  await pool.query({ text: migration, query_timeout: 15000 });
+  await pool.query({ text: 'SELECT 1', query_timeout: 5000 });
 }
 
 module.exports = { db: { prepare }, init, CLASSES, pool };

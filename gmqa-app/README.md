@@ -89,8 +89,8 @@ does not require or accept credentials on the command line.
 3. Deploy. `api/index.js` exports the Express app; `vercel.json` routes `/api/*` to it and serves
    the existing `public` files.
 
-The base Supabase schema must exist before the first production request. On startup, the application
-automatically adds the newer optional columns and indexes used by the payment and commission features.
+The base Supabase schema and any later SQL migrations must be applied in Supabase before deployment.
+The application checks database connectivity at startup but does not run schema DDL during requests.
 It does not seed production data or import SQLite records automatically.
 
 ## Legacy SQLite hosting
