@@ -9,7 +9,10 @@ const ready = Promise.resolve().then(() => init());
 
 const app = express();
 app.use(express.json());
-app.use((req, res, next) => ready.then(() => next()).catch(next));
+app.use((req, res, next) => ready.then(() => next()).catch(error => {
+  if (res.headersSent) return next(error);
+  res.status(503).json({ error: 'Database is not ready', detail: error.message });
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- helpers ----------

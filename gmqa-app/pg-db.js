@@ -60,8 +60,9 @@ function prepare(sql) {
 }
 
 async function init() {
-  await pool.query('SELECT 1');
-  await pool.query(`
+  const migration = `
+    SET lock_timeout = '4000ms';
+    SET statement_timeout = '10000ms';
     ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS payment_received integer DEFAULT 1;
     ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_paid integer DEFAULT 1;
     ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS commission_payment_method text DEFAULT 'Cash';
@@ -70,7 +71,9 @@ async function init() {
     ALTER TABLE public.daily_meta ADD COLUMN IF NOT EXISTS commission_gcash_paid numeric DEFAULT 0;
     CREATE INDEX IF NOT EXISTS jobs_payment_received_idx ON public.jobs(payment_received);
     CREATE INDEX IF NOT EXISTS jobs_commission_paid_idx ON public.jobs(commission_paid);
-  `);
+  `;
+  await pool.query({ text: 'SELECT 1', query_timeout: 10000 });
+  await pool.query({ text: migration, query_timeout: 15000 });
 }
 
 module.exports = { db: { prepare }, init, CLASSES, pool };

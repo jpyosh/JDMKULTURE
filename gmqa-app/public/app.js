@@ -21,14 +21,26 @@ const nativeFetch = window.fetch.bind(window);
 window.fetch = async (input, init = {}) => {
   const headers = new Headers(init.headers || {});
   if (currentSession?.access_token) headers.set('Authorization', `Bearer ${currentSession.access_token}`);
-  const response = await nativeFetch(input, { ...init, headers });
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-    try { message = (await response.clone().json()).error || message; } catch {}
-    showToast(message, 'error');
-    throw new Error(message);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await nativeFetch(input, { ...init, headers, signal: init.signal || controller.signal });
+    if (!response.ok) {
+      let message = `Request failed (${response.status})`;
+      try { message = (await response.clone().json()).error || message; } catch {}
+      showToast(message, 'error');
+      throw new Error(message);
+    }
+    return response;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      showToast('The server took too long to respond. Please try again.', 'error');
+      throw new Error('Request timed out');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return response;
 };
 
 window.addEventListener('unhandledrejection', event => {
