@@ -23,9 +23,9 @@ function commFor(row, cls) {
 
 // Computes total price + commission for one job row using live lookups
 // (mirrors the sheet's INDEX/MATCH against Pricing Matrix / Commission Matrix).
-async function computeJob(job) {
-  const service = job.service_id ? await db.prepare('SELECT * FROM services WHERE id=?').get(job.service_id) : null;
-  const addon = job.addon_id ? await db.prepare('SELECT * FROM addons WHERE id=?').get(job.addon_id) : null;
+async function computeJob(job, lookups = {}) {
+  const service = job.service_id ? (lookups.services?.get(Number(job.service_id)) || await db.prepare('SELECT * FROM services WHERE id=?').get(job.service_id)) : null;
+  const addon = job.addon_id ? (lookups.addons?.get(Number(job.addon_id)) || await db.prepare('SELECT * FROM addons WHERE id=?').get(job.addon_id)) : null;
   const cls = job.vehicle_class;
 
   const basePrice = priceFor(service, cls);
@@ -41,6 +41,18 @@ async function computeJob(job) {
   const netRevenue = totalPrice - detailerComm;
 
   return { totalPrice, detailerComm, netRevenue, basePrice, addonPrice };
+}
+
+async function computeJobs(jobs) {
+  const [services, addons] = await Promise.all([
+    db.prepare('SELECT * FROM services').all(),
+    db.prepare('SELECT * FROM addons').all(),
+  ]);
+  const lookups = {
+    services: new Map(services.map(row => [Number(row.id), row])),
+    addons: new Map(addons.map(row => [Number(row.id), row])),
+  };
+  return Promise.all(jobs.map(async job => ({ ...job, computed: await computeJob(job, lookups) })));
 }
 
 function joNumber(dateStr, seq) {
@@ -122,7 +134,7 @@ app.delete('/api/pricing/addon/:id', async (req, res) => {
 
 app.get('/api/jobs/:date', async (req, res) => {
   const jobs = await db.prepare('SELECT * FROM jobs WHERE job_date=? ORDER BY id').all(req.params.date);
-  const enriched = await Promise.all(jobs.map(async j => ({ ...j, computed: await computeJob(j) })));
+  const enriched = await computeJobs(jobs);
   res.json(enriched);
 });
 
@@ -131,6 +143,7 @@ app.post('/api/jobs', async (req, res) => {
   if (!j.job_date) return res.status(400).json({ error: 'job_date required' });
   if (j.vehicle_class && !CLASSES.includes(j.vehicle_class)) return res.status(400).json({ error: 'Invalid vehicle class' });
   if (j.payment_method && !['Cash', 'GCash'].includes(j.payment_method)) return res.status(400).json({ error: 'Invalid payment method' });
+  if (j.commission_payment_method && !['Cash', 'GCash'].includes(j.commission_payment_method)) return res.status(400).json({ error: 'Invalid commission payment method' });
   for (const field of ['custom_price', 'custom_comm', 'discount', 'tip_gcash']) {
     if (Number(j[field] || 0) < 0) return res.status(400).json({ error: `${field} cannot be negative` });
   }
@@ -140,16 +153,20 @@ app.post('/api/jobs', async (req, res) => {
 
   const info = await db.prepare(`INSERT INTO jobs
     (jo_number, job_date, time_in, time_out, vehicle_class, plate, service_id, addon_id, addon_price_override,
-     custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method, detailer, remarks)
+    custom_addon_name, custom_price, custom_comm, discount, discount_reason, tip_gcash, payment_method,
+    commission_paid, commission_payment_method, commission_cash_paid, commission_gcash_paid, detailer, remarks)
     VALUES (@jo_number,@job_date,@time_in,@time_out,@vehicle_class,@plate,@service_id,@addon_id,@addon_price_override,
-     @custom_addon_name,@custom_price,@custom_comm,@discount,@discount_reason,@tip_gcash,@payment_method,@detailer,@remarks)`)
+    @custom_addon_name,@custom_price,@custom_comm,@discount,@discount_reason,@tip_gcash,@payment_method,
+    @commission_paid,@commission_payment_method,@commission_cash_paid,@commission_gcash_paid,@detailer,@remarks)`)
     .run({
       jo_number, job_date: j.job_date, time_in: j.time_in || null, time_out: j.time_out || null, vehicle_class: j.vehicle_class || null,
       plate: j.plate || null, service_id: j.service_id || null, addon_id: j.addon_id || null,
       addon_price_override: j.addon_price_override ?? null, custom_addon_name: j.custom_addon_name || null,
       custom_price: j.custom_price || 0, custom_comm: j.custom_comm || 0, discount: j.discount || 0,
       discount_reason: j.discount_reason || null, tip_gcash: j.tip_gcash || 0,
-      payment_method: j.payment_method || 'Cash', detailer: j.detailer || null, remarks: j.remarks || null,
+      payment_method: j.payment_method || 'Cash', commission_paid: 0,
+      commission_payment_method: j.commission_payment_method || 'Cash', commission_cash_paid: 0, commission_gcash_paid: 0,
+      detailer: j.detailer || null, remarks: j.remarks || null,
     });
 
   const job = await db.prepare('SELECT * FROM jobs WHERE id=?').get(info.lastInsertRowid);
@@ -159,7 +176,13 @@ app.post('/api/jobs', async (req, res) => {
 app.put('/api/jobs/:id', async (req, res) => {
   const fields = ['time_in', 'time_out', 'vehicle_class', 'plate', 'service_id', 'addon_id', 'addon_price_override',
     'custom_addon_name', 'custom_price', 'custom_comm', 'discount', 'discount_reason', 'tip_gcash',
-    'payment_method', 'detailer', 'remarks'];
+    'payment_method', 'commission_paid', 'commission_payment_method', 'commission_cash_paid', 'commission_gcash_paid', 'detailer', 'remarks'];
+  if ('commission_paid' in req.body) req.body.commission_paid = req.body.commission_paid ? 1 : 0;
+  for (const field of ['commission_cash_paid', 'commission_gcash_paid']) {
+    if (field in req.body && (!Number.isFinite(Number(req.body[field])) || Number(req.body[field]) < 0)) {
+      return res.status(400).json({ error: `${field} cannot be negative` });
+    }
+  }
   const updates = fields.filter(f => f in req.body);
   if (updates.length) {
     const set = updates.map(f => `${f}=@${f}`).join(', ');
@@ -218,7 +241,7 @@ app.put('/api/meta/:date', async (req, res) => {
 app.get('/api/eod/:date', async (req, res) => {
   const date = req.params.date;
   const rawJobs = await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(date);
-  const jobs = await Promise.all(rawJobs.map(async j => ({ ...j, computed: await computeJob(j) })));
+  const jobs = await computeJobs(rawJobs);
   const expenses = await db.prepare('SELECT * FROM expenses WHERE expense_date=?').all(date);
   const meta = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(date)
     || { cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, supervisor: '' };
@@ -227,6 +250,13 @@ app.get('/api/eod/:date', async (req, res) => {
   const totalVehicles = servicedJobs.length; // native dynamic count — replaces the broken COUNTUNIQUEIFS
   const grossSales = servicedJobs.reduce((s, j) => s + j.computed.totalPrice, 0);
   const totalComm = servicedJobs.reduce((s, j) => s + j.computed.detailerComm, 0);
+  const paidCommissions = servicedJobs.filter(j => Number(j.commission_paid) === 1);
+  const paidCommissionCash = paidCommissions.reduce((s, j) => s + (j.commission_cash_paid == null
+    ? ((j.commission_payment_method || 'Cash') === 'Cash' ? j.computed.detailerComm : 0)
+    : Number(j.commission_cash_paid || 0)), 0);
+  const paidCommissionGcash = paidCommissions.reduce((s, j) => s + (j.commission_gcash_paid == null
+    ? (j.commission_payment_method === 'GCash' ? j.computed.detailerComm : 0)
+    : Number(j.commission_gcash_paid || 0)), 0);
   // FIX (audit bug): this is the ONLY subtraction of commission. The old sheet subtracted it once
   // per row (in Net Shop Revenue) AND again here, understating profit by a full day's commission.
   const totalNetRevenue = grossSales - totalComm;
@@ -242,10 +272,10 @@ app.get('/api/eod/:date', async (req, res) => {
   const gcashTipsReceived = jobGcashTips + manualGcashTips;
 
   const expectedCashPre = Number(meta.cash_float || 0) + cashSales;
-  const expectedCashAfter = expectedCashPre - totalComm - cashExpenses;
+  const expectedCashAfter = expectedCashPre - paidCommissionCash - cashExpenses;
   // Customer tips are included in the GCash balance first, then removed when distributed.
   const expectedGcashPre = digitalSales + gcashTipsReceived;
-  const expectedGcashAfter = expectedGcashPre - gcashExpenses - gcashTipsToDistribute;
+  const expectedGcashAfter = expectedGcashPre - paidCommissionGcash - gcashExpenses - gcashTipsToDistribute;
   const expectedTotal = expectedCashAfter + expectedGcashAfter;
 
   const actualCash = meta.actual_cash;
@@ -258,7 +288,7 @@ app.get('/api/eod/:date', async (req, res) => {
   res.json({
     date, supervisor: meta.supervisor, cashFloat: Number(meta.cash_float || 0),
     totalVehicles, grossSales, totalComm, totalNetRevenue,
-    cashSales, digitalSales, cashExpenses, gcashExpenses, expenses,
+    cashSales, digitalSales, cashExpenses, gcashExpenses, expenses, paidCommissionCash, paidCommissionGcash,
     expectedCashPre, expectedCashAfter, expectedGcashPre, expectedGcashAfter, expectedTotal,
     actualCash, actualGcash, actualTotal,
     cashVariance, gcashVariance,
@@ -277,10 +307,10 @@ app.get('/api/weekly', async (req, res) => {
 
   const days = await Promise.all(rows.map(async r => {
     const dayJobs = await db.prepare('SELECT * FROM jobs WHERE job_date=?').all(r.job_date);
-    const jobs = (await Promise.all(dayJobs
-      .filter(j => j.vehicle_class).map(async j => ({ ...j, computed: await computeJob(j) }))));
+    const jobs = (await computeJobs(dayJobs)).filter(j => j.vehicle_class);
     const gross = jobs.reduce((s, j) => s + j.computed.totalPrice, 0);
-    const comm = jobs.reduce((s, j) => s + j.computed.detailerComm, 0);
+    const comm = jobs.filter(j => Number(j.commission_paid) === 1).reduce((s, j) => s + (j.commission_cash_paid == null && j.commission_gcash_paid == null
+      ? j.computed.detailerComm : Number(j.commission_cash_paid || 0) + Number(j.commission_gcash_paid || 0)), 0);
     const expenses = (await db.prepare('SELECT SUM(amount) t FROM expenses WHERE expense_date=?').get(r.job_date)).t || 0;
     return { date: r.job_date, vehicles: jobs.length, grossSales: gross, commissions: comm, otherExpenses: expenses, netProfit: gross - comm - expenses };
   }));

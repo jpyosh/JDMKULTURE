@@ -124,7 +124,24 @@ function populateQuickJobSelectors() {
 
   serviceEl.innerHTML = '<option value="">Select service</option>' + pricing.services.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   addonEl.innerHTML = '<option value="">None</option>' + pricing.addons.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+  updateQuickEstimate();
 }
+
+function updateQuickEstimate() {
+  const vehicleClass = document.getElementById('new-job-class')?.value;
+  const service = pricing.services.find(item => String(item.id) === document.getElementById('new-job-service')?.value);
+  const addon = pricing.addons.find(item => String(item.id) === document.getElementById('new-job-addon')?.value);
+  const customPrice = Number(document.getElementById('new-job-custom-price')?.value || 0);
+  const discount = Number(document.getElementById('new-job-discount')?.value || 0);
+  const total = (service?.[`price_${vehicleClass}`] || 0) + (addon?.[`price_${vehicleClass}`] || 0) + customPrice - discount;
+  const totalEl = document.getElementById('quick-job-total');
+  if (totalEl) totalEl.textContent = `Total: ${peso(total)}`;
+}
+
+['new-job-class', 'new-job-service', 'new-job-addon', 'new-job-custom-price', 'new-job-discount'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', updateQuickEstimate);
+  document.getElementById(id)?.addEventListener('change', updateQuickEstimate);
+});
 
 async function loadDaily() {
   await ensurePricing();
@@ -165,7 +182,7 @@ function renderJobs(jobs) {
   }
   tbody.innerHTML = jobs.map(j => rowHtml(j)).join('');
   tbody.querySelectorAll('[data-field]').forEach(el => {
-    el.addEventListener('change', () => updateJob(el.closest('tr').dataset.id, el.dataset.field, el.value));
+    el.addEventListener('change', () => updateJob(el.closest('tr').dataset.id, el.dataset.field, el.type === 'checkbox' ? el.checked : el.value));
   });
   tbody.querySelectorAll('.del-job').forEach(el => {
     el.addEventListener('click', () => deleteJob(el.closest('tr').dataset.id));
@@ -175,7 +192,7 @@ function renderJobs(jobs) {
 
 function rowHtml(j) {
   const c = j.computed;
-  return `<tr data-id="${j.id}">
+  return `<tr data-id="${j.id}" class="payment-row ${j.payment_method === 'GCash' ? 'gcash-row' : 'cash-row'}">
     <td class="jo-number">${j.jo_number || '—'}</td>
     <td><input type="time" data-field="time_in" value="${esc(j.time_in)}"></td>
     <td><input type="time" data-field="time_out" value="${esc(j.time_out)}"></td>
@@ -207,7 +224,10 @@ function rowHtml(j) {
     <td class="num money">${peso(c.totalPrice)}</td>
     <td class="num money amber-text">${peso(c.detailerComm)}</td>
     <td class="num money pos">${peso(c.netRevenue)}</td>
-    <td><button class="icon-btn del-job" title="Delete">✕</button></td>
+    <td class="commission-cell"><input type="number" min="0" step="0.01" data-field="commission_cash_paid" value="${j.commission_cash_paid ?? ''}" placeholder="Cash paid" title="Cash commission paid">
+      <input type="number" min="0" step="0.01" data-field="commission_gcash_paid" value="${j.commission_gcash_paid ?? ''}" placeholder="GCash paid" title="GCash commission paid">
+      <label class="paid-toggle"><input type="checkbox" data-field="commission_paid" ${Number(j.commission_paid) === 1 ? 'checked' : ''}> Paid</label>
+      <button class="icon-btn del-job" title="Delete">✕</button></td>
   </tr>`;
 }
 
@@ -233,12 +253,20 @@ document.getElementById('add-job-btn').addEventListener('click', () => {
     discount: Number(document.getElementById('new-job-discount').value || 0),
     discount_reason: document.getElementById('new-job-discount-notes').value.trim() || null,
     payment_method: document.getElementById('new-job-payment').value || 'Cash',
+    commission_paid: 0,
+    commission_cash_paid: Number(document.getElementById('new-job-commission-cash').value || 0),
+    commission_gcash_paid: Number(document.getElementById('new-job-commission-gcash').value || 0),
     tip_gcash: Number(document.getElementById('new-job-tip').value || 0),
     detailer: document.getElementById('new-job-detailer').value || null,
   };
 
   const service = pricing.services.find(item => String(item.id) === pendingJobPayload.service_id);
   const addon = pricing.addons.find(item => String(item.id) === pendingJobPayload.addon_id);
+  const vehicleClass = pendingJobPayload.vehicle_class;
+  const basePrice = service?.[`price_${vehicleClass}`] || 0;
+  const addonPrice = addon?.[`price_${vehicleClass}`] || 0;
+  const totalPrice = basePrice + addonPrice + pendingJobPayload.custom_price - pendingJobPayload.discount;
+  const commission = (service?.[`comm_${vehicleClass}`] || 0) + (addon?.[`comm_${vehicleClass}`] || 0) + pendingJobPayload.custom_comm;
   document.getElementById('job-review-details').innerHTML = [
     reviewDetail('Date', pendingJobPayload.job_date),
     reviewDetail('Time', pendingJobPayload.time_in),
@@ -251,6 +279,12 @@ document.getElementById('add-job-btn').addEventListener('click', () => {
     reviewDetail('Discount', pendingJobPayload.discount ? `${peso(pendingJobPayload.discount)}${pendingJobPayload.discount_reason ? ` - ${pendingJobPayload.discount_reason}` : ''}` : null, true),
     reviewDetail('GCash tip', peso(pendingJobPayload.tip_gcash)),
     reviewDetail('Detailer', pendingJobPayload.detailer),
+    reviewDetail('Base price', peso(basePrice)),
+    reviewDetail('Add-on price', peso(addonPrice)),
+    reviewDetail('Discount', peso(pendingJobPayload.discount)),
+    reviewDetail('Total price', peso(totalPrice), true),
+    reviewDetail('Commission', peso(commission)),
+    reviewDetail('Net revenue', peso(totalPrice - commission), true),
   ].join('');
   document.getElementById('job-review-modal').showModal();
 });
@@ -282,6 +316,11 @@ document.getElementById('confirm-add-job').addEventListener('click', async event
   document.getElementById('new-job-custom-comm').value = '';
   document.getElementById('new-job-discount').value = '';
   document.getElementById('new-job-discount-notes').value = '';
+  document.getElementById('new-job-time').value = '12:00';
+  document.getElementById('new-job-payment').value = 'Cash';
+  document.getElementById('new-job-commission-cash').value = '';
+  document.getElementById('new-job-commission-gcash').value = '';
+  pendingJobPayload = null;
   loadDaily();
 });
 
@@ -407,11 +446,12 @@ async function loadEod() {
   document.getElementById('expected-block').innerHTML = `
     <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
     <div class="row-line"><span class="k">+ Cash Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
-    <div class="row-line"><span class="k">− Commissions</span><span class="money">${peso(eod.totalComm)}</span></div>
+    <div class="row-line"><span class="k">− Paid cash commissions</span><span class="money">${peso(eod.paidCommissionCash)}</span></div>
     <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
     <div class="row-line total"><span>Expected Cash (After Deductions)</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
     <div class="row-line" style="margin-top:8px;"><span class="k">GCash / Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
     <div class="row-line"><span class="k">+ Customer Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
+    <div class="row-line"><span class="k">− Paid GCash commissions</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
     <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
     <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
     <div class="row-line total"><span>Expected GCash (After Deductions)</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
@@ -422,13 +462,14 @@ async function loadEod() {
     <div class="breakdown-card"><h2>Cash Reconciliation</h2>
       <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
       <div class="row-line"><span class="k">+ Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
-      <div class="row-line"><span class="k">− Commission</span><span class="money">${peso(eod.totalComm)}</span></div>
+      <div class="row-line"><span class="k">− Paid cash commissions</span><span class="money">${peso(eod.paidCommissionCash)}</span></div>
       <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
       <div class="row-line total"><span>Expected Cash</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
     </div>
     <div class="breakdown-card"><h2>GCash Reconciliation</h2>
       <div class="row-line"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
       <div class="row-line"><span class="k">+ Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
+      <div class="row-line"><span class="k">− Paid GCash commissions</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
       <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
       <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
       <div class="row-line total"><span>Expected GCash</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>

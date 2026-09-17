@@ -62,6 +62,10 @@ function init() {
       discount_reason TEXT,
       tip_gcash REAL DEFAULT 0,
       payment_method TEXT DEFAULT 'Cash',
+      commission_paid INTEGER DEFAULT 1,
+      commission_payment_method TEXT DEFAULT 'Cash',
+      commission_cash_paid REAL,
+      commission_gcash_paid REAL,
       detailer TEXT,
       remarks TEXT,
       created_at TEXT DEFAULT (datetime('now'))
@@ -128,6 +132,10 @@ function ensureSchemaColumns() {
   addColumnIfMissing('addons', 'price_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('addons', 'comm_BIG_MOTO', 'REAL DEFAULT 0');
   addColumnIfMissing('jobs', 'time_out', 'TEXT');
+  addColumnIfMissing('jobs', 'commission_paid', 'INTEGER DEFAULT 1');
+  addColumnIfMissing('jobs', 'commission_payment_method', "TEXT DEFAULT 'Cash'");
+  addColumnIfMissing('jobs', 'commission_cash_paid', 'REAL');
+  addColumnIfMissing('jobs', 'commission_gcash_paid', 'REAL');
   addColumnIfMissing('payroll_entries', 'half_days', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'absences', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'ot_hours', 'REAL DEFAULT 0');

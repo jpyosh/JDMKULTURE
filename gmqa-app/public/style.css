@@ -146,8 +146,15 @@ button.icon-btn:hover{color:var(--red);}
 .daily-table th:nth-child(1){width:58px}.daily-table th:nth-child(2),.daily-table th:nth-child(3){width:62px}
 .daily-table th:nth-child(4){width:55px}.daily-table th:nth-child(5){width:92px}.daily-table th:nth-child(6){width:135px}
 .daily-table th:nth-child(7){width:115px}.daily-table th:nth-child(8){width:78px}.daily-table th:nth-child(9){width:70px}
-.daily-table th:nth-child(10){width:82px}.daily-table th:nth-child(11),.daily-table th:nth-child(12),.daily-table th:nth-child(13){width:76px}.daily-table th:nth-child(14){width:28px}
+.daily-table th:nth-child(10){width:82px}.daily-table th:nth-child(11),.daily-table th:nth-child(12),.daily-table th:nth-child(13){width:76px}.daily-table th:nth-child(14){width:125px}
 .daily-table input,.daily-table select{min-width:0; padding:6px 4px; font-size:11px;}
+.daily-table .payment-row.cash-row{border-left:3px solid #62c174;}
+.daily-table .payment-row.gcash-row{border-left:3px solid #4c9fe8;}
+.daily-table .cash-row select[data-field="payment_method"]{border-color:#62c174;color:#9be0a5;background:rgba(98,193,116,.12);}
+.daily-table .gcash-row select[data-field="payment_method"]{border-color:#4c9fe8;color:#9ccfff;background:rgba(76,159,232,.12);}
+.commission-cell{display:grid;gap:4px;min-width:100px;}
+.paid-toggle{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;}
+.paid-toggle input{width:auto;}
 .daily-table .jo-number{white-space:normal; line-height:1.05;}
 .extras-menu{position:relative; white-space:normal;}
 .extras-menu summary{cursor:pointer; color:var(--teal); font-size:10px;}
@@ -177,6 +184,7 @@ tbody tr:hover{background:var(--surface-alt);}
 .money.pos{color:var(--teal);}
 .money.neg{color:var(--red);}
 .teal-text{color:var(--teal);}
+.quick-total{font-family:var(--mono);font-size:13px;color:var(--teal);margin-bottom:7px;white-space:nowrap;}
 
 .pill{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600;}
 .pill.cash{background:#3a2c14; color:var(--amber);}

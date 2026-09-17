@@ -56,6 +56,10 @@ create table if not exists public.jobs (
   discount_reason text,
   tip_gcash numeric default 0,
   payment_method text default 'Cash',
+  commission_paid integer default 1,
+  commission_payment_method text default 'Cash',
+  commission_cash_paid numeric,
+  commission_gcash_paid numeric,
   detailer text,
   remarks text,
   created_at timestamptz default now()
@@ -108,6 +112,11 @@ create table if not exists public.payroll_entries (
 create index if not exists jobs_job_date_idx on public.jobs(job_date);
 create index if not exists expenses_expense_date_idx on public.expenses(expense_date);
 create index if not exists payroll_entries_period_idx on public.payroll_entries(period_label);
+
+alter table public.jobs add column if not exists commission_paid integer default 1;
+alter table public.jobs add column if not exists commission_payment_method text default 'Cash';
+alter table public.jobs add column if not exists commission_cash_paid numeric;
+alter table public.jobs add column if not exists commission_gcash_paid numeric;
 
 -- The application API will use the server-only Supabase service-role key.
 -- RLS is enabled so accidental browser access cannot read financial data.
