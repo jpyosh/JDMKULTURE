@@ -367,11 +367,9 @@ function renderPricingTable(kind, rows, tbodyId) {
       <td><input type="text" data-field="name" value="${esc(r.name)}" style="width:220px"></td>
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="price_${c}" value="${r['price_' + c]}" class="mini-input"></td>`).join('')}
       ${CLASSES.map(c => `<td class="num"><input type="number" data-field="comm_${c}" value="${r['comm_' + c]}" class="mini-input"></td>`).join('')}
-      <td class="table-actions"><button class="icon-btn del-pricing" title="Delete ${kind === 'services' ? 'service' : 'add-on'}" aria-label="Delete">✕</button></td>
+      <td class="table-actions"><button class="btn ghost save-pricing" type="button">Save</button><button class="icon-btn del-pricing" title="Delete ${kind === 'services' ? 'service' : 'add-on'}" aria-label="Delete">✕</button></td>
     </tr>`).join('');
-  tbody.querySelectorAll('input').forEach(el => {
-    el.addEventListener('change', () => savePricingCell(el));
-  });
+  tbody.querySelectorAll('.save-pricing').forEach(el => el.addEventListener('click', () => savePricingRow(el.closest('tr'), el)));
   tbody.querySelectorAll('.del-pricing').forEach(el => {
     el.addEventListener('click', () => deletePricing(el.closest('tr')));
   });
@@ -390,14 +388,21 @@ async function deletePricing(row) {
   showToast(`${kind === 'service' ? 'Service' : 'Add-on'} archived`);
 }
 
-async function savePricingCell(el) {
-  const tr = el.closest('tr');
+async function savePricingRow(tr, button) {
   const id = tr.dataset.id;
   const kind = tr.dataset.kind === 'services' ? 'service' : 'addon';
-  await fetch(`/api/pricing/${kind}/${id}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ [el.dataset.field]: el.dataset.field === 'name' ? el.value : Number(el.value) }),
+  const body = {};
+  tr.querySelectorAll('[data-field]').forEach(el => {
+    body[el.dataset.field] = el.dataset.field === 'name' ? el.value.trim() : Number(el.value || 0);
   });
+  if (!body.name) return showToast('Name is required', 'error');
+  button.disabled = true;
+  try {
+    await fetch(`/api/pricing/${kind}/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    showToast(`${kind === 'service' ? 'Service' : 'Add-on'} saved`);
+  } finally { button.disabled = false; }
 }
 
 document.getElementById('add-service-btn').addEventListener('click', async () => {

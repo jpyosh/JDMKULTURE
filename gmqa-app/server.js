@@ -61,16 +61,6 @@ function joNumber(dateStr, seq) {
   return `JO-${m}${d}${y.slice(2)}-${String(seq).padStart(3, '0')}`;
 }
 
-function validateCommissionPayment(job, computed) {
-  const gcash = Number(job.commission_gcash_paid || 0);
-  if (gcash < 0) return 'GCash commission cannot be negative';
-  if (gcash > computed.detailerComm + 0.005) return 'GCash commission cannot exceed the calculated commission';
-  if (Number(job.commission_paid) === 1 && gcash + 0.005 < computed.detailerComm && Number(job.commission_cash_paid || 0) < computed.detailerComm - gcash - 0.005) {
-    return 'Enter the full commission amount before marking it Paid';
-  }
-  return null;
-}
-
 const supabaseAuth = process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
   : null;
@@ -164,9 +154,6 @@ app.post('/api/jobs', async (req, res) => {
   for (const field of ['custom_price', 'custom_comm', 'discount', 'tip_gcash']) {
     if (!Number.isFinite(Number(j[field] || 0)) || Number(j[field] || 0) < 0) return res.status(400).json({ error: `${field} must be a valid non-negative number` });
   }
-  const prospective = await computeJob(j);
-  const paymentError = validateCommissionPayment({ ...j, commission_paid: 0 }, prospective);
-  if (paymentError) return res.status(400).json({ error: paymentError });
   const seq = Number((await db.prepare('SELECT COUNT(*) c FROM jobs WHERE job_date=?').get(j.job_date)).c) + 1;
   const jo_number = joNumber(j.job_date, seq);
 
@@ -207,14 +194,6 @@ app.put('/api/jobs/:id', async (req, res) => {
   const existingJob = await db.prepare('SELECT * FROM jobs WHERE id=?').get(req.params.id);
   if (!existingJob) return res.status(404).json({ error: 'Job not found' });
   const candidate = { ...existingJob, ...req.body };
-  const computedCandidate = await computeJob(candidate);
-  if ('commission_gcash_paid' in req.body || 'commission_paid' in req.body) {
-    candidate.commission_gcash_paid = Number(req.body.commission_gcash_paid || 0);
-    candidate.commission_cash_paid = Math.max(0, computedCandidate.detailerComm - candidate.commission_gcash_paid);
-    req.body.commission_cash_paid = candidate.commission_cash_paid;
-  }
-  const candidatePaymentError = validateCommissionPayment(candidate, computedCandidate);
-  if (candidatePaymentError) return res.status(400).json({ error: candidatePaymentError });
   if (updates.length) {
     const set = updates.map(f => `${f}=@${f}`).join(', ');
     await db.prepare(`UPDATE jobs SET ${set} WHERE id=@id`).run({ ...req.body, id: req.params.id });
