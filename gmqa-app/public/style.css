@@ -143,14 +143,15 @@ button.icon-btn:hover{color:var(--red);}
 
 /* ---------- Table ---------- */
 .table-wrap{overflow:auto; border:1px solid var(--border); border-radius:8px; background:rgba(14,17,22,0.6);}
-.daily-table{width:100%; table-layout:fixed; font-size:11px;}
+.daily-table{width:100%; min-width:1550px; table-layout:fixed; font-size:11px;}
 .daily-table th,.daily-table td{padding:8px 5px; white-space:nowrap;}
-.daily-table th:nth-child(1){width:72px}.daily-table th:nth-child(2),.daily-table th:nth-child(3){width:88px}
-.daily-table th:nth-child(4){width:60px}.daily-table th:nth-child(5){width:140px}.daily-table th:nth-child(6){width:145px}
-.daily-table th:nth-child(7){width:115px}.daily-table th:nth-child(8){width:78px}.daily-table th:nth-child(9){width:70px}
-.daily-table th:nth-child(10){width:90px}.daily-table th:nth-child(11),.daily-table th:nth-child(12),.daily-table th:nth-child(13){width:82px}.daily-table th:nth-child(14){width:120px}
+.daily-table th:nth-child(1){width:82px}.daily-table th:nth-child(2),.daily-table th:nth-child(3){width:105px}
+.daily-table th:nth-child(4){width:68px}.daily-table th:nth-child(5){width:165px}.daily-table th:nth-child(6){width:185px}
+.daily-table th:nth-child(7){width:145px}.daily-table th:nth-child(8){width:110px}.daily-table th:nth-child(9){width:88px}
+.daily-table th:nth-child(10){width:125px}.daily-table th:nth-child(11),.daily-table th:nth-child(12),.daily-table th:nth-child(13){width:95px}.daily-table th:nth-child(14){width:145px}
 .daily-table input,.daily-table select{min-width:0; padding:6px 4px; font-size:11px;}
-.daily-table td:nth-child(2) input,.daily-table td:nth-child(3) input,.daily-table td:nth-child(5) input{min-width:84px;}
+.daily-table td:nth-child(2) input,.daily-table td:nth-child(3) input{min-width:96px;}
+.daily-table td:nth-child(5) input{min-width:155px;}
 .daily-table .payment-row.cash-row{border-left:3px solid #62c174;}
 .daily-table .payment-row.gcash-row{border-left:3px solid #4c9fe8;}
 .daily-table .cash-row select[data-field="payment_method"]{border-color:#62c174;color:#9be0a5;background:rgba(98,193,116,.12);}
@@ -270,7 +271,7 @@ tbody tr.saving{opacity:.55;}
   .submit-cell .btn{width:100%; text-align:center;}
   .weekly-table-wrap,.table-wrap{max-width:100%;}
   .matrix-table{min-width:900px;}
-  .daily-table{min-width:1060px;}
+  .daily-table{min-width:1550px;}
   .two-col{gap:14px;}
 }
 
