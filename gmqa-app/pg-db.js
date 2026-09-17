@@ -58,7 +58,9 @@ function prepare(sql) {
     },
     async get(...args) { return (await this.all(...args))[0]; },
     async run(...args) {
-      const query = /^\s*insert\b/i.test(text) && !/\breturning\b/i.test(text) ? `${text} RETURNING id` : text;
+      const isInsert = /^\s*insert\b/i.test(text);
+      const hasId = !/\binsert\s+into\s+daily_meta\b/i.test(text);
+      const query = isInsert && hasId && !/\breturning\b/i.test(text) ? `${text} RETURNING id` : text;
       const result = await pool.query({ text: query, values: parameters(args), query_timeout: 10000 });
       return { changes: result.rowCount, lastInsertRowid: result.rows[0]?.id };
     },
