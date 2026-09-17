@@ -86,7 +86,8 @@ function init() {
       cash_float REAL DEFAULT 0,
       actual_cash REAL,
       actual_gcash REAL,
-      gcash_tips_to_distribute REAL DEFAULT 0
+      gcash_tips_to_distribute REAL DEFAULT 0,
+      commission_gcash_paid REAL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS employees (
@@ -146,6 +147,7 @@ function ensureSchemaColumns() {
   addColumnIfMissing('jobs', 'commission_payment_method', "TEXT DEFAULT 'Cash'");
   addColumnIfMissing('jobs', 'commission_cash_paid', 'REAL');
   addColumnIfMissing('jobs', 'commission_gcash_paid', 'REAL');
+  addColumnIfMissing('daily_meta', 'commission_gcash_paid', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'half_days', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'absences', 'REAL DEFAULT 0');
   addColumnIfMissing('payroll_entries', 'ot_hours', 'REAL DEFAULT 0');

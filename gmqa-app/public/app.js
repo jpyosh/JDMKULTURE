@@ -236,9 +236,6 @@ function rowHtml(j) {
     <td class="num money amber-text">${peso(c.detailerComm)}</td>
     <td class="num money pos">${peso(c.netRevenue)}</td>
     <td class="commission-cell"><label class="paid-toggle customer-paid"><input type="checkbox" data-field="payment_received" ${Number(j.payment_received) === 1 ? 'checked' : ''}> Customer paid</label>
-      <input type="number" min="0" step="0.01" data-field="commission_gcash_paid" value="${j.commission_gcash_paid ?? ''}" placeholder="GCash commission" title="GCash commission paid; remaining commission is Cash">
-      <span class="paid-toggle">Cash: ${peso(Math.max(0, c.detailerComm - Number(j.commission_gcash_paid || 0)))}</span>
-      <label class="paid-toggle"><input type="checkbox" data-field="commission_paid" ${Number(j.commission_paid) === 1 ? 'checked' : ''}> Detailer paid</label>
       <button class="icon-btn del-job" title="Delete">✕</button></td>
   </tr>`;
 }
@@ -267,7 +264,6 @@ document.getElementById('add-job-btn').addEventListener('click', () => {
     payment_method: document.getElementById('new-job-payment').value || 'Cash',
     payment_received: 0,
     commission_paid: 0,
-    commission_gcash_paid: Number(document.getElementById('new-job-commission-gcash').value || 0),
     tip_gcash: Number(document.getElementById('new-job-tip').value || 0),
     detailer: document.getElementById('new-job-detailer').value || null,
   };
@@ -330,7 +326,6 @@ document.getElementById('confirm-add-job').addEventListener('click', async event
   document.getElementById('new-job-discount-notes').value = '';
   document.getElementById('new-job-time').value = '12:00';
   document.getElementById('new-job-payment').value = 'Cash';
-  document.getElementById('new-job-commission-gcash').value = '';
   pendingJobPayload = null;
   loadDaily();
 });
@@ -451,11 +446,13 @@ async function loadEod() {
   document.getElementById('meta-supervisor').value = meta.supervisor || '';
   document.getElementById('meta-float').value = meta.cash_float || 0;
   document.getElementById('meta-tips').value = meta.gcash_tips_to_distribute || 0;
+  document.getElementById('meta-commission-gcash').value = meta.commission_gcash_paid || 0;
   document.getElementById('meta-actual-cash').value = meta.actual_cash ?? '';
   document.getElementById('meta-actual-gcash').value = meta.actual_gcash ?? '';
 
   document.getElementById('cash-expenses').innerHTML = expenseListHtml(eod.expenses.filter(e => e.side === 'cash'));
-  document.getElementById('gcash-expenses').innerHTML = expenseListHtml(eod.expenses.filter(e => e.side === 'gcash'));
+  document.getElementById('gcash-expenses').innerHTML = expenseListHtml(eod.expenses.filter(e => e.side === 'gcash')) +
+    (eod.paidCommissionGcash ? `<div class="row-line"><span class="k">Commission paid via GCash</span><span>${peso(eod.paidCommissionGcash)}</span></div>` : '');
   document.querySelectorAll('.del-exp').forEach(el => el.addEventListener('click', () => deleteExpense(el.dataset.id)));
 
   document.getElementById('expected-block').innerHTML = `
@@ -466,7 +463,7 @@ async function loadEod() {
     <div class="row-line total"><span>Expected Cash (After Deductions)</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
     <div class="row-line" style="margin-top:8px;"><span class="k">GCash / Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
     <div class="row-line"><span class="k">+ Customer Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
-    <div class="row-line"><span class="k">− Paid GCash commissions</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
+    <div class="row-line"><span class="k">− Commission paid via GCash</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
     <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
     <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
     <div class="row-line total"><span>Expected GCash (After Deductions)</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
@@ -484,7 +481,7 @@ async function loadEod() {
     <div class="breakdown-card"><h2>GCash Reconciliation</h2>
       <div class="row-line"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
       <div class="row-line"><span class="k">+ Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
-      <div class="row-line"><span class="k">− Paid GCash commissions</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
+      <div class="row-line"><span class="k">− Commission paid via GCash</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
       <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
       <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
       <div class="row-line total"><span>Expected GCash</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
@@ -562,6 +559,7 @@ document.getElementById('save-meta').addEventListener('click', async event => {
       supervisor: document.getElementById('meta-supervisor').value,
       cash_float: Number(document.getElementById('meta-float').value || 0),
       gcash_tips_to_distribute: Number(document.getElementById('meta-tips').value || 0),
+      commission_gcash_paid: Number(document.getElementById('meta-commission-gcash').value || 0),
       actual_cash: document.getElementById('meta-actual-cash').value === '' ? null : Number(document.getElementById('meta-actual-cash').value),
       actual_gcash: document.getElementById('meta-actual-gcash').value === '' ? null : Number(document.getElementById('meta-actual-gcash').value),
     }),

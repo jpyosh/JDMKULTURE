@@ -98,10 +98,6 @@
             </select>
           </div>
           <div>
-            <label>GCash commission paid</label>
-            <input type="number" id="new-job-commission-gcash" min="0" step="0.01" placeholder="0.00">
-          </div>
-          <div>
             <label>GCash Tip</label>
             <input type="number" id="new-job-tip" min="0" step="0.01" placeholder="0.00">
           </div>
@@ -149,7 +145,7 @@
             <thead>
               <tr>
                 <th>JO#</th><th>In</th><th>Out</th><th>Class</th><th>Plate</th><th>Service</th><th>Add-On</th>
-                <th>Extras</th><th>Pay</th><th>Detailer</th><th class="num">Total</th><th class="num">Comm</th><th class="num">Net</th><th>Customer payment / commission</th>
+                <th>Extras</th><th>Pay</th><th>Detailer</th><th class="num">Total</th><th class="num">Comm</th><th class="num">Net</th><th>Customer payment</th>
               </tr>
             </thead>
             <tbody id="jobs-tbody"></tbody>
@@ -268,6 +264,7 @@
             <div><label>Supervisor</label><input type="text" id="meta-supervisor"></div>
             <div><label>Cash Float</label><input type="number" id="meta-float"></div>
             <div><label>GCash Tips to Distribute</label><input type="number" id="meta-tips"></div>
+            <div><label>Commission Paid via GCash</label><input type="number" id="meta-commission-gcash" min="0" step="0.01" placeholder="0.00"></div>
           </div>
 
           <h2 style="margin-top:20px;">Expected (System Math)</h2>

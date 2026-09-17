@@ -252,18 +252,21 @@ app.delete('/api/expenses/:id', async (req, res) => {
 
 app.get('/api/meta/:date', async (req, res) => {
   const meta = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date);
-  res.json(meta || { job_date: req.params.date, supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0 });
+  res.json(meta || { job_date: req.params.date, supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, commission_gcash_paid: 0 });
 });
 
 app.put('/api/meta/:date', async (req, res) => {
   const m = req.body;
-  await db.prepare(`INSERT INTO daily_meta (job_date, supervisor, cash_float, actual_cash, actual_gcash, gcash_tips_to_distribute)
-    VALUES (@job_date,@supervisor,@cash_float,@actual_cash,@actual_gcash,@gcash_tips_to_distribute)
+  const commissionGcashPaid = Number(m.commission_gcash_paid || 0);
+  if (!Number.isFinite(commissionGcashPaid) || commissionGcashPaid < 0) return res.status(400).json({ error: 'GCash commission must be a valid non-negative amount' });
+  await db.prepare(`INSERT INTO daily_meta (job_date, supervisor, cash_float, actual_cash, actual_gcash, gcash_tips_to_distribute, commission_gcash_paid)
+    VALUES (@job_date,@supervisor,@cash_float,@actual_cash,@actual_gcash,@gcash_tips_to_distribute,@commission_gcash_paid)
     ON CONFLICT(job_date) DO UPDATE SET supervisor=excluded.supervisor, cash_float=excluded.cash_float,
       actual_cash=excluded.actual_cash, actual_gcash=excluded.actual_gcash,
-      gcash_tips_to_distribute=excluded.gcash_tips_to_distribute`)
+      gcash_tips_to_distribute=excluded.gcash_tips_to_distribute, commission_gcash_paid=excluded.commission_gcash_paid`)
     .run({ job_date: req.params.date, supervisor: m.supervisor || '', cash_float: m.cash_float || 0,
-      actual_cash: m.actual_cash, actual_gcash: m.actual_gcash, gcash_tips_to_distribute: m.gcash_tips_to_distribute || 0 });
+      actual_cash: m.actual_cash, actual_gcash: m.actual_gcash, gcash_tips_to_distribute: m.gcash_tips_to_distribute || 0,
+      commission_gcash_paid: commissionGcashPaid });
   res.json(await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date));
 });
 
@@ -275,20 +278,14 @@ app.get('/api/eod/:date', async (req, res) => {
   const jobs = await computeJobs(rawJobs);
   const expenses = await db.prepare('SELECT * FROM expenses WHERE expense_date=?').all(date);
   const meta = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(date)
-    || { cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, supervisor: '' };
+    || { cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, commission_gcash_paid: 0, supervisor: '' };
 
   const servicedJobs = jobs.filter(j => j.vehicle_class);
   const paidJobs = servicedJobs.filter(j => Number(j.payment_received) === 1);
   const totalVehicles = paidJobs.length;
   const grossSales = paidJobs.reduce((s, j) => s + j.computed.totalPrice, 0);
   const totalComm = servicedJobs.reduce((s, j) => s + j.computed.detailerComm, 0);
-  const paidCommissions = servicedJobs.filter(j => Number(j.commission_paid) === 1);
-  const paidCommissionCash = paidCommissions.reduce((s, j) => s + (j.commission_cash_paid == null
-    ? ((j.commission_payment_method || 'Cash') === 'Cash' ? j.computed.detailerComm : 0)
-    : Number(j.commission_cash_paid || 0)), 0);
-  const paidCommissionGcash = paidCommissions.reduce((s, j) => s + (j.commission_gcash_paid == null
-    ? (j.commission_payment_method === 'GCash' ? j.computed.detailerComm : 0)
-    : Number(j.commission_gcash_paid || 0)), 0);
+  const paidCommissionGcash = Math.min(Number(meta.commission_gcash_paid || 0), totalComm);
   // FIX (audit bug): this is the ONLY subtraction of commission. The old sheet subtracted it once
   // per row (in Net Shop Revenue) AND again here, understating profit by a full day's commission.
   const totalNetRevenue = grossSales - totalComm;
@@ -303,6 +300,8 @@ app.get('/api/eod/:date', async (req, res) => {
   const gcashTipsToDistribute = manualGcashTips + jobGcashTips;
   const gcashTipsReceived = jobGcashTips + manualGcashTips;
 
+  const availableCash = Math.max(0, Number(meta.cash_float || 0) + cashSales - cashExpenses);
+  const paidCommissionCash = Math.min(Math.max(0, totalComm - paidCommissionGcash), availableCash);
   const expectedCashPre = Number(meta.cash_float || 0) + cashSales;
   const expectedCashAfter = expectedCashPre - paidCommissionCash - cashExpenses;
   // Customer tips are included in the GCash balance first, then removed when distributed.
@@ -321,6 +320,7 @@ app.get('/api/eod/:date', async (req, res) => {
     date, supervisor: meta.supervisor, cashFloat: Number(meta.cash_float || 0),
     totalVehicles, grossSales, totalComm, totalNetRevenue,
     cashSales, digitalSales, cashExpenses, gcashExpenses, expenses, paidCommissionCash, paidCommissionGcash,
+    commissionGcashPaid: paidCommissionGcash,
     expectedCashPre, expectedCashAfter, expectedGcashPre, expectedGcashAfter, expectedTotal,
     actualCash, actualGcash, actualTotal,
     cashVariance, gcashVariance,

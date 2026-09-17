@@ -80,7 +80,8 @@ create table if not exists public.daily_meta (
   cash_float numeric default 0,
   actual_cash numeric,
   actual_gcash numeric,
-  gcash_tips_to_distribute numeric default 0
+  gcash_tips_to_distribute numeric default 0,
+  commission_gcash_paid numeric default 0
 );
 
 create table if not exists public.employees (
@@ -115,6 +116,7 @@ alter table public.jobs add column if not exists payment_received integer defaul
 alter table public.jobs add column if not exists commission_payment_method text default 'Cash';
 alter table public.jobs add column if not exists commission_cash_paid numeric;
 alter table public.jobs add column if not exists commission_gcash_paid numeric;
+alter table public.daily_meta add column if not exists commission_gcash_paid numeric default 0;
 
 create index if not exists jobs_job_date_idx on public.jobs(job_date);
 create index if not exists jobs_service_idx on public.jobs(service_id);
