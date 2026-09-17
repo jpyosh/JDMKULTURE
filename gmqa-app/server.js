@@ -254,6 +254,25 @@ app.get('/api/meta/:date', async (req, res) => {
   res.json(meta || { job_date: req.params.date, supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null, gcash_tips_to_distribute: 0, commission_gcash_paid: 0 });
 });
 
+app.put('/api/meta/:date/commission-gcash', async (req, res) => {
+  const amount = Number(req.body.amount);
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'GCash commission must be a valid non-negative amount' });
+  const existing = await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date);
+  const values = {
+    job_date: req.params.date,
+    supervisor: existing?.supervisor || '',
+    cash_float: existing?.cash_float || 0,
+    actual_cash: existing?.actual_cash ?? null,
+    actual_gcash: existing?.actual_gcash ?? null,
+    gcash_tips_to_distribute: existing?.gcash_tips_to_distribute || 0,
+    commission_gcash_paid: amount,
+  };
+  await db.prepare(`INSERT INTO daily_meta (job_date, supervisor, cash_float, actual_cash, actual_gcash, gcash_tips_to_distribute, commission_gcash_paid)
+    VALUES (@job_date,@supervisor,@cash_float,@actual_cash,@actual_gcash,@gcash_tips_to_distribute,@commission_gcash_paid)
+    ON CONFLICT(job_date) DO UPDATE SET commission_gcash_paid=excluded.commission_gcash_paid`).run(values);
+  res.json(await db.prepare('SELECT * FROM daily_meta WHERE job_date=?').get(req.params.date));
+});
+
 app.put('/api/meta/:date', async (req, res) => {
   const m = req.body;
   const commissionGcashPaid = Number(m.commission_gcash_paid || 0);

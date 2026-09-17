@@ -190,6 +190,8 @@ tbody tr.saving{opacity:.55;}
 .money.neg{color:var(--red);}
 .teal-text{color:var(--teal);}
 .quick-total{font-family:var(--mono);font-size:13px;color:var(--teal);margin-bottom:7px;white-space:nowrap;}
+.commission-gcash-setup{display:grid;gap:6px;}
+.commission-gcash-setup .btn{font-size:11px;padding:6px 8px;white-space:nowrap;}
 
 .pill{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600;}
 .pill.cash{background:#3a2c14; color:var(--amber);}

@@ -463,15 +463,15 @@ async function loadEod() {
   document.getElementById('expected-block').innerHTML = `
     <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
     <div class="row-line"><span class="k">+ Cash Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
-    <div class="row-line"><span class="k">− Paid cash commissions</span><span class="money">${peso(eod.paidCommissionCash)}</span></div>
+    <div class="row-line"><span class="k">− Paid cash commissions</span><span id="preview-paid-cash-commission" class="money">${peso(eod.paidCommissionCash)}</span></div>
     <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
-    <div class="row-line total"><span>Expected Cash (After Deductions)</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
+    <div class="row-line total"><span>Expected Cash (After Deductions)</span><span id="preview-expected-cash" class="money">${peso(eod.expectedCashAfter)}</span></div>
     <div class="row-line" style="margin-top:8px;"><span class="k">GCash / Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
     <div class="row-line"><span class="k">+ Customer Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
-    <div class="row-line"><span class="k">− Commission paid via GCash</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
+    <div class="row-line"><span class="k">− Commission paid via GCash</span><span id="preview-paid-gcash-commission" class="money">${peso(eod.paidCommissionGcash)}</span></div>
     <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
     <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
-    <div class="row-line total"><span>Expected GCash (After Deductions)</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
+    <div class="row-line total"><span>Expected GCash (After Deductions)</span><span id="preview-expected-gcash" class="money">${peso(eod.expectedGcashAfter)}</span></div>
     <div class="row-line total" style="border-top:2px solid var(--border);margin-top:10px;"><span>EXPECTED TOTAL</span><span class="money">${peso(eod.expectedTotal)}</span></div>
   `;
 
@@ -479,17 +479,17 @@ async function loadEod() {
     <div class="breakdown-card"><h2>Cash Reconciliation</h2>
       <div class="row-line"><span class="k">Cash Float</span><span class="money">${peso(eod.cashFloat)}</span></div>
       <div class="row-line"><span class="k">+ Sales</span><span class="money">${peso(eod.cashSales)}</span></div>
-      <div class="row-line"><span class="k">− Paid cash commissions</span><span class="money">${peso(eod.paidCommissionCash)}</span></div>
+      <div class="row-line"><span class="k">− Paid cash commissions</span><span id="card-preview-paid-cash-commission" class="money">${peso(eod.paidCommissionCash)}</span></div>
       <div class="row-line"><span class="k">− Cash Expenses</span><span class="money">${peso(eod.cashExpenses)}</span></div>
-      <div class="row-line total"><span>Expected Cash</span><span class="money">${peso(eod.expectedCashAfter)}</span></div>
+      <div class="row-line total"><span>Expected Cash</span><span id="card-preview-expected-cash" class="money">${peso(eod.expectedCashAfter)}</span></div>
     </div>
     <div class="breakdown-card"><h2>GCash Reconciliation</h2>
       <div class="row-line"><span class="k">Digital Sales</span><span class="money">${peso(eod.digitalSales)}</span></div>
       <div class="row-line"><span class="k">+ Tips Received</span><span class="money">${peso(eod.gcashTipsReceived)}</span></div>
-      <div class="row-line"><span class="k">− Commission paid via GCash</span><span class="money">${peso(eod.paidCommissionGcash)}</span></div>
+      <div class="row-line"><span class="k">− Commission paid via GCash</span><span id="card-preview-paid-gcash-commission" class="money">${peso(eod.paidCommissionGcash)}</span></div>
       <div class="row-line"><span class="k">− GCash Expenses</span><span class="money">${peso(eod.gcashExpenses)}</span></div>
       <div class="row-line"><span class="k">− Tips Sent / Distributed</span><span class="money">${peso(eod.gcashTipsToDistribute)}</span></div>
-      <div class="row-line total"><span>Expected GCash</span><span class="money">${peso(eod.expectedGcashAfter)}</span></div>
+      <div class="row-line total"><span>Expected GCash</span><span id="card-preview-expected-gcash" class="money">${peso(eod.expectedGcashAfter)}</span></div>
     </div>
     <div class="breakdown-card tips"><h2>GCash Tips to Distribute</h2>
       <div class="row-line"><span class="k">Tips entered on jobs</span><span class="money">${peso(eod.jobGcashTips)}</span></div>
@@ -503,6 +503,7 @@ async function loadEod() {
     <div class="row-line"><span class="k">Cash Variance</span><span class="${varClass(cashV)}">${cashV == null ? '—' : peso(cashV)}</span></div>
     <div class="row-line"><span class="k">GCash Variance</span><span class="${varClass(gcashV)}">${gcashV == null ? '—' : peso(gcashV)}</span></div>
   `;
+  updateCommissionPreview();
   applyAccessState();
 }
 function varClass(v) { if (v == null) return 'money'; return v === 0 ? 'variance-ok' : 'variance-bad'; }
@@ -517,6 +518,23 @@ function renderLiveVariance() {
     <div class="row-line"><span class="k">Cash Variance</span><span class="${varClass(cashVariance)}">${cashVariance == null ? '—' : peso(cashVariance)}</span></div>
     <div class="row-line"><span class="k">GCash Variance</span><span class="${varClass(gcashVariance)}">${gcashVariance == null ? '—' : peso(gcashVariance)}</span></div>
   `;
+}
+
+function updateCommissionPreview() {
+  if (!currentEod) return;
+  const gcash = Math.min(Math.max(0, Number(document.getElementById('meta-commission-gcash').value || 0)), currentEod.totalComm);
+  const cash = Math.max(0, currentEod.totalComm - gcash);
+  const cashExpected = currentEod.expectedCashPre - cash - currentEod.cashExpenses;
+  const gcashExpected = currentEod.expectedGcashPre - gcash - currentEod.gcashExpenses - currentEod.gcashTipsToDistribute;
+  document.getElementById('commission-cash-remaining').textContent = `Cash commission remaining: ${peso(cash)}`;
+  document.getElementById('preview-paid-cash-commission').textContent = peso(cash);
+  document.getElementById('preview-paid-gcash-commission').textContent = peso(gcash);
+  document.getElementById('preview-expected-cash').textContent = peso(cashExpected);
+  document.getElementById('preview-expected-gcash').textContent = peso(gcashExpected);
+  document.getElementById('card-preview-paid-cash-commission').textContent = peso(cash);
+  document.getElementById('card-preview-paid-gcash-commission').textContent = peso(gcash);
+  document.getElementById('card-preview-expected-cash').textContent = peso(cashExpected);
+  document.getElementById('card-preview-expected-gcash').textContent = peso(gcashExpected);
 }
 
 function expenseListHtml(list) {
@@ -555,7 +573,6 @@ async function addExpense(side, descId, amtId) {
   } finally { button.disabled = false; }
 }
 
-let metaSaveTimer;
 async function saveMeta(button = document.getElementById('save-meta')) {
   button.disabled = true;
   try { await fetch('/api/meta/' + eodDateEl.value, {
@@ -574,11 +591,25 @@ async function saveMeta(button = document.getElementById('save-meta')) {
   } finally { button.disabled = false; }
 }
 
+async function saveCommissionGcash(button = document.getElementById('save-commission-gcash')) {
+  button.disabled = true;
+  try {
+    await fetch('/api/meta/' + eodDateEl.value + '/commission-gcash', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: Number(document.getElementById('meta-commission-gcash').value || 0),
+      }),
+    });
+    showToast('GCash commission saved');
+    await loadEod();
+  } finally { button.disabled = false; }
+}
+
 document.getElementById('save-meta').addEventListener('click', event => saveMeta(event.currentTarget));
-document.getElementById('meta-commission-gcash').addEventListener('input', () => {
-  clearTimeout(metaSaveTimer);
-  metaSaveTimer = setTimeout(() => saveMeta(), 500);
+document.getElementById('save-commission-gcash').addEventListener('click', event => {
+  saveCommissionGcash(event.currentTarget);
 });
+document.getElementById('meta-commission-gcash').addEventListener('input', updateCommissionPreview);
 
 document.getElementById('meta-actual-cash').addEventListener('input', renderLiveVariance);
 document.getElementById('meta-actual-gcash').addEventListener('input', renderLiveVariance);
