@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { migratedDb } = require('./helpers');
+const { migratedDb, closeAllDrivers } = require('./helpers');
 const { createApp } = require('../server');
 const { clearUserCache } = require('../lib/auth');
 const crypto = require('crypto');
@@ -19,7 +19,10 @@ test.before(async () => {
   server = createApp({ verifyToken }).listen(0);
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
-test.after(() => server.close());
+test.after(async () => {
+  server.close();
+  await closeAllDrivers();
+});
 
 async function api(as, method, path, body) {
   const res = await fetch(base + path, {

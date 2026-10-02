@@ -267,6 +267,36 @@ alter table public.employees
   add column updated_at timestamptz not null default now(),
   add constraint employees_rates_check check (rate_per_day >= 0 and construction_rate >= 0);
 
+-- Before weeks were always Monday, the same employee could get two sheets in one week (e.g. a Monday
+-- and a Wednesday sheet). Merge them into the earliest sheet: attendance combined per day (non-empty
+-- codes only; on a conflict the later sheet wins), overtime and deductions added up, notes joined.
+-- The originals stay in legacy_v1_payroll_entries.
+create temporary table _sheet_merge on commit drop as
+select p.employee_id,
+       date_trunc('week', p.period_label::date)::date as week,
+       min(p.id) as keep_id,
+       sum(case when coalesce(p.cw_ot_hours, 0) = 0 then coalesce(p.ot_hours, 0) else p.cw_ot_hours end) as cw_ot,
+       sum(coalesce(p.cn_ot_hours, 0)) as cn_ot,
+       sum(coalesce(p.deductions, 0)) as deductions,
+       string_agg(nullif(btrim(p.notes), ''), '; ' order by p.id) as notes
+from public.payroll_entries p
+group by 1, 2
+having count(*) > 1;
+
+update public.payroll_entries p
+set attendance = coalesce((
+      select jsonb_object_agg(a.key, a.value order by q.id)
+      from public.payroll_entries q, jsonb_each_text(coalesce(nullif(btrim(q.attendance), ''), '{}')::jsonb) a
+      where q.employee_id = m.employee_id and date_trunc('week', q.period_label::date)::date = m.week and a.value <> ''
+    ), '{}'::jsonb)::text,
+    cw_ot_hours = m.cw_ot, ot_hours = 0, cn_ot_hours = m.cn_ot, deductions = m.deductions, notes = coalesce(m.notes, '')
+from _sheet_merge m
+where p.id = m.keep_id;
+
+delete from public.payroll_entries p
+using _sheet_merge m
+where p.employee_id = m.employee_id and date_trunc('week', p.period_label::date)::date = m.week and p.id <> m.keep_id;
+
 -- Overtime used to live in ot_hours before the carwash/construction split.
 update public.payroll_entries set cw_ot_hours = ot_hours
 where coalesce(cw_ot_hours, 0) = 0 and coalesce(ot_hours, 0) <> 0;

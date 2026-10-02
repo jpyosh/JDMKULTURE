@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node --env-file-if-exists=.env --watch server.js",
     "db": "node --env-file-if-exists=.env scripts/db.js",
-    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 \"test/*.test.js\"",
     "sandbox": "node scripts/sandbox.js",
     "test:ui": "node scripts/ui-smoke.js"
   },

@@ -1,10 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newDriver, loadLegacyData, quiet, legacy } = require('./helpers');
+const { newDriver, closeAllDrivers, loadLegacyData, quiet, legacy } = require('./helpers');
 const { migrate, status } = require('../scripts/db');
 
 const one = async (driver, sql, params) => (await driver.query(sql, params)).rows[0];
 const all = async (driver, sql, params) => (await driver.query(sql, params)).rows;
+
+test.afterEach(closeAllDrivers);
 
 test('002 converts legacy data without losing anything', async () => {
   const driver = await newDriver();
@@ -69,6 +71,30 @@ test('002 converts legacy data without losing anything', async () => {
   assert.equal((await one(driver, "select to_regclass('public.services') r")).r, null);
 });
 
+test('002 merges two weekly sheets of one employee that fall in the same week (found in production)', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  // Menan (id 2): a Monday sheet and a Wednesday sheet for the same week, overlapping on the 22nd/23rd.
+  await driver.query(`insert into payroll_entries (id, employee_id, period_label, attendance, ot_hours, cw_ot_hours, cn_ot_hours, deductions, notes)
+    values (90, 2, '2026-09-21', '{"2026-09-21":"P","2026-09-22":"","2026-09-23":"CN"}', 1, 0, 0, 50, ''),
+           (91, 2, '2026-09-23', '{"2026-09-22":"P","2026-09-23":"0.5CN","2026-09-24":""}', 0, 2, 1, 30, 'Late Tue')`);
+
+  await migrate(driver, quiet);
+
+  const days = await all(driver, `select work_date, code, cw_ot_hours, cn_ot_hours from attendance
+    where employee_id = 2 and work_date between '2026-09-21' and '2026-09-27' order by work_date`);
+  assert.deepEqual(days, [
+    { work_date: '2026-09-21', code: 'P', cw_ot_hours: 3, cn_ot_hours: 1 },
+    { work_date: '2026-09-22', code: 'P', cw_ot_hours: 0, cn_ot_hours: 0 },
+    { work_date: '2026-09-23', code: '0.5CN', cw_ot_hours: 0, cn_ot_hours: 0 },
+  ], 'non-empty codes kept; on a conflict the later sheet wins; overtime added up');
+  const deductions = await all(driver, `select adj_date, amount, note from payroll_adjustments where employee_id = 2`);
+  assert.deepEqual(deductions, [{ adj_date: '2026-09-21', amount: 80, note: 'Late Tue' }]);
+  assert.equal((await one(driver, 'select count(*)::int n from legacy_v1_payroll_entries where employee_id = 2')).n,
+    legacy.payroll_entries.filter(p => p.employee_id === 2).length + 2, 'originals kept untouched');
+});
+
 test('audit log records the actor and constraints reject bad data', async () => {
   const driver = await newDriver();
   await migrate(driver, quiet);
@@ -85,6 +111,13 @@ test('audit log records the actor and constraints reject bad data', async () => 
   await assert.rejects(driver.query("insert into jobs (job_date, payment_method) values ('2026-01-01', 'Bitcoin')"), /check/i);
   await assert.rejects(driver.query("insert into jobs (job_date, vehicle_class) values ('2026-01-01', 'TANK')"), /foreign key/i);
   await assert.rejects(driver.query("insert into expenses (expense_date, side, amount) values ('2026-01-01', 'cash', -5)"), /check/i);
+});
+
+test('status is read-only: it never creates anything', async () => {
+  const driver = await newDriver();
+  const states = (await status(driver)).map(m => m.state);
+  assert.ok(states.length >= 6 && states.every(s => s === 'pending'));
+  assert.equal((await one(driver, "select to_regclass('public.schema_migrations') r")).r, null);
 });
 
 test('migrate is idempotent', async () => {

@@ -4,6 +4,7 @@
 //   npm run db -- status                 list applied / pending migrations
 //   npm run db -- migrate                back up every table, then apply pending migrations
 //   npm run db -- backup                 dump every table to backups/<timestamp>.json
+//   npm run db -- rehearse               copy the database and run pending migrations on the copy only
 //   npm run db -- query "select ..."     run SQL in a READ ONLY transaction, print rows
 //   npm run db -- grant <email> <owner|staff> [display name]
 //   npm run db -- revoke <email>
@@ -46,8 +47,12 @@ async function appliedMigrations(driver) {
   return new Map(rows.map(row => [row.version, row]));
 }
 
+// Read-only: reports what is applied without creating the tracking table.
 async function status(driver = getDriver()) {
-  const applied = await appliedMigrations(driver);
+  const { rows: [tracking] } = await driver.query("select to_regclass('public.schema_migrations') as t");
+  const applied = tracking.t
+    ? new Map((await driver.query('select version, checksum, applied_at from public.schema_migrations')).rows.map(r => [r.version, r]))
+    : new Map();
   return loadMigrations().map(m => {
     const row = applied.get(m.version);
     return {
@@ -121,6 +126,22 @@ async function main() {
         console.log(`backup written: ${path.relative(process.cwd(), file)}\n  ${counts}`);
         break;
       }
+      case 'rehearse': {
+        // Only SELECTs run against the real database (to take the copy); the migrations run on the copy.
+        const { file, counts } = await backup(driver, 'rehearsal');
+        console.log(`read-only copy taken: ${path.relative(process.cwd(), file)}\n  ${counts}`);
+        const { rehearse } = require('./rehearse');
+        const report = await rehearse(JSON.parse(fs.readFileSync(file, 'utf8')));
+        if (report.checks.length) {
+          console.table(report.checks.map(c => ({ check: c.name, before: c.before, after: c.after, result: c.ok ? 'OK' : 'MISMATCH' })));
+        }
+        for (const c of report.checks.filter(x => x.mismatchedJobIds)) console.log(`${c.name}: job ids ${c.mismatchedJobIds.join(', ')}`);
+        if (report.error) console.log(`error: ${report.error}`);
+        console.log(report.ok ? `REHEARSAL PASSED: migrations ${report.applied.join(', ')} work on a copy of this data.`
+          : 'REHEARSAL FAILED: do not migrate this database until this is fixed.');
+        process.exitCode = report.ok ? 0 : 1;
+        break;
+      }
       case 'query': {
         if (!args[0]) throw new Error('usage: query "<sql>"');
         const rows = await readOnlyQuery(driver, args.join(' '));
@@ -156,7 +177,7 @@ async function main() {
         break;
       }
       default:
-        console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 11).join('\n'));
+        console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 12).join('\n'));
         process.exitCode = command ? 1 : 0;
     }
   } finally {

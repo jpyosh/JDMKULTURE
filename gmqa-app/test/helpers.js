@@ -5,9 +5,24 @@ const legacy = require('./fixtures/legacy-data.json');
 
 const quiet = { log: () => {} };
 
+// Each in-memory Postgres holds ~235 MB until closed. Tests must close what they open
+// (closeAllDrivers in afterEach/after), or parallel test files run the machine out of memory.
+const openDrivers = new Set();
+
 async function newDriver() {
   const pglite = await PGlite.create({ parsers });
-  return pgliteDriver(pglite);
+  const driver = pgliteDriver(pglite);
+  const end = driver.end;
+  driver.end = async () => {
+    if (!openDrivers.delete(driver)) return;
+    await end();
+  };
+  openDrivers.add(driver);
+  return driver;
+}
+
+async function closeAllDrivers() {
+  for (const driver of [...openDrivers]) await driver.end();
 }
 
 // Inserts the exported pre-v2 SQLite rows into a database at migration 001.
@@ -38,4 +53,4 @@ async function migratedDb() {
   return driver;
 }
 
-module.exports = { newDriver, loadLegacyData, migratedDb, quiet, legacy };
+module.exports = { newDriver, closeAllDrivers, loadLegacyData, migratedDb, quiet, legacy };
