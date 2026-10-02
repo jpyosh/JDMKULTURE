@@ -1,113 +1,148 @@
 # GM QA — JDM Kulture Ops Console
 
-A standalone website version of your "GM QA" spreadsheet: Daily Log, Pricing/Commission
-Matrix, EOD Cash Reconciliation, Weekly Rollup, and Payroll — with its own database, so it
-no longer depends on Google Sheets formulas at all.
+Operations console for the JDM Kulture car wash: job orders, pricing, end-of-day cash/GCash
+closing, sales reports, payroll. Express API + plain-JS frontend, Supabase Postgres + Supabase
+Auth, deployed on Vercel.
 
-## What's fixed vs. the spreadsheet (per your formula audit)
+## Screens and who sees them
 
-1. **Double-subtraction bug** — Total Net Shop Revenue is now computed exactly once
-   (`Gross Sales − Total Commissions`), never subtracted per-row and again at the summary.
-2. **Vehicle counter** — dynamically counts rows with a vehicle class, no `COUNTUNIQUEIFS`,
-   no hardcoded fallback, no manual updating.
-3. **Ceramic Coating: Motorcycle** — MOTO commission was ₱0 despite MOTO being charged
-   ₱3,000. Set to ₱600 (same 20% ratio as the S-class tier of that service) — **please confirm
-   this is the number you actually want to pay**, I inferred it from the pattern.
-4. **Orphan row** — "Ceramic Coating w/o maintenance" had a commission but no price, so it
-   was unusable. I gave it a placeholder price scaled off Graphene Ceramic Coating —
-   **this one you should definitely check and correct** in the Pricing Matrix tab of the app,
-   since I made it up to make the row usable, not because I know your real price for it.
-5. **Row position drift** — irrelevant now; this app computes everything from a database,
-   not from fixed spreadsheet cell positions.
+| Screen | Owner | Staff |
+|---|---|---|
+| Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
+| EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
+| Pricing Matrix — price + commission per vehicle class | edit | view |
+| Sales Reports — any date range | ✓ | — |
+| Payroll — weekly attendance, OT, deductions | ✓ | — |
+| Settings — users & roles, vehicle classes, change history | ✓ | — |
 
-## How it works
+## Departments
 
-- **Daily Log**: add job orders per date; JO# auto-generates (`JO-MMDDYY-###`); price and
-  commission are looked up live from the Pricing Matrix the moment you pick a service/add-on
-  and vehicle class — exactly like the sheet's `INDEX`/`MATCH`, just without the risk of a
-  formula getting overwritten.
-- **Pricing Matrix**: every service and add-on, editable per vehicle class, for both price and
-  commission. Change a number here and every future job order uses it instantly.
-- **EOD Dashboard**: cash float, cash/GCash expense ledgers, expected cash/GCash math, actual
-  counts, and variance — same structure as your sheet's reconciliation block.
-- **Weekly Rollup**: auto-built from daily data — no more copy-pasting into a separate tab.
-- **Payroll**: rate/day × days worked, plus construction days × construction rate, minus
-  deductions, per pay period.
+| Department | Tab | JO numbers | Counts as a sale |
+|---|---|---|---|
+| Carwash | Carwash | `CW-MMDDYY-###` | on the day it is entered (same-day) |
+| Detailing | Detailing | `DT-MMDDYY-###` | when it is both **marked done** and **paid**, on the later of the two days |
+| Tint & PPF | Tint & PPF | `TP-MMDDYY-###` | same as Detailing |
 
-Production uses Supabase Postgres through the server-only `DATABASE_URL` environment variable.
-Never commit, print, or put that connection string in frontend code. Without `DATABASE_URL`,
-local development keeps using the existing SQLite file at `data/gmqa.sqlite`.
+- Detailing and Tint & PPF jobs are **running**: they stay on their board day after day until done and paid.
+- Every service/add-on belongs to one department (Pricing Matrix → department tabs) and is only offered there.
+- EOD and Sales Reports combine all departments and show each department's sales separately.
+- Money is counted the day it is received: a running job paid before it is finished is in that day's
+  drawer, while its sale and commission are booked on the day it is done.
+- Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
+- Older `JO-` numbers from before departments existed are kept as they were.
 
-### Authentication
+## Business rules (all in `lib/calc.js`)
 
-Supabase Auth protects every API mutation. Visitors can read the dashboards, but must sign in
-with an email/password Supabase user before they can add jobs, edit pricing, reconcile EOD,
-manage payroll, or change expenses. Configure these public project settings alongside
-`DATABASE_URL`:
+- A job **counts** once it has a vehicle class or a line item and is not voided.
+- **Collected** = totals of paid jobs. **Receivables** = totals of unpaid jobs.
+- **Commission** = every counted job (detailers are paid at EOD either way).
+- **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
+- Expected cash = float + cash collected − commission paid in cash − cash expenses.
+- Expected GCash = GCash collected + tips − tips passed on − commission via GCash − GCash expenses.
+- A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
+  changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
+- Payroll works for any date range (a week, 1st–15th, 16th–end...). Attendance and overtime are
+  recorded per day; cash advances, bonuses etc. are dated adjustments. Each day is paid at the rate in
+  effect that day (rates change from an effective date), so earlier periods never change.
+- A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
+  expected drawer in EOD.
+- Jobs are **voided** (owner only, with a reason), never deleted. JO numbers are never reused.
+- Closing a day locks it for staff. The owner can still edit or reopen it.
+- Every insert/update/delete is written to `audit_log` with who did it (Settings → Change history).
+
+## Finance and bill funds (owner)
+
+- **Finance** shows any period (week, month, custom): sales by department, commission, net sales,
+  payroll (net pay for work done in the period), bills paid, drawer expenses and **net profit**,
+  plus a money in/out view of the drawer.
+- **Bill funds** (Meralco, Maynilad, Internet, Rent, Business permit, or any you add) each have a usual
+  amount and due date. The system works out a **weekly target** = what is still needed ÷ weeks left.
+- At EOD, the supervisor sets aside each fund's share ("Set aside for bills"); it leaves the drawer.
+- When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that
+  day's drawer and shows on that day's EOD.
+- Set-asides are not costs. The cost is counted when the bill is paid.
+
+## Parts & inventory
+
+- **Parts & Inventory** tab: SKU, price, commission per unit, stock and a reorder level (low-stock warning).
+- Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
+  counter ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
+- Selling takes stock out and freezes the part's average cost on the line; removing the part or
+  voiding the job puts the stock back. Selling more than is in stock is blocked.
+- Owner only: add/edit parts, **Receive** deliveries (updates the weighted average cost), **Adjust**
+  counts (with a reason), stock history. Every stock change is recorded.
+- Costs and margins are owner-only: staff never receive cost fields from the API.
+- Finance subtracts the cost of parts sold before net profit.
+
+## Project layout
 
 ```
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
+server.js            Express app (createApp) — also the Vercel function via api/index.js
+lib/db.js            Postgres access: db.one/many/exec, db.tx(actor, fn) for audited writes
+lib/auth.js          Supabase token check + app_users role lookup
+lib/calc.js          all money math (pure functions)
+lib/http.js          validation helpers + error handler
+lib/store.js         loadJobs / assertDayOpen
+routes/*.js          one file per area (jobs, days, catalog, reports, payroll, admin)
+migrations/NNN_*.sql schema changes, applied in order by scripts/db.js
+public/              frontend: index.html, style.css, js/main.js, js/views/*, js/components/*
+test/                API + migration tests (in-memory Postgres via PGlite)
+scripts/db.js        migrate / backup / status / query / grant
+scripts/sandbox.js   full app on a throwaway database
+scripts/ui-smoke.js  headless-browser test of every screen
 ```
 
-Create users in Supabase Dashboard -> Authentication -> Users. The anon key is intended for
-browser use; never expose the service-role key or the database connection string.
-
-## Run it locally first (optional, to see it before deploying)
-
-You need [Node.js](https://nodejs.org) 18+ installed.
+## Everyday commands (run inside `gmqa-app/`)
 
 ```
-cd gmqa-app
 npm install
-npm start
+npm test                 # API + migration tests, no database needed
+npm run test:ui          # clicks through every screen in headless Edge/Chrome
+npm run sandbox          # app at http://localhost:3100 with fake logins and dry-run data
+npm run dev              # app at http://localhost:3000 against the real database (.env)
 ```
 
-Then open `http://localhost:3000` in your browser.
+`.env` (never committed) holds `DATABASE_URL`, `SUPABASE_URL` and `SUPABASE_ANON_KEY`. See `.env.example`.
 
-To run locally against Supabase, export `DATABASE_URL` in the shell with the Supabase Postgres
-connection string and start the app. `.env.example` is a reference only; this app does not load
-dotenv files. Never commit the real connection string.
+## Database changes
 
-## Import existing SQLite data
+Never edit the database by hand and never edit an applied migration. To change the schema:
 
-1. Create the tables by running `supabase/schema.sql` in the Supabase SQL Editor.
-2. Install dependencies with `npm install`.
-3. Set `DATABASE_URL` and, if needed, `SQLITE_PATH` in the shell. The default SQLite path is
-   `data/gmqa.sqlite`.
-4. Run `npm run migrate` from `gmqa-app`.
+1. Add `migrations/NNN_short_name.sql` (next number). Keep it additive where possible and
+   backfill existing rows in the same file.
+2. `npm test`. The migration tests run every migration on a copy of the dry-run data.
+3. `npm run db -- migrate`. This writes a full JSON backup to `backups/` first, then applies
+   each pending migration in its own transaction. A failure rolls back completely.
+4. Deploy the code that uses the new schema.
 
-The migration preserves primary keys and foreign-key relationships, is transactional, and does
-not run automatically. It uses the existing `better-sqlite3` package only for this migration and
-does not require or accept credentials on the command line.
+Other DB commands:
 
-## Deploy to Vercel
+```
+npm run db -- status                        # which migrations are applied
+npm run db -- backup                        # JSON dump of every table to backups/
+npm run db -- query "select count(*) from jobs"   # read-only query
+npm run db -- users                         # app users + Supabase Auth accounts
+npm run db -- grant someone@email.com owner # or staff
+npm run db -- revoke someone@email.com
+```
 
-1. Import the repository into Vercel and set the project root to `gmqa-app`.
-2. Add `DATABASE_URL` as a Vercel Production environment variable. Treat it as a secret and do
-   not add it to Git, `vercel.json`, or browser JavaScript.
-3. Deploy. `api/index.js` exports the Express app; `vercel.json` routes `/api/*` to it and serves
-   the existing `public` files.
+## Users and sign-in
 
-The base Supabase schema and any later SQL migrations must be applied in Supabase before deployment.
-The application checks database connectivity at startup but does not run schema DDL during requests.
-It does not seed production data or import SQLite records automatically.
+A person needs both:
+1. a **Supabase Auth account**: Supabase Dashboard → Authentication → Users → Add user, and
+2. an entry in **app_users**: Settings → Users & access (or `npm run db -- grant`).
 
-## Legacy SQLite hosting
+A Supabase account alone grants nothing. Turn off "Allow new users to sign up" in Supabase Auth
+settings anyway, since all accounts are created by the owner.
 
-The no-`DATABASE_URL` SQLite mode remains useful for local development. It is not suitable for
-Vercel's ephemeral filesystem; use Supabase Postgres for deployed data.
+## Deploying (Vercel)
 
-## Evolving it day by day
+Project root: `gmqa-app`. Environment variables: `DATABASE_URL`, `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`. Pushing to `main` deploys. If a change includes a migration, run
+`npm run db -- migrate` right before merging.
 
-Since this is now real code (not a spreadsheet), the way to "evolve" it is to tell me what
-you want changed or added — e.g. "add a loyalty punch-card counter per plate number," "add
-the Petty Cash Fund tracker from the handover doc," "add login so only supervisors can edit
-Pricing." I can write the change, you push the update to GitHub, and Vercel redeploys automatically.
+## Data history
 
-## Known gaps to fill in next
-- No login/authentication yet — anyone with the URL can edit everything. Worth adding once
-  you're using this for real money.
-- Petty Cash Fund tab (₱50,000 monthly imprest) from the handover doc isn't built yet.
-- Tip jar / centralized tips tracking isn't wired up yet (data column exists on jobs but no
-  dedicated view).
+Migration 002 (v2) converted the original data model. Copies of the tables as they were
+before v2 are kept in `legacy_v1_jobs`, `legacy_v1_services`, `legacy_v1_addons` and
+`legacy_v1_payroll_entries`.

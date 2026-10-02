@@ -1,19 +1,26 @@
 {
   "name": "gm-qa-ops-console",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "JDM Kulture GM QA - Carwash Ops Console (Daily Log, Pricing Matrix, EOD Reconciliation, Payroll)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "migrate": "node scripts/migrate-sqlite.js"
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "db": "node --env-file-if-exists=.env scripts/db.js",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 \"test/*.test.js\"",
+    "sandbox": "node scripts/sandbox.js",
+    "test:ui": "node scripts/ui-smoke.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.4",
-    "better-sqlite3": "^11.3.0",
-    "express": "^4.19.2",
-    "pg": "^8.16.3"
+    "@supabase/supabase-js": "^2.117.2",
+    "express": "^5.2.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "playwright-core": "^1.63.0"
   }
 }

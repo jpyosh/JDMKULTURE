@@ -462,3 +462,182 @@ button.icon-btn:hover{background:#3a2023;color:var(--red);}
   .entry-grid,.form-grid{grid-template-columns:1fr;}
   .metrics-row,.weekly-summary{grid-template-columns:1fr 1fr;}
 }
+
+/* ---------- v2 components ---------- */
+body:not([data-role="owner"]) .owner-only{display:none !important;}
+.muted{color:var(--muted);}
+.small{font-size:11px;}
+.mono{font-family:var(--mono);}
+.mt{margin-top:18px;}
+.hint{color:var(--muted);font-size:12px;line-height:1.5;margin:0 0 12px;}
+.empty-state.small{padding:12px;font-size:12px;}
+button.btn.small{min-height:28px;padding:4px 10px;font-size:12px;}
+.check{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;}
+.check input{width:auto;min-height:0;}
+
+/* sign-in gate */
+.gate{min-height:100vh;display:grid;place-items:center;padding:20px;background:var(--bg);}
+.gate-card{width:min(380px,100%);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;display:grid;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+.gate-card .wordmark .name{font-family:'Oswald',sans-serif;font-weight:700;}
+.gate-card .login-form{gap:8px;}
+.gate-card .login-form label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+.gate-card .login-form input{font-size:14px;padding:10px;}
+.gate-card .login-form .btn{margin-top:8px;padding:10px 0;}
+.gate-message{color:#f19aa0;font-size:13px;line-height:1.45;}
+.gate-message:empty{display:none;}
+
+/* headers */
+.date-nav{display:flex;gap:6px;align-items:center;}
+.date-nav input{width:auto;}
+.date-nav .btn{min-width:38px;text-align:center;}
+.header-actions{display:flex;gap:8px;}
+.preset-row{display:flex;gap:6px;flex-wrap:wrap;margin:-8px 0 16px;}
+.banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:11px 14px;margin-bottom:16px;border-radius:8px;border:1px solid #7d3036;background:#241719;font-size:13px;}
+.banner.ok{border-color:#2f5d3a;background:#16231a;}
+.entry-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
+
+/* job editor */
+.job-editor{display:grid;gap:14px;}
+.job-editor .entry-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+.job-editor .span-2{grid-column:span 2;}
+.check-cell{display:flex;align-items:center;min-height:38px;}
+.line-editor{border:1px solid var(--border);border-radius:8px;padding:12px;background:#18191b;}
+.line-adders{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.line-adders select{width:auto;flex:1 1 200px;}
+.lines{display:grid;gap:6px;}
+.lines-empty{color:var(--muted);font-size:12px;padding:8px 2px;}
+.line-row{display:grid;grid-template-columns:76px minmax(0,1fr) 110px 110px 30px;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;background:var(--surface-alt);}
+.line-row .money{text-align:right;font-size:12px;}
+.line-row input{min-height:32px;padding:5px 8px;}
+.line-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.kind-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;text-align:center;white-space:nowrap;}
+.kind-pill.service{background:#3a2023;color:#f19aa0;}
+.kind-pill.addon{background:#1d2a3a;color:#9ccfff;}
+.kind-pill.custom{background:#2b2c2f;color:#d4d5d6;}
+.editor-totals{display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;align-items:baseline;font-size:12px;color:var(--muted);}
+.editor-totals b{color:var(--text);margin-left:4px;}
+.editor-totals .grand{font-size:15px;color:var(--text);}
+.editor-totals .grand b{color:var(--teal);font-size:17px;}
+.editor-totals .warn{color:#f19aa0;flex-basis:100%;text-align:right;}
+
+/* jobs table */
+.jobs-table{width:100%;min-width:1180px;border-collapse:separate;border-spacing:0;font-size:12px;}
+.jobs-table th{background:#202124;color:#fff;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:10px 8px;}
+.jobs-table td{padding:8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.jobs-table tr.cash-row td:first-child{box-shadow:inset 3px 0 #62c174;}
+.jobs-table tr.gcash-row td:first-child{box-shadow:inset 3px 0 #4c9fe8;}
+.jobs-table select,.jobs-table input[type=time]{min-height:30px;padding:4px 6px;font-size:12px;width:auto;}
+.jobs-table tr.voided td{opacity:.45;text-decoration:line-through;}
+.jobs-table tr.voided td:first-child,.jobs-table tr.voided td:last-child{text-decoration:none;opacity:1;}
+.time-cell{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);}
+.items-cell{max-width:320px;white-space:normal;}
+.item-chip{display:inline-block;margin:2px 4px 2px 0;padding:2px 7px;border-radius:5px;background:var(--surface-alt);border:1px solid var(--border);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}
+.item-chip.addon{border-color:#2d4660;}
+.item-chip.custom{border-style:dashed;}
+.item-chip.discount{color:#f19aa0;border-color:#7d3036;}
+.void-note{font-size:10px;color:#f19aa0;font-family:'Inter',sans-serif;max-width:140px;white-space:normal;}
+.row-actions{white-space:nowrap;text-align:right;}
+
+/* modal */
+.modal.wide{max-width:min(980px,calc(100vw - 28px));}
+.history-list{display:grid;gap:8px;max-height:60vh;overflow:auto;}
+.history-entry{display:grid;gap:4px;padding:9px 11px;border:1px solid var(--border);border-radius:7px;background:#18191b;font-size:12px;}
+.history-meta{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;}
+.history-changes{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);}
+.history-changes b{color:var(--text);font-weight:600;}
+.card > .history-list{max-height:520px;}
+
+/* forms + tables */
+.expense-form,.inline-form{display:grid;grid-template-columns:110px 1fr 120px auto;gap:8px;margin-top:12px;}
+.inline-form{grid-template-columns:1.4fr 1fr 110px auto;}
+.simple-table{width:100%;border-collapse:collapse;font-size:13px;}
+.simple-table td{padding:8px 6px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.simple-table tr:last-child td{border-bottom:0;}
+.simple-table input,.simple-table select{min-height:32px;padding:5px 8px;}
+tr.inactive td{opacity:.5;}
+.matrix-table tr.dirty td{background:#2a2021;}
+.matrix-table tr.dirty .sticky-name{box-shadow:inset 3px 0 var(--teal);}
+.attendance-select.code-P{background:rgba(155,207,129,.25);}
+.attendance-select.code-0_5P,.attendance-select.code-0_5CN{background:rgba(240,199,107,.22);}
+.attendance-select.code-CN{background:rgba(130,183,232,.25);}
+.attendance-select.code-A{background:rgba(228,124,124,.25);}
+
+@media (max-width:700px){
+  .date-nav{width:100%;}
+  .date-nav input{flex:1;}
+  .job-editor .span-2{grid-column:1/-1;}
+  .line-row{grid-template-columns:64px 1fr 30px;}
+  .line-row > :nth-child(3),.line-row > :nth-child(4){grid-column:2;}
+  .expense-form,.inline-form{grid-template-columns:1fr 1fr;}
+  .editor-totals{justify-content:flex-start;}
+}
+
+/* v2 polish */
+.job-filters .check input{min-width:0;width:auto;}
+.jobs-table .jo-number{white-space:nowrap;}
+.jobs-table td .empty-state{position:sticky;left:0;max-width:calc(100vw - 120px);}
+.time-cell small{font-family:'Inter',sans-serif;color:var(--muted);font-size:10px;}
+.matrix-table .sticky-name{min-width:230px;}
+.matrix-table tbody td:first-child input{max-width:none;}
+.section-header select{width:auto;}
+.attendance-legend .attendance-code{background:var(--surface-alt) !important;color:var(--text) !important;border:1px solid var(--border);}
+.attendance-legend .attendance-code.present{border-color:#5f8f4e;}
+.attendance-legend .attendance-code.half{border-color:#a5873f;}
+.attendance-legend .attendance-code.construction{border-color:#4f78a3;}
+.attendance-legend .attendance-code.absence{border-color:#a04848;color:#f19aa0 !important;}
+
+/* departments + running boards */
+.segmented{display:inline-flex;gap:4px;padding:4px;margin-bottom:16px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
+.segmented button{all:unset;cursor:pointer;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;color:var(--muted);}
+.segmented button:hover{color:var(--text);background:var(--surface-alt);}
+.segmented button.active{background:var(--teal);color:#fff;}
+.inline-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap;}
+.inline-label input{width:auto;}
+.form-grid .span-2{grid-column:span 2;}
+.status-pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid var(--border);}
+.status-pill.progress{background:#1d2a3a;color:#9ccfff;border-color:#2d4660;}
+.status-pill.waiting{background:#3a2c14;color:#f2c46b;border-color:#6b5223;}
+.status-pill.paid{background:#16231a;color:#9be0a5;border-color:#2f5d3a;}
+.status-pill.done{background:#16231a;color:#9be0a5;border-color:#2f5d3a;}
+.status-pill.void{background:#3a2023;color:#f19aa0;border-color:#7d3036;}
+.dept-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
+.dept-table th.num{text-align:right;}
+.dept-table tr.total-row td{border-top:1px solid #55575a;font-weight:600;}
+@media (max-width:700px){.form-grid .span-2{grid-column:1/-1;}}
+.row-actions .actions{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;align-items:center;min-width:200px;}
+.matrix-table select[data-dept]{min-width:130px;}
+.weekly-table .weekly-date{white-space:nowrap;}
+/* running boards: fit the card; actions stack in a 2-column grid instead of overflowing */
+.jobs-table.running-table{min-width:0;}
+.running-table .items-cell{max-width:220px;}
+.running-table .row-actions .actions{display:grid;grid-template-columns:auto auto;justify-content:end;gap:4px;min-width:0;}
+.running-table .row-actions .btn.small{text-align:center;}
+.help-card summary{cursor:pointer;font-family:'Oswald',sans-serif;font-size:15px;}
+.help-card ul{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.6;}
+.help-card b{color:var(--text);}
+/* payroll by range */
+.employee-cell{min-width:150px;white-space:nowrap;}
+.ot-badge{font-size:9px;color:#9ccfff;text-align:center;margin-top:2px;}
+.ot-grid{display:grid;grid-template-columns:1fr 130px 150px;gap:6px 10px;align-items:center;max-height:55vh;overflow:auto;font-size:13px;}
+.ot-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+.ot-grid input{min-height:32px;padding:5px 8px;}
+/* payroll: employee column stays put while scrolling through the days */
+.payroll-table thead th:first-child,.payroll-table .employee-cell{position:sticky;left:0;z-index:2;background:var(--surface);box-shadow:1px 0 0 var(--border);}
+.payroll-table thead th:first-child{background:#202124;z-index:3;}
+/* finance */
+.pl-section{margin:14px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;}
+.pl-section:first-child{margin-top:0;}
+.row-line.total.neg-total .money{color:#f19aa0;}
+.funds-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
+.funds-table th.num{text-align:right;}
+.sa-form{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
+.sa-form input{width:110px;}
+.sa-form select{width:auto;}
+/* parts */
+.kind-pill.part{background:#16231a;color:#9be0a5;}
+.item-chip.part{border-color:#2f5d3a;}
+.qty-cell{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;}
+.qty-cell input{width:64px;}
+.parts-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
+.parts-table th.num{text-align:right;}
+.parts-table .actions{min-width:0;}

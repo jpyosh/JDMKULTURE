@@ -1,3 +1,6 @@
-gmqa-app/node_modules/
-gmqa-app/data/*.sqlite-shm
-gmqa-app/data/*.sqlite-wal
+node_modules/
+gmqa-app/data/
+gmqa-app/backups/
+.env
+.env.*
+!.env.example

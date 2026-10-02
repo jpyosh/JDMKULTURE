@@ -1,0 +1,451 @@
+#!/usr/bin/env node
+// End-to-end smoke test of the real UI in a headless browser (installed Edge or Chrome) against
+// the sandbox server. Fails on any page error, console error, or broken flow.
+//   npm run test:ui              (SCREENSHOTS=<dir> to save a screenshot of every view)
+const assert = require('node:assert/strict');
+const path = require('path');
+const fs = require('fs');
+const { chromium } = require('playwright-core');
+const { start } = require('./sandbox');
+
+const SHOTS = process.env.SCREENSHOTS;
+const DAY = '2026-09-14';
+
+async function launch() {
+  for (const channel of ['msedge', 'chrome']) {
+    try { return await chromium.launch({ channel, headless: true }); } catch { /* try next */ }
+  }
+  throw new Error('No Edge or Chrome installation found');
+}
+
+(async () => {
+  const { server, url } = await start(0);
+  const browser = await launch();
+  // Pinned to shop time: the old payroll bug only appeared in UTC+8.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, timezoneId: 'Asia/Manila' });
+  const problems = [];
+  page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
+  page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
+  page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'Smoke test void' : undefined));
+
+  const shot = async name => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true }); } };
+  // Waits until the toast shows a message matching re (earlier toasts may still be visible).
+  const expectToast = re => page.waitForFunction(src => new RegExp(src).test(document.querySelector('#app-toast.show')?.textContent || ''), re.source, { timeout: 8000 });
+  const step = async (name, fn) => { process.stdout.write(`• ${name} ... `); await fn(); console.log('ok'); };
+  const signIn = async email => {
+    await page.fill('#login-email', email);
+    await page.fill('#login-password', 'x');
+    await page.click('#login-form button[type=submit]');
+    await page.waitForSelector('#app:not([hidden])');
+  };
+
+  try {
+    await step('sign-in gate', async () => {
+      await page.goto(url);
+      await page.waitForSelector('#login-form:not([hidden])');
+      assert.match(await page.textContent('#gate-message'), /owner@sandbox/);
+      await shot('00-gate');
+      await signIn('owner@sandbox');
+      assert.deepEqual(await page.locator('#nav button').allTextContents(),
+        ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix', '07Sales Reports',
+          '08Finance', '09Payroll', '10Settings']);
+    });
+
+    const daily = page.locator('#view-carwash');
+    await step('carwash tab shows migrated jobs', async () => {
+      await daily.locator('[data-date]').fill(DAY);
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 19);
+      assert.match(await daily.locator('[data-metrics]').textContent(), /Vehicles\s*19/);
+    });
+
+    await step('create a job with service + add-on + custom line', async () => {
+      const editor = daily.locator('[data-editor]');
+      await editor.locator('[data-f="vehicle_class"]').selectOption('M');
+      await editor.locator('[data-f="plate"]').fill('smk 123');
+      assert.equal(await editor.locator('[data-add="part"]').count(), 1, 'parts can be added to carwash jobs');
+      await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+      await editor.locator('[data-add="addon"]').selectOption({ label: 'Engine Wash' });
+      await editor.locator('[data-add="addon"]').selectOption({ label: 'Bac 2 Zero' });
+      await editor.locator('[data-add-custom]').click();
+      await editor.locator('[data-l="name"]').fill('Tire black');
+      await editor.locator('[data-l="price"]').fill('100');
+      await editor.locator('[data-l="commission"]').fill('20');
+      await editor.locator('[data-f="discount"]').fill('50');
+      assert.match(await editor.locator('[data-totals]').textContent(), /Total\s*₱2,100\.00/); // 650+800+600+100-50
+      await shot('01-daily-entry');
+      await daily.locator('[data-review]').click();
+      await page.waitForSelector('#modal[open]');
+      await shot('02-review');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/CW-091426-001 added/);
+      await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 20);
+      assert.equal(await daily.locator('[data-editor] .line-row').count(), 0, 'editor resets after adding');
+    });
+
+    const newRow = daily.locator('tr', { hasText: 'CW-091426-001' });
+    await step('inline paid toggle updates totals', async () => {
+      await newRow.locator('[data-inline="payment_received"]').check();
+      await expectToast(/Saved/);
+      await page.waitForFunction(() => /Collected\s*₱[\d,]+/.test(document.querySelector('#view-carwash [data-metrics]').textContent));
+    });
+
+    await step('edit job: change class re-prices catalog lines', async () => {
+      await newRow.locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-edit-editor] .line-row');
+      await page.selectOption('#modal [data-f="vehicle_class"]', 'L');
+      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱2,150\.00/); // 700+800+600+100-50
+      await shot('03-edit-modal');
+      await page.click('#modal [data-save]');
+      await expectToast(/saved/);
+      assert.match(await newRow.textContent(), /₱2,150\.00/);
+    });
+
+    await step('void and restore (owner)', async () => {
+      await newRow.locator('[data-act="void"]').click();
+      await expectToast(/voided/);
+      await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 19);
+      await daily.locator('[data-filter="voided"]').check();
+      await newRow.locator('[data-act="restore"]').click();
+      await expectToast(/restored/);
+      await shot('04-daily-table');
+    });
+
+    await step('job history modal', async () => {
+      await newRow.locator('[data-act="history"]').click();
+      await page.waitForSelector('#modal[open] .history-entry');
+      assert.ok(await page.locator('#modal .history-entry').count() >= 4);
+      await shot('05-history');
+      await page.click('#modal [data-close]');
+    });
+
+    const detailing = page.locator('#view-detailing');
+    await step('detailing: running job is carried over, paid, then done', async () => {
+      await page.click('#nav [data-view="detailing"]');
+      const editor = detailing.locator('[data-editor]');
+      await detailing.locator('[data-open-date]').fill(DAY);
+      const services = await editor.locator('[data-add="service"] option').allTextContents();
+      assert.ok(services.includes('Paint Correction') && !services.includes('Premium Wash'), 'only detailing services offered');
+      await editor.locator('[data-f="vehicle_class"]').selectOption('M');
+      await editor.locator('[data-f="plate"]').fill('dtl 777');
+      await editor.locator('[data-add="service"]').selectOption({ label: 'Paint Correction' });
+      await detailing.locator('[data-review]').click();
+      await page.click('#modal [data-confirm]');
+      await expectToast(/DT-091426-001 added/);
+      const row = detailing.locator('[data-active] tr', { hasText: 'DT-091426-001' });
+      await row.waitFor();
+      assert.match(await row.textContent(), /In progress/);
+      // Every action button must be fully visible inside the card (no clipping behind a scrollbar).
+      const clipped = await page.evaluate(() => {
+        const wrap = document.querySelector('#view-detailing [data-active]').closest('.table-wrap').getBoundingClientRect();
+        return [...document.querySelectorAll('#view-detailing [data-active] [data-act]')]
+          .filter(b => { const r = b.getBoundingClientRect(); return r.right > wrap.right + 1 || r.left < wrap.left - 1; })
+          .map(b => b.textContent.trim() || b.title);
+      });
+      assert.deepEqual(clipped, [], 'board action buttons are clipped');
+      await shot('05b-detailing-board');
+
+      await row.locator('[data-act="pay"]').click();
+      await page.fill('#modal [data-pay-date]', DAY);
+      await page.selectOption('#modal [data-pay-method]', 'Cash');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/i);
+      await page.waitForFunction(() => /Paid/.test(document.querySelector('#view-detailing [data-active]').textContent));
+
+      await row.locator('[data-act="complete"]').click();
+      await page.fill('#modal [data-done-date]', '2026-09-15');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/done/i);
+      await page.waitForFunction(() => !/DT-091426-001/.test(document.querySelector('#view-detailing [data-active]').textContent));
+      await detailing.locator('[data-completed-date]').fill('2026-09-15');
+      await detailing.locator('[data-completed-date]').dispatchEvent('change');
+      await detailing.locator('[data-completed] tr', { hasText: 'DT-091426-001' }).waitFor();
+      await shot('05c-detailing-completed');
+    });
+
+    const eod = page.locator('#view-eod');
+    await step('EOD: setup, expense, live variance, close day', async () => {
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill(DAY);
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /Vehicles\s*20/.test(document.querySelector('#view-eod [data-metrics]').textContent));
+      await eod.locator('[data-e="description"]').fill('Soap');
+      await eod.locator('[data-e="amount"]').fill('120');
+      await eod.locator('[data-add-expense]').click();
+      await expectToast(/Expense added/);
+      // Weekly set-aside for a bill fund, taken out of the drawer at EOD.
+      const meralcoRow = eod.locator('[data-funds] tr', { hasText: 'Meralco' });
+      await meralcoRow.locator('[data-sa-amount]').fill('500');
+      await meralcoRow.locator('[data-sa-side]').selectOption('cash');
+      await meralcoRow.locator('[data-sa-add]').click();
+      await expectToast(/Set aside/);
+      await page.waitForFunction(() => /Set aside to funds/.test(document.querySelector('#view-eod [data-cash]').textContent));
+      const rowHeight = (await eod.locator('[data-funds] tr', { hasText: 'Meralco' }).boundingBox()).height;
+      assert.ok(rowHeight < 80, `set-aside rows are cramped (${Math.round(rowHeight)}px tall)`);
+      await eod.locator('[data-m="cash_float"]').fill('1000');
+      const expected = (await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, '');
+      await eod.locator('[data-m="actual_cash"]').fill(expected);
+      await eod.locator('[data-m="actual_gcash"]').fill('0');
+      assert.match(await eod.locator('[data-variance]').textContent(), /✓/);
+      await eod.locator('[data-save]').click();
+      await expectToast(/EOD saved/);
+      await shot('06-eod');
+      await eod.locator('[data-close-day]').click();
+      await expectToast(/Day closed/);
+      await page.waitForSelector('#view-eod .banner.ok');
+    });
+
+    await step('EOD shows sales by department', async () => {
+      await eod.locator('[data-date]').fill('2026-09-15');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /Detailing/.test(document.querySelector('#view-eod [data-departments]')?.textContent || ''));
+      const breakdown = await eod.locator('[data-departments]').textContent();
+      assert.match(breakdown, /Detailing[\s\S]*₱5,000\.00/);
+      assert.match(breakdown, /Carwash/);
+      assert.match(breakdown, /Tint & PPF/);
+      await shot('06b-eod-departments');
+    });
+
+    await step('pricing: edit and save a price', async () => {
+      await page.click('#nav [data-view="pricing"]');
+      const row = page.locator('#view-pricing tr:has([data-name][value="Standard Wash"])');
+      await row.locator('[data-class="S"][data-field="price"]').fill('275');
+      await page.click('#view-pricing [data-save-all]');
+      await expectToast(/Saved 1 item/);
+      await shot('07-pricing');
+
+      // Department tabs: each shows only its own items.
+      await page.click('#view-pricing [data-dept-tab="detailing"]');
+      await page.waitForSelector('#view-pricing [data-name][value="Paint Correction"]');
+      assert.equal(await page.locator('#view-pricing [data-name][value="Standard Wash"]').count(), 0);
+      await page.click('#view-pricing [data-dept-tab="tint_ppf"]');
+      await page.click('#view-pricing [data-add="service"]');
+      await page.waitForSelector('#modal[open] [data-new-name]');
+      await page.fill('#modal [data-new-name]', 'Ceramic Tint 70%');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Ceramic Tint 70% added/);
+      await page.waitForSelector('#view-pricing [data-name][value="Ceramic Tint 70%"]');
+      await shot('07b-pricing-tint');
+    });
+
+    await step('parts: add a part, receive stock, sell over the counter', async () => {
+      await page.click('#nav [data-view="parts"]');
+      const parts = page.locator('#view-parts');
+      await parts.locator('[data-new-part]').click();
+      await page.fill('#modal [data-p="sku"]', 'OIL-1L');
+      await page.fill('#modal [data-p="name"]', 'Engine oil 1L');
+      await page.fill('#modal [data-p="price"]', '550');
+      await page.fill('#modal [data-p="reorder_level"]', '2');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Part added/);
+      const row = parts.locator('[data-parts] tr', { hasText: 'Engine oil 1L' });
+      await row.waitFor();
+      assert.match(await row.textContent(), /Low/, 'no stock yet: flagged low');
+
+      await row.locator('[data-act="receive"]').click();
+      await page.fill('#modal [data-r="quantity"]', '12');
+      await page.fill('#modal [data-r="unit_cost"]', '300');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock received/);
+      await page.waitForFunction(() => /\b12\b/.test([...document.querySelectorAll('#view-parts [data-parts] tr')]
+        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent || ''));
+
+      await parts.locator('[data-counter-date]').fill('2026-09-21');
+      await parts.locator('[data-counter-date]').dispatchEvent('change');
+      await parts.locator('[data-new-sale]').click();
+      await page.waitForSelector('#modal[open] [data-add="part"]');
+      assert.equal(await page.locator('#modal [data-add="service"]').count(), 0, 'no services at the parts counter');
+      await page.selectOption('#modal [data-add="part"]', { index: 1 });
+      await page.fill('#modal [data-l="quantity"]', '2');
+      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱1,100\.00/);
+      await page.click('#modal [data-save]');
+      await expectToast(/PC-092126-001 added/);
+      const sale = parts.locator('[data-counter] tr', { hasText: 'PC-092126-001' });
+      await sale.waitFor();
+      assert.match(await sale.textContent(), /Paid/, 'counter sales default to paid (cash-and-carry)');
+      assert.doesNotMatch(await sale.textContent(), /Unpaid/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
+        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('10'));
+      await shot('07c-parts');
+    });
+
+    await step('sales report', async () => {
+      await page.click('#nav [data-view="reports"]');
+      await page.fill('#view-reports [data-start]', '2026-09-01');
+      await page.fill('#view-reports [data-end]', '2026-09-30');
+      await page.locator('#view-reports [data-end]').dispatchEvent('change');
+      await page.waitForSelector('#view-reports tr.weekly-total');
+      // No hidden filters: payment method and paid status are plain columns, and there is a reading guide.
+      assert.equal(await page.locator('#view-reports select').count(), 0, 'no filter dropdowns');
+      const headers = (await page.locator('#view-reports thead th').allTextContents()).map(t => t.trim());
+      for (const h of ['Cash received', 'GCash received', 'Unpaid', 'Carwash', 'Detailing', 'Tint & PPF', 'Total sales', 'Profit']) {
+        assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
+      }
+      assert.match(await page.locator('#view-reports [data-help]').textContent(), /How to read/);
+      const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
+      assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
+        'everything sold in September was also paid in September');
+      await shot('08-reports');
+    });
+
+    const payroll = page.locator('#view-payroll');
+    const setPayrollRange = async (start, end) => {
+      await payroll.locator('[data-start]').fill(start);
+      await payroll.locator('[data-end]').fill(end);
+      await payroll.locator('[data-end]').dispatchEvent('change');
+      await page.waitForFunction(([s, e]) => {
+        const heads = document.querySelectorAll('#view-payroll thead .attendance-day');
+        return heads.length && heads[0].dataset.date === s && heads[heads.length - 1].dataset.date === e;
+      }, [start, end]);
+    };
+    const dayHeads = async () => (await payroll.locator('thead .attendance-day').allTextContents()).map(t => t.replace(/\s+/g, ''));
+
+    await step('finance: month in/out, funds, pay a bill', async () => {
+      await page.click('#nav [data-view="finance"]');
+      const fin = page.locator('#view-finance');
+      await fin.locator('[data-start]').fill('2026-09-01');
+      await fin.locator('[data-end]').fill('2026-09-30');
+      await fin.locator('[data-end]').dispatchEvent('change');
+      await page.waitForFunction(() => /Net profit/.test(document.querySelector('#view-finance [data-pl]')?.textContent || ''));
+      const pl = await fin.locator('[data-pl]').textContent();
+      for (const label of ['Gross sales', 'Commission', 'Net sales', 'Payroll', 'Drawer expenses', 'Net profit']) assert.match(pl, new RegExp(label));
+      const meralco = fin.locator('[data-funds-table] tr', { hasText: 'Meralco' });
+      assert.match(await meralco.textContent(), /₱500\.00/, 'the EOD set-aside is in the fund');
+
+      await meralco.locator('[data-act="edit-fund"]').click();
+      await page.fill('#modal [data-fund-amount]', '8000');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Fund saved/);
+
+      await fin.locator('[data-funds-table] tr', { hasText: 'Meralco' }).locator('[data-act="pay-bill"]').click();
+      await page.fill('#modal [data-bill-date]', '2026-09-25');
+      await page.fill('#modal [data-bill-amount]', '3000');
+      await page.selectOption('#modal [data-bill-side]', 'cash');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Bill recorded/);
+      await page.waitForFunction(() => /Meralco[\s\S]*₱3,000\.00/.test(document.querySelector('#view-finance [data-pl]').textContent));
+      await shot('08c-finance');
+    });
+
+    await step('payroll: any date range, days line up with weekdays', async () => {
+      await page.click('#nav [data-view="payroll"]');
+      // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
+      // Ranges that are not whole weeks.
+      await setPayrollRange('2026-09-01', '2026-09-15');
+      assert.equal((await dayHeads()).length, 15);
+      assert.equal((await dayHeads())[0], 'Tue09-01');
+      await payroll.locator('[data-preset="first-half"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#view-payroll thead .attendance-day').length === 15);
+    });
+
+    await step('payroll: attendance, adjustment and payout', async () => {
+      await setPayrollRange('2026-09-14', '2026-09-20');
+      const first = payroll.locator('tbody tr[data-emp]').first();
+      await first.locator('[data-day="2026-09-14"]').selectOption('P');
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-total]').textContent !== '₱0.00');
+      const netBefore = await first.locator('[data-net]').textContent();
+
+      await first.locator('[data-act="adjust"]').click();
+      await page.fill('#modal [data-adj-date]', '2026-09-15');
+      await page.selectOption('#modal [data-adj-kind]', 'deduction');
+      await page.fill('#modal [data-adj-amount]', '50');
+      await page.fill('#modal [data-adj-note]', 'Cash advance');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Adjustment added/);
+      await page.waitForFunction(before => document.querySelector('#view-payroll tbody tr[data-emp] [data-net]').textContent !== before, netBefore);
+
+      await payroll.locator('[data-payout]').click();
+      await page.fill('#modal [data-payout-date]', '2026-09-20');
+      await page.selectOption('#modal [data-payout-side]', 'cash');
+      assert.ok(Number(await page.inputValue('#modal [data-payout-amount]')) > 0, 'payout amount defaults to total net pay');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Payout recorded/);
+      await payroll.locator('[data-payouts] .row-line').first().waitFor();
+      const paidOut = Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
+      // Names stay visible while the table is scrolled sideways.
+      const nameVisible = await page.evaluate(() => {
+        const wrap = document.querySelector('#view-payroll .table-wrap');
+        wrap.scrollLeft = wrap.scrollWidth;
+        const cell = document.querySelector('#view-payroll tbody .employee-cell').getBoundingClientRect();
+        return cell.left >= wrap.getBoundingClientRect().left - 1;
+      });
+      assert.ok(nameVisible, 'employee names scroll out of view');
+      await shot('09-payroll');
+
+      // The payout leaves the drawer on its date: EOD shows it and expects it gone.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-20');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /Payroll paid out/.test(document.querySelector('#view-eod [data-cash]').textContent));
+      await eod.locator('[data-m="cash_float"]').fill('0');
+      const expected = Number((await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, ''));
+      assert.equal(expected, -paidOut, 'no sales that day, so the drawer is short exactly the payout');
+      await page.click('#nav [data-view="payroll"]');
+    });
+
+    await step('settings: add staff user and a vehicle class', async () => {
+      await page.click('#nav [data-view="settings"]');
+      await page.fill('#view-settings [data-u="email"]', 'helper@jdmkulture.ph');
+      await page.click('#view-settings [data-add-user]');
+      await expectToast(/User added/);
+      await page.fill('#view-settings [data-c="code"]', 'van');
+      await page.fill('#view-settings [data-c="label"]', 'Van');
+      await page.click('#view-settings [data-add-class]');
+      await expectToast(/Class added/);
+      await page.waitForSelector('#view-settings tr[data-code="VAN"]');
+      await shot('10-settings');
+    });
+
+    await step('staff: limited nav, closed day is read-only', async () => {
+      await page.click('#signout-btn');
+      await page.waitForSelector('#login-form:not([hidden])');
+      const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
+      assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
+      await signIn('staff@sandbox');
+      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix']);
+      await page.click('#nav [data-view="carwash"]');
+      await daily.locator('[data-date]').fill(DAY);
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForSelector('#view-carwash .banner');
+      assert.equal(await daily.locator('[data-entry-card]').isHidden(), true);
+      assert.equal(await daily.locator('[data-act="void"]').count(), 0);
+      await page.click('#nav [data-view="pricing"]');
+      await page.waitForSelector('#view-pricing tbody tr[data-id]');
+      assert.equal(await page.locator('#view-pricing tbody input').count(), 0, 'staff sees prices read-only');
+      // Staff can sell parts but do not see costs.
+      await page.click('#nav [data-view="parts"]');
+      await page.locator('#view-parts [data-counter-date]').fill('2026-09-21');
+      await page.locator('#view-parts [data-counter-date]').dispatchEvent('change');
+      await page.locator('#view-parts [data-counter] tr', { hasText: 'PC-092126-001' }).waitFor();
+      assert.equal(await page.locator('#view-parts [data-new-part]').isVisible(), false);
+      assert.equal(await page.locator('#view-parts thead th', { hasText: /cost/i }).count(), 0, 'staff must not see part costs');
+      await page.goto(`${url}/#settings`);
+      await page.waitForSelector('#view-carwash.active');
+      await shot('11-staff-daily');
+    });
+
+    await step('mobile layout renders', async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.click('#nav [data-view="carwash"]');
+      await daily.locator('[data-date]').fill('2026-10-05');
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForSelector('#view-carwash [data-entry-card]:not([hidden])');
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px on mobile`);
+      await shot('12-mobile');
+    });
+
+    assert.deepEqual(problems, [], 'browser reported errors');
+    console.log('\nUI smoke test passed');
+  } catch (error) {
+    await shot('zz-failure').catch(() => {});
+    console.error(`\nFAILED: ${error.message}`);
+    if (problems.length) console.error(problems.join('\n'));
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+})();
