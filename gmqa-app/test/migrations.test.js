@@ -89,7 +89,7 @@ test('audit log records the actor and constraints reject bad data', async () => 
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -104,8 +104,8 @@ test('003 adds departments and running jobs without changing any historical tota
   const before = await all(driver, `select j.id, coalesce(sum(i.price), 0) total from jobs j left join job_items i on i.job_id = j.id
     group by j.id order by j.id`);
 
-  await migrate(driver, quiet);
-  assert.deepEqual((await status(driver)).map(m => m.state), ['applied', 'applied', 'applied']);
+  await migrate(driver, { ...quiet, to: '003' });
+  assert.deepEqual((await status(driver)).map(m => m.state).slice(0, 3), ['applied', 'applied', 'applied']);
 
   const dept = async name => (await one(driver, 'select department from catalog_items where name = $1', [name])).department;
   assert.equal(await dept('Premium Wash'), 'carwash');
@@ -141,4 +141,43 @@ test('003 adds departments and running jobs without changing any historical tota
   const running = await one(driver, `insert into jobs (job_date, department, closed_on, paid_on, payment_received)
     values ('2026-10-01', 'tint_ppf', '2026-10-03', '2026-10-02', true) returning sale_date`);
   assert.equal(running.sale_date, '2026-10-03');
+});
+
+test('004 turns weekly payroll sheets into daily records and rate history', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  await migrate(driver, { ...quiet, to: '003' });
+  // Ernesto (id 3, rate now 300): a week paid at an older rate of 280, with OT and a cash advance.
+  await driver.query(`insert into payroll_entries (employee_id, period_start, attendance, cw_ot_hours, cn_ot_hours, deductions, notes,
+      rate_per_day, construction_rate)
+    values (3, '2026-09-21', '{"2026-09-21":"P","2026-09-22":"CN","2026-09-23":""}', 2, 0, 150, 'CA', 280, 700)`);
+
+  await migrate(driver, quiet);
+
+  const attendance = await all(driver, 'select employee_id, work_date, code, cw_ot_hours, cn_ot_hours from attendance order by employee_id, work_date');
+  assert.deepEqual(attendance, [
+    { employee_id: 1, work_date: '2026-09-12', code: 'P', cw_ot_hours: 0, cn_ot_hours: 0 },
+    { employee_id: 3, work_date: '2026-09-21', code: 'P', cw_ot_hours: 2, cn_ot_hours: 0 },
+    { employee_id: 3, work_date: '2026-09-22', code: 'CN', cw_ot_hours: 0, cn_ot_hours: 0 },
+  ]);
+  const adjustments = await all(driver, 'select employee_id, adj_date, kind, amount, note from payroll_adjustments');
+  assert.deepEqual(adjustments, [{ employee_id: 3, adj_date: '2026-09-21', kind: 'deduction', amount: 150, note: 'CA' }]);
+
+  const ratesFor = id => all(driver, 'select effective_from, rate_per_day, construction_rate from employee_rates where employee_id = $1 order by effective_from', [id]);
+  assert.deepEqual(await ratesFor(3), [
+    { effective_from: '2000-01-01', rate_per_day: 280, construction_rate: 700 },
+    { effective_from: '2026-09-28', rate_per_day: 300, construction_rate: 700 },
+  ], 'old week keeps 280; current 300 applies from the week after');
+  assert.deepEqual(await ratesFor(1), [{ effective_from: '2000-01-01', rate_per_day: 700, construction_rate: 0 }]);
+  assert.deepEqual(await ratesFor(4), [{ effective_from: '2000-01-01', rate_per_day: 250, construction_rate: 700 }]);
+
+  assert.equal((await one(driver, "select count(*)::int n from information_schema.columns where table_name = 'employees' and column_name = 'rate_per_day'")).n, 0,
+    'rates live only in employee_rates');
+  assert.equal((await one(driver, 'select count(*)::int n from legacy_v2_payroll_entries')).n, legacy.payroll_entries.length + 1);
+  assert.equal((await one(driver, "select to_regclass('public.payroll_entries') r")).r, null);
+
+  await assert.rejects(driver.query("insert into attendance (employee_id, work_date, code) values (1, '2026-10-01', 'X')"), /check/i);
+  await assert.rejects(driver.query("insert into payroll_adjustments (employee_id, adj_date, kind, amount, note) values (1, '2026-10-01', 'deduction', -5, 'x')"), /check/i);
+  await assert.rejects(driver.query("insert into payroll_payouts (payout_date, period_start, period_end, side, amount) values ('2026-10-04', '2026-10-05', '2026-09-28', 'cash', 100)"), /check/i);
 });

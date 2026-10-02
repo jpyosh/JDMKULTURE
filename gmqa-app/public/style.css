@@ -615,3 +615,12 @@ tr.inactive td{opacity:.5;}
 .help-card summary{cursor:pointer;font-family:'Oswald',sans-serif;font-size:15px;}
 .help-card ul{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.6;}
 .help-card b{color:var(--text);}
+/* payroll by range */
+.employee-cell{min-width:150px;white-space:nowrap;}
+.ot-badge{font-size:9px;color:#9ccfff;text-align:center;margin-top:2px;}
+.ot-grid{display:grid;grid-template-columns:1fr 130px 150px;gap:6px 10px;align-items:center;max-height:55vh;overflow:auto;font-size:13px;}
+.ot-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+.ot-grid input{min-height:32px;padding:5px 8px;}
+/* payroll: employee column stays put while scrolling through the days */
+.payroll-table thead th:first-child,.payroll-table .employee-cell{position:sticky;left:0;z-index:2;background:var(--surface);box-shadow:1px 0 0 var(--border);}
+.payroll-table thead th:first-child{background:#202124;z-index:3;}

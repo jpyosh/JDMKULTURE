@@ -41,7 +41,11 @@ Auth, deployed on Vercel.
 - Expected GCash = GCash collected + tips − tips passed on − commission via GCash − GCash expenses.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
-- Payroll weeks start Monday. Each week stores the rates it was paid at.
+- Payroll works for any date range (a week, 1st–15th, 16th–end...). Attendance and overtime are
+  recorded per day; cash advances, bonuses etc. are dated adjustments. Each day is paid at the rate in
+  effect that day (rates change from an effective date), so earlier periods never change.
+- A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
+  expected drawer in EOD.
 - Jobs are **voided** (owner only, with a reason), never deleted. JO numbers are never reused.
 - Closing a day locks it for staff. The owner can still edit or reopen it.
 - Every insert/update/delete is written to `audit_log` with who did it (Settings → Change history).

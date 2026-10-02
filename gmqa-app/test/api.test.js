@@ -51,7 +51,7 @@ test('authentication and roles', async () => {
   assert.deepEqual(await ok(api(STAFF, 'GET', '/me')), { id: uid(STAFF), email: STAFF, role: 'staff', name: 'staff' });
   assert.equal((await api(STAFF, 'GET', '/catalog')).status, 200);
   assert.equal((await api(STAFF, 'GET', '/reports/range?start=2026-09-01&end=2026-09-30')).status, 403);
-  assert.equal((await api(STAFF, 'GET', '/payroll/2026-09-14')).status, 403);
+  assert.equal((await api(STAFF, 'GET', '/payroll?start=2026-09-14&end=2026-09-20')).status, 403);
   assert.equal((await api(STAFF, 'GET', '/users')).status, 403);
   const premium = await catalogItem('Premium Wash');
   assert.equal((await api(STAFF, 'PATCH', `/catalog/${premium.id}`, { prices: { S: { price: 1, commission: 0 } } })).status, 403);
@@ -169,24 +169,67 @@ test('range report sums days with the same rule', async () => {
   assert.equal((await api(OWNER, 'GET', '/reports/range?start=2026-10-05&end=2026-10-01')).status, 400);
 });
 
-test('payroll freezes rates per week', async () => {
+test('payroll: any date range, daily records, dated rates, adjustments and payouts', async () => {
   const emp = await ok(api(OWNER, 'POST', '/employees', { name: 'Tester', role: 'Detailer', rate_per_day: 400, construction_rate: 800 }));
-  const week = await ok(api(OWNER, 'PUT', `/payroll/2026-09-16/${emp.id}`, {
-    attendance: { '2026-09-14': 'P', '2026-09-15': '0.5P', '2026-09-16': 'CN', '2026-09-17': 'A' }, cw_ot_hours: 2, deductions: 100,
+  assert.equal(emp.rate_per_day, 400);
+  const mark = (date, body) => ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/${date}`, body));
+  await mark('2026-09-14', { code: 'P' });
+  await mark('2026-09-15', { code: '0.5P' });
+  await mark('2026-09-16', { code: 'CN' });
+  await mark('2026-09-17', { code: 'P', cw_ot_hours: 2 });
+  await mark('2026-09-18', { code: 'A' });
+  const adj = await ok(api(OWNER, 'POST', '/payroll/adjustments', {
+    employee_id: emp.id, date: '2026-09-16', kind: 'deduction', amount: 100, note: 'Cash advance',
   }));
-  assert.equal(week.weekStart, '2026-09-14', 'any day snaps to its Monday');
-  const row = week.rows.find(r => r.employee.id === emp.id);
-  // 1.5 days * 400 + 1 CN * 800 + 2h OT at 400/8*1.25 - 100
-  assert.equal(row.pay.net, 600 + 800 + 125 - 100);
 
-  await ok(api(OWNER, 'PATCH', `/employees/${emp.id}`, { rate_per_day: 1000 }));
-  const again = await ok(api(OWNER, 'GET', '/payroll/2026-09-14'));
-  assert.equal(again.rows.find(r => r.employee.id === emp.id).pay.net, 1425, 'old week keeps the old rate');
-  const nextWeek = await ok(api(OWNER, 'GET', '/payroll/2026-09-21'));
-  assert.equal(nextWeek.rows.find(r => r.employee.id === emp.id).entry.rate_per_day, 1000);
+  const rowFor = async (start, end) => {
+    const r = await ok(api(OWNER, 'GET', `/payroll?start=${start}&end=${end}`));
+    return { range: r, row: r.rows.find(x => x.employee.id === emp.id) };
+  };
+  const { range, row } = await rowFor('2026-09-14', '2026-09-20');
+  assert.equal(range.dates.length, 7);
+  assert.deepEqual([range.dates[0], range.dates[6]], ['2026-09-14', '2026-09-20']);
+  assert.equal(row.days['2026-09-17'].cw_ot_hours, 2);
+  assert.equal(row.adjustments.length, 1);
+  // 2.5 carwash days * 400 + 1 CN * 800 + 2h OT at 400/8*1.25 - 100
+  assert.equal(row.pay.net, 1000 + 800 + 125 - 100);
 
-  assert.equal((await api(OWNER, 'PUT', `/payroll/2026-09-14/${emp.id}`, { attendance: { '2026-09-30': 'P' } })).status, 400);
-  assert.equal((await api(OWNER, 'PUT', `/payroll/2026-09-14/${emp.id}`, { attendance: { '2026-09-14': 'X' } })).status, 400);
+  // A raise effective the 17th: the 14th-16th keep the old rate.
+  await ok(api(OWNER, 'PATCH', `/employees/${emp.id}`, { rate_per_day: 1000, effective_from: '2026-09-17' }));
+  const after = (await rowFor('2026-09-14', '2026-09-20')).row;
+  assert.equal(after.pay.net, 400 + 200 + 1000 + 800 + 1000 / 8 * 1.25 * 2 - 100);
+  assert.equal((await ok(api(OWNER, 'GET', '/employees'))).find(e => e.id === emp.id).rate_per_day, 1000);
+
+  // Ranges do not have to be whole weeks (e.g. 16th to 30th).
+  const half = await rowFor('2026-09-16', '2026-09-30');
+  assert.equal(half.range.dates.length, 15);
+  assert.equal(half.row.pay.carwashDays, 1);
+  assert.equal(half.row.pay.constructionDays, 1);
+
+  // Clearing a day and removing an adjustment.
+  await mark('2026-09-18', { code: '' });
+  await ok(api(OWNER, 'DELETE', `/payroll/adjustments/${adj.id}`));
+  const cleared = (await rowFor('2026-09-14', '2026-09-20')).row;
+  assert.equal(cleared.days['2026-09-18'], undefined);
+  assert.equal(cleared.pay.net, after.pay.net + 100);
+
+  // Weekly payout from the drawer appears in that day's EOD and in the payroll range.
+  await ok(api(OWNER, 'POST', '/payroll/payouts', {
+    payout_date: '2026-09-20', period_start: '2026-09-14', period_end: '2026-09-20', side: 'cash', amount: 2712.5,
+  }));
+  assert.equal((await ok(api(OWNER, 'GET', '/days/2026-09-20'))).summary.payrollCash, 2712.5);
+  const withPayout = (await rowFor('2026-09-14', '2026-09-20')).range;
+  assert.equal(withPayout.payouts.length, 1);
+  await ok(api(OWNER, 'DELETE', `/payroll/payouts/${withPayout.payouts[0].id}`));
+  assert.equal((await ok(api(OWNER, 'GET', '/days/2026-09-20'))).summary.payrollCash, 0);
+
+  // Validation.
+  assert.equal((await api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/2026-09-14`, { code: 'X' })).status, 400);
+  assert.equal((await api(OWNER, 'GET', '/payroll?start=2026-09-20&end=2026-09-14')).status, 400);
+  assert.equal((await api(OWNER, 'GET', '/payroll?start=2026-01-01&end=2026-04-01')).status, 400);
+  assert.equal((await api(OWNER, 'POST', '/payroll/adjustments', { employee_id: emp.id, date: '2026-09-16', kind: 'deduction', amount: 0, note: 'x' })).status, 400);
+  assert.equal((await api(OWNER, 'POST', '/payroll/adjustments', { employee_id: emp.id, date: '2026-09-16', kind: 'deduction', amount: 50 })).status, 400);
+  assert.equal((await api(OWNER, 'POST', '/payroll/payouts', { payout_date: '2026-09-20', period_start: '2026-09-20', period_end: '2026-09-14', side: 'cash', amount: 10 })).status, 400);
 });
 
 test('users: invite staff, keep at least one owner; audit log records who did what', async () => {

@@ -236,24 +236,74 @@ async function launch() {
       await shot('08-reports');
     });
 
-    await step('payroll: attendance updates pay', async () => {
+    const payroll = page.locator('#view-payroll');
+    const setPayrollRange = async (start, end) => {
+      await payroll.locator('[data-start]').fill(start);
+      await payroll.locator('[data-end]').fill(end);
+      await payroll.locator('[data-end]').dispatchEvent('change');
+      await page.waitForFunction(([s, e]) => {
+        const heads = document.querySelectorAll('#view-payroll thead .attendance-day');
+        return heads.length && heads[0].dataset.date === s && heads[heads.length - 1].dataset.date === e;
+      }, [start, end]);
+    };
+    const dayHeads = async () => (await payroll.locator('thead .attendance-day').allTextContents()).map(t => t.replace(/\s+/g, ''));
+
+    await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');
-      await page.fill('#view-payroll [data-week]', '2026-09-16');
-      await page.locator('#view-payroll [data-week]').dispatchEvent('change');
-      await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-14');
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
-      await page.fill('#view-payroll [data-week]', '2026-09-28');
-      await page.locator('#view-payroll [data-week]').dispatchEvent('change');
-      await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-28');
-      const heads = (await page.locator('#view-payroll thead .attendance-day').allTextContents()).map(t => t.replace(/s+/g, ' ').trim());
-      assert.deepEqual(heads, ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
-      await page.fill('#view-payroll [data-week]', '2026-09-14');
-      await page.locator('#view-payroll [data-week]').dispatchEvent('change');
-      await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-14');
-      const first = page.locator('#view-payroll tbody tr').first();
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
+      // Ranges that are not whole weeks.
+      await setPayrollRange('2026-09-01', '2026-09-15');
+      assert.equal((await dayHeads()).length, 15);
+      assert.equal((await dayHeads())[0], 'Tue09-01');
+      await payroll.locator('[data-preset="first-half"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#view-payroll thead .attendance-day').length === 15);
+    });
+
+    await step('payroll: attendance, adjustment and payout', async () => {
+      await setPayrollRange('2026-09-14', '2026-09-20');
+      const first = payroll.locator('tbody tr[data-emp]').first();
       await first.locator('[data-day="2026-09-14"]').selectOption('P');
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-total]').textContent !== '₱0.00');
+      const netBefore = await first.locator('[data-net]').textContent();
+
+      await first.locator('[data-act="adjust"]').click();
+      await page.fill('#modal [data-adj-date]', '2026-09-15');
+      await page.selectOption('#modal [data-adj-kind]', 'deduction');
+      await page.fill('#modal [data-adj-amount]', '50');
+      await page.fill('#modal [data-adj-note]', 'Cash advance');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Adjustment added/);
+      await page.waitForFunction(before => document.querySelector('#view-payroll tbody tr[data-emp] [data-net]').textContent !== before, netBefore);
+
+      await payroll.locator('[data-payout]').click();
+      await page.fill('#modal [data-payout-date]', '2026-09-20');
+      await page.selectOption('#modal [data-payout-side]', 'cash');
+      assert.ok(Number(await page.inputValue('#modal [data-payout-amount]')) > 0, 'payout amount defaults to total net pay');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Payout recorded/);
+      await payroll.locator('[data-payouts] .row-line').first().waitFor();
+      const paidOut = Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
+      // Names stay visible while the table is scrolled sideways.
+      const nameVisible = await page.evaluate(() => {
+        const wrap = document.querySelector('#view-payroll .table-wrap');
+        wrap.scrollLeft = wrap.scrollWidth;
+        const cell = document.querySelector('#view-payroll tbody .employee-cell').getBoundingClientRect();
+        return cell.left >= wrap.getBoundingClientRect().left - 1;
+      });
+      assert.ok(nameVisible, 'employee names scroll out of view');
       await shot('09-payroll');
+
+      // The payout leaves the drawer on its date: EOD shows it and expects it gone.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-20');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /Payroll paid out/.test(document.querySelector('#view-eod [data-cash]').textContent));
+      await eod.locator('[data-m="cash_float"]').fill('0');
+      const expected = Number((await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, ''));
+      assert.equal(expected, -paidOut, 'no sales that day, so the drawer is short exactly the payout');
+      await page.click('#nav [data-view="payroll"]');
     });
 
     await step('settings: add staff user and a vehicle class', async () => {

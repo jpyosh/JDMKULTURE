@@ -134,8 +134,8 @@ function renderMath() {
   const commissionGcash = Math.min(num('commission_gcash_paid'), s.commission);
   const commissionCash = s.commission - commissionGcash;
   const tips = s.jobTips + num('gcash_tips_to_distribute');
-  const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses;
-  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips;
+  const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses - s.payrollCash;
+  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips - s.payrollGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
 
   $('[data-cash]', root).innerHTML =
@@ -143,6 +143,7 @@ function renderMath() {
     + line('+ Cash received today', peso(s.cashReceived))
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
+    + (s.payrollCash ? line('− Payroll paid out', peso(s.payrollCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
     line('GCash received today', peso(s.gcashReceived))
@@ -150,6 +151,7 @@ function renderMath() {
     + line('− Tips passed to crew', peso(tips))
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
+    + (s.payrollGcash ? line('− Payroll paid out', peso(s.payrollGcash)) : '')
     + line('Expected GCash', peso(expectedGcash), 'total');
   const notes = [];
   if (s.paidInAdvance) notes.push(`${peso(s.paidInAdvance)} received today is for running jobs that are not done yet. It is in today's count but becomes a sale when the job is done.`);
