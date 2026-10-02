@@ -7,5 +7,8 @@ The app lives in `gmqa-app/`. Read `gmqa-app/README.md` for the business rules, 
 - Money math lives only in `lib/calc.js`. The frontend EOD preview (`public/js/views/eod.js`) mirrors it, so change both together.
 - Writes go through `db.tx(req.user.email, ...)` so the audit log records who changed what.
 - Business dates are 'YYYY-MM-DD' strings in shop (Philippine) time. Never use `toISOString()` to get "today" in the browser.
-- Before finishing a change: `npm test` and `npm run test:ui` (both offline).
+- **Test first, always.** Write the failing test first (test/api.test.js, test/migrations.test.js,
+  or a step in scripts/ui-smoke.js), run it and see it fail, then implement. A bug fix starts with a test that reproduces the bug.
+- Nothing is committed, pushed, migrated or deployed until `npm test` and `npm run test:ui` both pass (both run offline).
+  Report the real output.
 - Ask before running `db -- migrate` against production, or before any destructive SQL.
