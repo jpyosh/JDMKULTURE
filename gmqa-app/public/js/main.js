@@ -4,6 +4,7 @@ import { detailing, tintPpf } from './views/running.js';
 import eod from './views/eod.js';
 import pricing from './views/pricing.js';
 import reports from './views/reports.js';
+import finance from './views/finance.js';
 import payroll from './views/payroll.js';
 import settings from './views/settings.js';
 
@@ -14,6 +15,7 @@ const VIEWS = [
   { key: 'eod', label: 'EOD Closing', module: eod, roles: ['owner', 'staff'] },
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
+  { key: 'finance', label: 'Finance', module: finance, roles: ['owner'] },
   { key: 'payroll', label: 'Payroll', module: payroll, roles: ['owner'] },
   { key: 'settings', label: 'Settings', module: settings, roles: ['owner'] },
 ];

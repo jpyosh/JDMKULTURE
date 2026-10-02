@@ -47,7 +47,7 @@ async function launch() {
       await shot('00-gate');
       await signIn('owner@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
-        ['01Carwash', '02Detailing', '03Tint & PPF', '04EOD Closing', '05Pricing Matrix', '06Sales Reports', '07Payroll', '08Settings']);
+        ['01Carwash', '02Detailing', '03Tint & PPF', '04EOD Closing', '05Pricing Matrix', '06Sales Reports', '07Finance', '08Payroll', '09Settings']);
     });
 
     const daily = page.locator('#view-carwash');
@@ -171,6 +171,15 @@ async function launch() {
       await eod.locator('[data-e="amount"]').fill('120');
       await eod.locator('[data-add-expense]').click();
       await expectToast(/Expense added/);
+      // Weekly set-aside for a bill fund, taken out of the drawer at EOD.
+      const meralcoRow = eod.locator('[data-funds] tr', { hasText: 'Meralco' });
+      await meralcoRow.locator('[data-sa-amount]').fill('500');
+      await meralcoRow.locator('[data-sa-side]').selectOption('cash');
+      await meralcoRow.locator('[data-sa-add]').click();
+      await expectToast(/Set aside/);
+      await page.waitForFunction(() => /Set aside to funds/.test(document.querySelector('#view-eod [data-cash]').textContent));
+      const rowHeight = (await eod.locator('[data-funds] tr', { hasText: 'Meralco' }).boundingBox()).height;
+      assert.ok(rowHeight < 80, `set-aside rows are cramped (${Math.round(rowHeight)}px tall)`);
       await eod.locator('[data-m="cash_float"]').fill('1000');
       const expected = (await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, '');
       await eod.locator('[data-m="actual_cash"]').fill(expected);
@@ -247,6 +256,33 @@ async function launch() {
       }, [start, end]);
     };
     const dayHeads = async () => (await payroll.locator('thead .attendance-day').allTextContents()).map(t => t.replace(/\s+/g, ''));
+
+    await step('finance: month in/out, funds, pay a bill', async () => {
+      await page.click('#nav [data-view="finance"]');
+      const fin = page.locator('#view-finance');
+      await fin.locator('[data-start]').fill('2026-09-01');
+      await fin.locator('[data-end]').fill('2026-09-30');
+      await fin.locator('[data-end]').dispatchEvent('change');
+      await page.waitForFunction(() => /Net profit/.test(document.querySelector('#view-finance [data-pl]')?.textContent || ''));
+      const pl = await fin.locator('[data-pl]').textContent();
+      for (const label of ['Gross sales', 'Commission', 'Net sales', 'Payroll', 'Drawer expenses', 'Net profit']) assert.match(pl, new RegExp(label));
+      const meralco = fin.locator('[data-funds-table] tr', { hasText: 'Meralco' });
+      assert.match(await meralco.textContent(), /₱500\.00/, 'the EOD set-aside is in the fund');
+
+      await meralco.locator('[data-act="edit-fund"]').click();
+      await page.fill('#modal [data-fund-amount]', '8000');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Fund saved/);
+
+      await fin.locator('[data-funds-table] tr', { hasText: 'Meralco' }).locator('[data-act="pay-bill"]').click();
+      await page.fill('#modal [data-bill-date]', '2026-09-25');
+      await page.fill('#modal [data-bill-amount]', '3000');
+      await page.selectOption('#modal [data-bill-side]', 'cash');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Bill recorded/);
+      await page.waitForFunction(() => /Meralco[\s\S]*₱3,000\.00/.test(document.querySelector('#view-finance [data-pl]').textContent));
+      await shot('08c-finance');
+    });
 
     await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');

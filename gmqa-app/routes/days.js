@@ -11,15 +11,20 @@ const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gc
   gcash_tips_to_distribute: 0, commission_gcash_paid: 0, closed_at: null, closed_by: null };
 
 async function loadDay(day, q = db) {
-  const [meta, expenses, jobs, payrollPayouts] = await Promise.all([
+  const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
     q.many('select id, side, description, amount, created_by, created_at from expenses where expense_date = $1 order by id', [day]),
     // Sales booked today (carwash by job date, running jobs by sale date) + running jobs paid today.
     loadJobs('sale_date = $1 or paid_on = $1', [day], q),
     q.many('select id, side, amount, period_start, period_end, note from payroll_payouts where payout_date = $1 order by id', [day]),
+    q.many(`select s.id, s.fund_id, f.name, s.side, s.amount from fund_set_asides s join funds f on f.id = s.fund_id
+      where s.entry_date = $1 order by s.id`, [day]),
+    q.many(`select b.id, f.name, b.drawer_side as side, b.from_drawer as amount from bill_payments b join funds f on f.id = b.fund_id
+      where b.paid_on = $1 and b.from_drawer > 0 order by b.id`, [day]),
   ]);
   const m = { ...EMPTY_META, ...meta, job_date: day };
-  return { date: day, meta: m, expenses, payrollPayouts, summary: daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts } }) };
+  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps,
+    summary: daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps } }) };
 }
 
 router.get('/days/:date', async (req, res) => {

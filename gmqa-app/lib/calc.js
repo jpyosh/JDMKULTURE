@@ -58,8 +58,9 @@ function salesFigures(jobs) {
 
 // The business day `date`: sales booked that day (by department) and money received that day.
 // `jobs` may contain any jobs; only the ones relevant to `date` are used. Jobs carry .totals.
-// outflows: money that leaves the drawer for reasons other than expenses/commission
-// ({ payrollPayouts: [{ side, amount }] }).
+// outflows: money that leaves the drawer for reasons other than expenses/commission, each a list of
+// { side: 'cash' | 'gcash', amount }: payrollPayouts, setAsides (to bill funds), billTopUps (the part
+// of a bill its fund could not cover).
 function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
   const live = jobs.filter(isCounted);
   const sales = live.filter(j => saleDate(j) === date);
@@ -87,12 +88,18 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
   const commissionCash = round2(commission - commissionGcash);
   const cashFloat = round2(meta.cash_float);
 
-  const payouts = outflows.payrollPayouts || [];
-  const payrollCash = sum(payouts.filter(p => p.side === 'cash'), p => p.amount);
-  const payrollGcash = sum(payouts.filter(p => p.side === 'gcash'), p => p.amount);
+  const bySide = (list = [], side) => sum(list.filter(x => x.side === side), x => x.amount);
+  const payrollCash = bySide(outflows.payrollPayouts, 'cash');
+  const payrollGcash = bySide(outflows.payrollPayouts, 'gcash');
+  const setAsideCash = bySide(outflows.setAsides, 'cash');
+  const setAsideGcash = bySide(outflows.setAsides, 'gcash');
+  const billTopUpCash = bySide(outflows.billTopUps, 'cash');
+  const billTopUpGcash = bySide(outflows.billTopUps, 'gcash');
 
-  const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses - payrollCash);
-  const expectedGcash = round2(gcashReceived + tips - commissionGcash - gcashExpenses - tips - payrollGcash);
+  const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses
+    - payrollCash - setAsideCash - billTopUpCash);
+  const expectedGcash = round2(gcashReceived + tips - commissionGcash - gcashExpenses - tips
+    - payrollGcash - setAsideGcash - billTopUpGcash);
   const actualCash = meta.actual_cash ?? null;
   const actualGcash = meta.actual_gcash ?? null;
 
@@ -107,6 +114,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
     cashExpenses, gcashExpenses, expenses: round2(cashExpenses + gcashExpenses),
     jobTips, otherTips, tips,
     cashFloat, commissionCash, commissionGcash, payrollCash, payrollGcash,
+    setAsideCash, setAsideGcash, billTopUpCash, billTopUpGcash,
     expectedCash, expectedGcash, expectedTotal: round2(expectedCash + expectedGcash),
     actualCash, actualGcash,
     cashVariance: actualCash == null ? null : round2(actualCash - expectedCash),
@@ -179,6 +187,53 @@ function datesBetween(start, end) {
   for (let d = start; d <= end; d = addDays(d, 1)) out.push(d);
   return out;
 }
+const daysUntil = (from, to) => Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000);
+
+// ---------------------------------------------------------------- bill funds
+
+const pad2 = n => String(n).padStart(2, '0');
+const lastDayOf = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+// fund: { frequency: 'monthly' | 'quarterly' | 'yearly', due_day, due_month }. Returns the first due
+// date on or after `from`; a due day past the end of a month falls on that month's last day.
+function nextDueDate(fund, from) {
+  const [y, m] = from.split('-').map(Number);
+  const anchor = fund.due_month || 1;
+  const dueMonths = fund.frequency === 'monthly' ? null
+    : fund.frequency === 'quarterly' ? [0, 3, 6, 9].map(k => ((anchor - 1 + k) % 12) + 1)
+      : [anchor];
+  for (let i = 0; i <= 24; i += 1) {
+    const month = ((m - 1 + i) % 12) + 1;
+    const year = y + Math.floor((m - 1 + i) / 12);
+    if (dueMonths && !dueMonths.includes(month)) continue;
+    const candidate = `${year}-${pad2(month)}-${pad2(Math.min(fund.due_day, lastDayOf(year, month)))}`;
+    if (candidate >= from) return candidate;
+  }
+  return null;
+}
+
+// How much to set aside per week so the fund holds the bill amount by its next due date.
+// balance includes this week's set-asides; the target is based on the balance at the start of the week.
+function fundStatus({ fund, balance, setAsideThisWeek = 0, today }) {
+  const amount = Number(fund.amount) || 0;
+  const nextDue = nextDueDate(fund, today);
+  const daysLeft = daysUntil(today, nextDue);
+  const weeksLeft = Math.max(1, Math.ceil(daysLeft / 7));
+  const needed = Math.max(0, amount - (balance - setAsideThisWeek));
+  const weeklyTarget = Math.ceil(needed / weeksLeft);
+  return {
+    nextDue, daysLeft, weeksLeft, weeklyTarget,
+    remainingThisWeek: Math.max(0, round2(weeklyTarget - setAsideThisWeek)),
+    shortBy: Math.max(0, round2(amount - balance)),
+  };
+}
+
+// A bill is paid from its fund first; whatever the fund cannot cover comes from the drawer.
+function splitBill(amount, fundBalance) {
+  const fromFund = round2(Math.max(0, Math.min(amount, fundBalance)));
+  return { fromFund, fromDrawer: round2(amount - fromFund) };
+}
+
 function joPrefix(date, prefix = 'JO') {
   const [y, m, d] = date.split('-');
   return `${prefix}-${m}${d}${y.slice(2)}-`;
@@ -188,5 +243,6 @@ module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, isCounted, daySummary,
   ATTENDANCE_CODES, rateOn, payrollForRange,
-  isDate, addDays, mondayOf, datesBetween, joPrefix,
+  nextDueDate, fundStatus, splitBill,
+  isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
 };

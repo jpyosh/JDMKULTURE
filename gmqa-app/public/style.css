@@ -624,3 +624,12 @@ tr.inactive td{opacity:.5;}
 /* payroll: employee column stays put while scrolling through the days */
 .payroll-table thead th:first-child,.payroll-table .employee-cell{position:sticky;left:0;z-index:2;background:var(--surface);box-shadow:1px 0 0 var(--border);}
 .payroll-table thead th:first-child{background:#202124;z-index:3;}
+/* finance */
+.pl-section{margin:14px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;}
+.pl-section:first-child{margin-top:0;}
+.row-line.total.neg-total .money{color:#f19aa0;}
+.funds-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
+.funds-table th.num{text-align:right;}
+.sa-form{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
+.sa-form input{width:110px;}
+.sa-form select{width:auto;}

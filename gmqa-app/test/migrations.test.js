@@ -89,7 +89,7 @@ test('audit log records the actor and constraints reject bad data', async () => 
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -180,4 +180,24 @@ test('004 turns weekly payroll sheets into daily records and rate history', asyn
   await assert.rejects(driver.query("insert into attendance (employee_id, work_date, code) values (1, '2026-10-01', 'X')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_adjustments (employee_id, adj_date, kind, amount, note) values (1, '2026-10-01', 'deduction', -5, 'x')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_payouts (payout_date, period_start, period_end, side, amount) values ('2026-10-04', '2026-10-05', '2026-09-28', 'cash', 100)"), /check/i);
+});
+
+test('005 adds bill funds, set-asides and bill payments', async () => {
+  const driver = await newDriver();
+  await migrate(driver, quiet);
+  const funds = await all(driver, 'select name, frequency, due_month, amount from funds order by sort_order');
+  assert.deepEqual(funds.map(f => [f.name, f.frequency]), [
+    ['Meralco', 'monthly'], ['Maynilad', 'monthly'], ['Internet', 'monthly'], ['Rent', 'monthly'], ['Business permit', 'yearly'],
+  ]);
+  assert.ok(funds.every(f => f.amount === 0), 'amounts are left for the owner to fill in');
+  const meralco = (await one(driver, "select id from funds where name = 'Meralco'")).id;
+
+  await assert.rejects(driver.query("insert into funds (name, frequency, due_day) values ('Permit 2', 'yearly', 20)"), /check/i);
+  await assert.rejects(driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount) values ($1, '2026-10-01', 'cash', 0)", [meralco]), /check/i);
+  await assert.rejects(driver.query(`insert into bill_payments (fund_id, paid_on, amount, from_fund, from_drawer, drawer_side)
+    values ($1, '2026-10-25', 8000, 6000, 1000, 'cash')`, [meralco]), /check/i, 'parts must add up to the bill');
+  await assert.rejects(driver.query(`insert into bill_payments (fund_id, paid_on, amount, from_fund, from_drawer, drawer_side)
+    values ($1, '2026-10-25', 8000, 6000, 2000, null)`, [meralco]), /check/i, 'a drawer top-up needs a side');
+  await driver.query(`insert into bill_payments (fund_id, paid_on, amount, from_fund, from_drawer, drawer_side)
+    values ($1, '2026-10-25', 8000, 8000, 0, null)`, [meralco]);
 });

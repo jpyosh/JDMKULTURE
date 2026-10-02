@@ -51,6 +51,11 @@ function mount(el) {
         <div class="card"><h2>GCash</h2><div data-gcash></div></div>
         <div class="card"><h2>Variance</h2><div data-variance></div></div>
       </div>
+    </div>
+    <div class="card">
+      <h2>Set aside for bills</h2>
+      <p class="hint">Take each bill's weekly share out of the drawer and put it in its envelope/account. It is removed from the expected drawer above.</p>
+      <div class="table-wrap"><table class="simple-table funds-table" data-funds></table></div>
     </div>`;
 
   $('[data-date]', root).addEventListener('change', e => { if (e.target.value) setDate(e.target.value); });
@@ -66,9 +71,10 @@ async function show() { await setDate(current.date); }
 async function setDate(date) {
   current.date = date;
   $('[data-date]', root).value = date;
-  const day = await api('GET', `/days/${date}`);
+  const [day, funds] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`)]);
   if (date !== current.date) return;
   current.day = day;
+  current.funds = funds;
   render();
 }
 
@@ -123,7 +129,36 @@ function render() {
     toast('Expense deleted');
     render();
   }));
+  renderFunds();
   renderMath();
+}
+
+function renderFunds() {
+  const off = locked() ? 'disabled' : '';
+  $('[data-funds]', root).innerHTML = `<thead><tr><th>Fund</th><th class="num">This week</th><th>Set aside today</th><th></th></tr></thead>
+    <tbody>${current.funds.map(f => `<tr data-fund="${f.id}">
+      <td><b>${esc(f.name)}</b><div class="muted small">balance ${peso(f.balance)} · next bill ${esc(f.nextDue || '—')}</div></td>
+      <td class="num money">${f.amount ? `${peso(f.weeklyTarget)}<div class="muted small">${f.remainingThisWeek ? `${peso(f.remainingThisWeek)} left` : 'done ✓'}</div>` : '<span class="muted small">amount not set</span>'}</td>
+      <td>${f.setAsidesOnDate.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'}
+        ${off ? '' : `<button class="icon-btn" type="button" data-del-sa="${x.id}" title="Undo">✕</button>`}</span>`).join('') || '<span class="muted small">—</span>'}</td>
+      <td class="sa-form"><input type="number" min="0.01" step="0.01" data-sa-amount placeholder="${f.remainingThisWeek || 'Amount'}" ${off}>
+        <select data-sa-side ${off}><option value="cash">Cash</option><option value="gcash">GCash</option></select>
+        <button class="btn ghost small" type="button" data-sa-add ${off}>Set aside</button></td>
+    </tr>`).join('')}</tbody>`;
+  $$('[data-sa-add]', root).forEach(btn => btn.addEventListener('click', () => busy(btn, async () => {
+    const tr = btn.closest('tr');
+    const amount = Number($('[data-sa-amount]', tr).value || 0);
+    if (!(amount > 0)) return toast('Enter the amount to set aside', 'error');
+    await api('POST', `/funds/${tr.dataset.fund}/set-asides`, { date: current.date, side: $('[data-sa-side]', tr).value, amount });
+    toast('Set aside recorded');
+    await setDate(current.date);
+  })));
+  $$('[data-del-sa]', root).forEach(btn => btn.addEventListener('click', async () => {
+    if (!window.confirm('Undo this set-aside? The money goes back into the expected drawer.')) return;
+    await api('DELETE', `/fund-set-asides/${btn.dataset.delSa}`);
+    toast('Set-aside removed');
+    await setDate(current.date);
+  }));
 }
 
 // Live preview using the values typed in, with the same formula as the server (lib/calc.js).
@@ -134,8 +169,10 @@ function renderMath() {
   const commissionGcash = Math.min(num('commission_gcash_paid'), s.commission);
   const commissionCash = s.commission - commissionGcash;
   const tips = s.jobTips + num('gcash_tips_to_distribute');
-  const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses - s.payrollCash;
-  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips - s.payrollGcash;
+  const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses
+    - s.payrollCash - s.setAsideCash - s.billTopUpCash;
+  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips
+    - s.payrollGcash - s.setAsideGcash - s.billTopUpGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
 
   $('[data-cash]', root).innerHTML =
@@ -144,6 +181,8 @@ function renderMath() {
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
     + (s.payrollCash ? line('− Payroll paid out', peso(s.payrollCash)) : '')
+    + (s.setAsideCash ? line('− Set aside to funds', peso(s.setAsideCash)) : '')
+    + (s.billTopUpCash ? line('− Bill shortfall from drawer', peso(s.billTopUpCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
     line('GCash received today', peso(s.gcashReceived))
@@ -152,6 +191,8 @@ function renderMath() {
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
     + (s.payrollGcash ? line('− Payroll paid out', peso(s.payrollGcash)) : '')
+    + (s.setAsideGcash ? line('− Set aside to funds', peso(s.setAsideGcash)) : '')
+    + (s.billTopUpGcash ? line('− Bill shortfall from GCash', peso(s.billTopUpGcash)) : '')
     + line('Expected GCash', peso(expectedGcash), 'total');
   const notes = [];
   if (s.paidInAdvance) notes.push(`${peso(s.paidInAdvance)} received today is for running jobs that are not done yet. It is in today's count but becomes a sale when the job is done.`);

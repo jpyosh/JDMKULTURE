@@ -50,6 +50,18 @@ Auth, deployed on Vercel.
 - Closing a day locks it for staff. The owner can still edit or reopen it.
 - Every insert/update/delete is written to `audit_log` with who did it (Settings → Change history).
 
+## Finance and bill funds (owner)
+
+- **Finance** shows any period (week, month, custom): sales by department, commission, net sales,
+  payroll (net pay for work done in the period), bills paid, drawer expenses and **net profit**,
+  plus a money in/out view of the drawer.
+- **Bill funds** (Meralco, Maynilad, Internet, Rent, Business permit, or any you add) each have a usual
+  amount and due date. The system works out a **weekly target** = what is still needed ÷ weeks left.
+- At EOD, the supervisor sets aside each fund's share ("Set aside for bills"); it leaves the drawer.
+- When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that
+  day's drawer and shows on that day's EOD.
+- Set-asides are not costs. The cost is counted when the bill is paid.
+
 ## Project layout
 
 ```

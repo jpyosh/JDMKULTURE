@@ -372,3 +372,65 @@ test('tint & PPF jobs have their own JO series and board', async () => {
   assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: '2026-10-10', department: 'bakery', vehicle_class: 'S', items: [{ name: 'x', price: 1 }] })).status, 400);
   assert.equal((await api(STAFF, 'GET', '/jobs/active?department=carwash')).status, 400, 'carwash has no running board');
 });
+
+test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month in/out summary', async () => {
+  const funds = await ok(api(STAFF, 'GET', '/funds?date=2026-11-02'));
+  assert.deepEqual(funds.map(f => f.name), ['Meralco', 'Maynilad', 'Internet', 'Rent', 'Business permit']);
+  const meralco = funds.find(f => f.name === 'Meralco');
+  assert.equal((await api(STAFF, 'PATCH', `/funds/${meralco.id}`, { amount: 8000 })).status, 403);
+  await ok(api(OWNER, 'PATCH', `/funds/${meralco.id}`, { amount: 8000, due_day: 25 }));
+
+  // Supervisor sets money aside at EOD: it leaves the drawer that day.
+  const sa = await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-02', side: 'cash', amount: 1500 }));
+  const day2 = (await ok(api(STAFF, 'GET', '/days/2026-11-02'))).summary;
+  assert.equal(day2.setAsideCash, 1500);
+  assert.equal(day2.expectedCash, -1500);
+  let status = (await ok(api(STAFF, 'GET', '/funds?date=2026-11-02'))).find(f => f.id === meralco.id);
+  assert.equal(status.balance, 1500);
+  assert.equal(status.setAsideThisWeek, 1500);
+  assert.equal(status.nextDue, '2026-11-25');
+  assert.equal(status.weeklyTarget, Math.ceil(8000 / 4));
+
+  await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-09', side: 'gcash', amount: 4500 }));
+  const extra = await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-09', side: 'cash', amount: 1 }));
+  await ok(api(STAFF, 'DELETE', `/fund-set-asides/${extra.id}`));
+  await ok(api(STAFF, 'POST', '/days/2026-11-03/close'));
+  assert.equal((await api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-03', side: 'cash', amount: 100 })).status, 403);
+  assert.ok(sa.id);
+
+  // The bill: 8000 due, 6000 in the fund, so 2000 comes from that day's drawer.
+  assert.equal((await api(STAFF, 'POST', `/funds/${meralco.id}/bills`, { date: '2026-11-25', amount: 8000, drawer_side: 'cash' })).status, 403);
+  assert.equal((await api(OWNER, 'POST', `/funds/${meralco.id}/bills`, { date: '2026-11-25', amount: 8000 })).status, 400, 'shortfall needs a drawer side');
+  const bill = await ok(api(OWNER, 'POST', `/funds/${meralco.id}/bills`, { date: '2026-11-25', amount: 8000, drawer_side: 'cash', note: 'Oct bill' }));
+  assert.deepEqual([bill.from_fund, bill.from_drawer, bill.drawer_side], [6000, 2000, 'cash']);
+  assert.equal((await ok(api(STAFF, 'GET', '/days/2026-11-25'))).summary.billTopUpCash, 2000);
+  status = (await ok(api(STAFF, 'GET', '/funds?date=2026-11-26'))).find(f => f.id === meralco.id);
+  assert.equal(status.balance, 0);
+  assert.equal(status.nextDue, '2026-12-25');
+
+  // Some trading in November.
+  const premium = await catalogItem('Premium Wash');
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2026-11-10', vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(STAFF, 'POST', '/days/2026-11-10/expenses', { side: 'cash', description: 'Soap', amount: 150 }));
+  const worker = await ok(api(OWNER, 'POST', '/employees', { name: 'Finance Tester', rate_per_day: 500, construction_rate: 0 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/2026-11-10`, { code: 'P' }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/2026-11-11`, { code: 'P' }));
+  await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: '2026-11-15', period_start: '2026-11-09', period_end: '2026-11-15', side: 'cash', amount: 1000 }));
+
+  assert.equal((await api(STAFF, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30')).status, 403);
+  const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30'));
+  assert.deepEqual(f.income, {
+    departments: { carwash: 600, detailing: 0, tint_ppf: 0 }, gross: 600, commission: 100, net: 500, receivables: 0,
+  });
+  assert.equal(f.opex.payroll, 1000);
+  assert.deepEqual(f.opex.bills, [{ fund_id: meralco.id, name: 'Meralco', amount: 8000 }]);
+  assert.equal(f.opex.drawerExpenses, 150);
+  assert.equal(f.opex.total, 1000 + 8000 + 150);
+  assert.equal(f.netProfit, 500 - 9150);
+  assert.deepEqual(f.cashflow, {
+    cashIn: 600, gcashIn: 0, commissionPaid: 100, drawerExpenses: 150, payrollPayouts: 1000,
+    setAsides: 6000, billTopUps: 2000, net: 600 - 100 - 150 - 1000 - 6000 - 2000,
+  });
+  const fundRow = f.funds.find(x => x.id === meralco.id);
+  assert.deepEqual([fundRow.setAside, fundRow.paid, fundRow.balance], [6000, 8000, 0]);
+});
