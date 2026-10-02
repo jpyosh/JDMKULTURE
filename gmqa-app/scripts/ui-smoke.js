@@ -21,7 +21,8 @@ async function launch() {
 (async () => {
   const { server, url } = await start(0);
   const browser = await launch();
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  // Pinned to shop time: the old payroll bug only appeared in UTC+8.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, timezoneId: 'Asia/Manila' });
   const problems = [];
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
@@ -230,6 +231,15 @@ async function launch() {
       await page.fill('#view-payroll [data-week]', '2026-09-16');
       await page.locator('#view-payroll [data-week]').dispatchEvent('change');
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-14');
+      // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
+      await page.fill('#view-payroll [data-week]', '2026-09-28');
+      await page.locator('#view-payroll [data-week]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-28');
+      const heads = (await page.locator('#view-payroll thead .attendance-day').allTextContents()).map(t => t.replace(/s+/g, ' ').trim());
+      assert.deepEqual(heads, ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
+      await page.fill('#view-payroll [data-week]', '2026-09-14');
+      await page.locator('#view-payroll [data-week]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-week]').value === '2026-09-14');
       const first = page.locator('#view-payroll tbody tr').first();
       await first.locator('[data-day="2026-09-14"]').selectOption('P');
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-total]').textContent !== '₱0.00');
@@ -252,6 +262,8 @@ async function launch() {
     await step('staff: limited nav, closed day is read-only', async () => {
       await page.click('#signout-btn');
       await page.waitForSelector('#login-form:not([hidden])');
+      const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
+      assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(), ['01Carwash', '02Detailing', '03Tint & PPF', '04EOD Closing', '05Pricing Matrix']);
       await page.click('#nav [data-view="carwash"]');
@@ -261,6 +273,7 @@ async function launch() {
       assert.equal(await daily.locator('[data-entry-card]').isHidden(), true);
       assert.equal(await daily.locator('[data-act="void"]').count(), 0);
       await page.click('#nav [data-view="pricing"]');
+      await page.waitForSelector('#view-pricing tbody tr[data-id]');
       assert.equal(await page.locator('#view-pricing tbody input').count(), 0, 'staff sees prices read-only');
       await page.goto(`${url}/#settings`);
       await page.waitForSelector('#view-carwash.active');

@@ -104,7 +104,11 @@ async function init() {
 
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') {
+      // Wipe every screen so the next person to sign in never sees the previous user's data.
       state.user = null;
+      state.catalog = null;
+      mounted.clear();
+      document.querySelectorAll('main .view').forEach(view => { view.innerHTML = ''; view.classList.remove('active'); });
       showGate({ login: true });
     }
   });
