@@ -612,3 +612,6 @@ tr.inactive td{opacity:.5;}
 .running-table .items-cell{max-width:220px;}
 .running-table .row-actions .actions{display:grid;grid-template-columns:auto auto;justify-content:end;gap:4px;min-width:0;}
 .running-table .row-actions .btn.small{text-align:center;}
+.help-card summary{cursor:pointer;font-family:'Oswald',sans-serif;font-size:15px;}
+.help-card ul{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.6;}
+.help-card b{color:var(--text);}

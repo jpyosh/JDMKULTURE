@@ -223,6 +223,16 @@ async function launch() {
       await page.fill('#view-reports [data-end]', '2026-09-30');
       await page.locator('#view-reports [data-end]').dispatchEvent('change');
       await page.waitForSelector('#view-reports tr.weekly-total');
+      // No hidden filters: payment method and paid status are plain columns, and there is a reading guide.
+      assert.equal(await page.locator('#view-reports select').count(), 0, 'no filter dropdowns');
+      const headers = (await page.locator('#view-reports thead th').allTextContents()).map(t => t.trim());
+      for (const h of ['Cash received', 'GCash received', 'Unpaid', 'Carwash', 'Detailing', 'Tint & PPF', 'Total sales', 'Profit']) {
+        assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
+      }
+      assert.match(await page.locator('#view-reports [data-help]').textContent(), /How to read/);
+      const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
+      assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
+        'everything sold in September was also paid in September');
       await shot('08-reports');
     });
 
