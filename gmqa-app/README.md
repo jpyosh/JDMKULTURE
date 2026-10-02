@@ -62,6 +62,18 @@ Auth, deployed on Vercel.
   day's drawer and shows on that day's EOD.
 - Set-asides are not costs. The cost is counted when the bill is paid.
 
+## Parts & inventory
+
+- **Parts & Inventory** tab: SKU, price, commission per unit, stock and a reorder level (low-stock warning).
+- Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
+  counter ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
+- Selling takes stock out and freezes the part's average cost on the line; removing the part or
+  voiding the job puts the stock back. Selling more than is in stock is blocked.
+- Owner only: add/edit parts, **Receive** deliveries (updates the weighted average cost), **Adjust**
+  counts (with a reason), stock history. Every stock change is recorded.
+- Costs and margins are owner-only: staff never receive cost fields from the API.
+- Finance subtracts the cost of parts sold before net profit.
+
 ## Project layout
 
 ```

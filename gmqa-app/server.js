@@ -3,6 +3,7 @@ const path = require('path');
 const { db } = require('./lib/db');
 const { createAuth } = require('./lib/auth');
 const { errorHandler, HttpError } = require('./lib/http');
+const { redactCostsForStaff } = require('./lib/redact');
 
 // verifyToken/sandbox are only passed by tests and scripts/sandbox.js, never in production.
 function createApp({ verifyToken, sandbox = false } = {}) {
@@ -24,6 +25,7 @@ function createApp({ verifyToken, sandbox = false } = {}) {
 
   // ---- everything below requires a signed-in, authorised user
   app.use('/api', authenticate);
+  app.use('/api', redactCostsForStaff);
   app.use('/api', require('./routes/admin').router);
   app.use('/api', require('./routes/catalog').router);
   app.use('/api', require('./routes/jobs').router);
@@ -31,6 +33,7 @@ function createApp({ verifyToken, sandbox = false } = {}) {
   app.use('/api', require('./routes/reports').router);
   app.use('/api', require('./routes/payroll').router);
   app.use('/api', require('./routes/finance').router);
+  app.use('/api', require('./routes/parts').router);
   app.use('/api', () => { throw new HttpError(404, 'Unknown API endpoint'); });
 
   app.use(errorHandler);

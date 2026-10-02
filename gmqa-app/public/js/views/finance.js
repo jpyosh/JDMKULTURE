@@ -88,6 +88,7 @@ function render(s, fundStatus) {
     ${line('<b>Gross sales</b>', `<b>${peso(i.gross)}</b>`)}
     ${line('− Commission', peso(i.commission))}
     ${line('<b>Net sales</b>', `<b>${peso(i.net)}</b>`)}
+    ${i.partsSales ? line(`− Cost of parts sold <span class="muted small">(${peso(i.partsSales)} of parts sold)</span>`, peso(i.partsCost)) : ''}
     <div class="pl-section">Operating expenses</div>
     ${line('Payroll (net pay for work in this period)', peso(o.payroll))}
     ${o.bills.map(b => line(`Bill: ${esc(b.name)}`, peso(b.amount))).join('')}

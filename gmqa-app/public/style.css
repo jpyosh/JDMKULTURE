@@ -633,3 +633,11 @@ tr.inactive td{opacity:.5;}
 .sa-form{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
 .sa-form input{width:110px;}
 .sa-form select{width:auto;}
+/* parts */
+.kind-pill.part{background:#16231a;color:#9be0a5;}
+.item-chip.part{border-color:#2f5d3a;}
+.qty-cell{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;}
+.qty-cell input{width:64px;}
+.parts-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
+.parts-table th.num{text-align:right;}
+.parts-table .actions{min-width:0;}

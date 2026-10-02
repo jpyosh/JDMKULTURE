@@ -47,7 +47,8 @@ async function launch() {
       await shot('00-gate');
       await signIn('owner@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
-        ['01Carwash', '02Detailing', '03Tint & PPF', '04EOD Closing', '05Pricing Matrix', '06Sales Reports', '07Finance', '08Payroll', '09Settings']);
+        ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix', '07Sales Reports',
+          '08Finance', '09Payroll', '10Settings']);
     });
 
     const daily = page.locator('#view-carwash');
@@ -62,6 +63,7 @@ async function launch() {
       const editor = daily.locator('[data-editor]');
       await editor.locator('[data-f="vehicle_class"]').selectOption('M');
       await editor.locator('[data-f="plate"]').fill('smk 123');
+      assert.equal(await editor.locator('[data-add="part"]').count(), 1, 'parts can be added to carwash jobs');
       await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
       await editor.locator('[data-add="addon"]').selectOption({ label: 'Engine Wash' });
       await editor.locator('[data-add="addon"]').selectOption({ label: 'Bac 2 Zero' });
@@ -226,6 +228,47 @@ async function launch() {
       await shot('07b-pricing-tint');
     });
 
+    await step('parts: add a part, receive stock, sell over the counter', async () => {
+      await page.click('#nav [data-view="parts"]');
+      const parts = page.locator('#view-parts');
+      await parts.locator('[data-new-part]').click();
+      await page.fill('#modal [data-p="sku"]', 'OIL-1L');
+      await page.fill('#modal [data-p="name"]', 'Engine oil 1L');
+      await page.fill('#modal [data-p="price"]', '550');
+      await page.fill('#modal [data-p="reorder_level"]', '2');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Part added/);
+      const row = parts.locator('[data-parts] tr', { hasText: 'Engine oil 1L' });
+      await row.waitFor();
+      assert.match(await row.textContent(), /Low/, 'no stock yet: flagged low');
+
+      await row.locator('[data-act="receive"]').click();
+      await page.fill('#modal [data-r="quantity"]', '12');
+      await page.fill('#modal [data-r="unit_cost"]', '300');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock received/);
+      await page.waitForFunction(() => /\b12\b/.test([...document.querySelectorAll('#view-parts [data-parts] tr')]
+        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent || ''));
+
+      await parts.locator('[data-counter-date]').fill('2026-09-21');
+      await parts.locator('[data-counter-date]').dispatchEvent('change');
+      await parts.locator('[data-new-sale]').click();
+      await page.waitForSelector('#modal[open] [data-add="part"]');
+      assert.equal(await page.locator('#modal [data-add="service"]').count(), 0, 'no services at the parts counter');
+      await page.selectOption('#modal [data-add="part"]', { index: 1 });
+      await page.fill('#modal [data-l="quantity"]', '2');
+      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱1,100\.00/);
+      await page.click('#modal [data-save]');
+      await expectToast(/PC-092126-001 added/);
+      const sale = parts.locator('[data-counter] tr', { hasText: 'PC-092126-001' });
+      await sale.waitFor();
+      assert.match(await sale.textContent(), /Paid/, 'counter sales default to paid (cash-and-carry)');
+      assert.doesNotMatch(await sale.textContent(), /Unpaid/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
+        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('10'));
+      await shot('07c-parts');
+    });
+
     await step('sales report', async () => {
       await page.click('#nav [data-view="reports"]');
       await page.fill('#view-reports [data-start]', '2026-09-01');
@@ -361,7 +404,7 @@ async function launch() {
       const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
       assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
-      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['01Carwash', '02Detailing', '03Tint & PPF', '04EOD Closing', '05Pricing Matrix']);
+      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix']);
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
@@ -371,6 +414,13 @@ async function launch() {
       await page.click('#nav [data-view="pricing"]');
       await page.waitForSelector('#view-pricing tbody tr[data-id]');
       assert.equal(await page.locator('#view-pricing tbody input').count(), 0, 'staff sees prices read-only');
+      // Staff can sell parts but do not see costs.
+      await page.click('#nav [data-view="parts"]');
+      await page.locator('#view-parts [data-counter-date]').fill('2026-09-21');
+      await page.locator('#view-parts [data-counter-date]').dispatchEvent('change');
+      await page.locator('#view-parts [data-counter] tr', { hasText: 'PC-092126-001' }).waitFor();
+      assert.equal(await page.locator('#view-parts [data-new-part]').isVisible(), false);
+      assert.equal(await page.locator('#view-parts thead th', { hasText: /cost/i }).count(), 0, 'staff must not see part costs');
       await page.goto(`${url}/#settings`);
       await page.waitForSelector('#view-carwash.active');
       await shot('11-staff-daily');

@@ -163,7 +163,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   ]);
 
   // Same per-day rules as EOD, added up over the period.
-  const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0,
+  const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
     cashIn: 0, gcashIn: 0, drawerExpenses: 0 };
   for (const day of dates) {
     const s = daySummary({
@@ -175,6 +175,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     t.gross += s.collected;
     t.commission += s.commission;
     t.receivables += s.receivables;
+    t.partsSales += s.partsSales;
+    t.partsCost += s.partsCost;
     t.cashIn += s.cashReceived;
     t.gcashIn += s.gcashReceived;
     t.drawerExpenses += s.expenses;
@@ -182,7 +184,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   const r = n => round2(n);
   const income = {
     departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, r(t.departments[k])])),
-    gross: r(t.gross), commission: r(t.commission), net: r(t.gross - t.commission), receivables: r(t.receivables),
+    gross: r(t.gross), commission: r(t.commission), net: r(t.gross - t.commission),
+    partsSales: r(t.partsSales), partsCost: r(t.partsCost), receivables: r(t.receivables),
   };
 
   const billsByFund = [];
@@ -210,7 +213,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     - cashflow.payrollPayouts - cashflow.setAsides - cashflow.billTopUps);
 
   res.json({
-    start, end, income, opex, netProfit: r(income.net - opex.total), cashflow,
+    start, end, income, opex, netProfit: r(income.net - income.partsCost - opex.total), cashflow,
     funds: funds.map(f => ({
       id: f.id, name: f.name, amount: f.amount, balance: f.balance, active: f.active,
       setAside: sumOf(setAsides.filter(s => s.fund_id === f.id)),

@@ -14,10 +14,13 @@
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
 //     cash in that day's drawer, while its sale is booked on the sale date.
 
+// catalog: whether the department sells Pricing Matrix services/add-ons (the parts counter sells
+// inventory parts only, and needs no vehicle).
 const DEPARTMENTS = [
-  { key: 'carwash', label: 'Carwash', prefix: 'CW', running: false },
-  { key: 'detailing', label: 'Detailing', prefix: 'DT', running: true },
-  { key: 'tint_ppf', label: 'Tint & PPF', prefix: 'TP', running: true },
+  { key: 'carwash', label: 'Carwash', prefix: 'CW', running: false, catalog: true },
+  { key: 'detailing', label: 'Detailing', prefix: 'DT', running: true, catalog: true },
+  { key: 'tint_ppf', label: 'Tint & PPF', prefix: 'TP', running: true, catalog: true },
+  { key: 'parts', label: 'Parts counter', prefix: 'PC', running: false, catalog: false },
 ];
 const DEPARTMENT_KEYS = DEPARTMENTS.map(d => d.key);
 const department = key => DEPARTMENTS.find(d => d.key === key) || null;
@@ -38,7 +41,9 @@ function jobTotals(job) {
   const commission = sum(items, i => i.commission);
   const discount = round2(job.discount);
   const total = round2(subtotal - discount);
-  return { subtotal, discount, total, commission, net: round2(total - commission) };
+  // Cost of parts sold: the per-unit cost frozen on each part line.
+  const cost = sum(items.filter(i => i.kind === 'part'), i => (Number(i.unit_cost) || 0) * (Number(i.quantity) || 1));
+  return { subtotal, discount, total, commission, net: round2(total - commission), cost };
 }
 
 const isCounted = job => !job.voided_at && Boolean(job.vehicle_class || (job.items && job.items.length));
@@ -81,6 +86,11 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 
   // Tips arrive in GCash and are passed on to the crew, so they net to zero in the GCash count.
   const jobTips = sum(received, j => j.tip_gcash);
+
+  // Parts sold in today's paid sales (any department), and what they cost.
+  const paidSales = sales.filter(j => j.payment_received);
+  const partsSales = sum(paidSales.flatMap(j => j.items || []).filter(i => i.kind === 'part'), i => i.price);
+  const partsCost = sum(paidSales, j => j.totals.cost);
   const otherTips = round2(meta.gcash_tips_to_distribute);
   const tips = round2(jobTips + otherTips);
 
@@ -108,7 +118,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
     paidJobs: sales.filter(j => j.payment_received).length,
     unpaidJobs: sales.filter(j => !j.payment_received).length,
     departments,
-    collected, receivables, commission,
+    collected, receivables, commission, partsSales, partsCost,
     net: round2(collected - commission),
     cashReceived, gcashReceived, paidInAdvance, paidEarlier,
     cashExpenses, gcashExpenses, expenses: round2(cashExpenses + gcashExpenses),

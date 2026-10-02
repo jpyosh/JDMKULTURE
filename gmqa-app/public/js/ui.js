@@ -102,9 +102,10 @@ export async function busy(button, fn) {
 
 // Mirrors DEPARTMENTS in lib/calc.js.
 export const DEPARTMENTS = [
-  { key: 'carwash', label: 'Carwash', running: false },
-  { key: 'detailing', label: 'Detailing', running: true },
-  { key: 'tint_ppf', label: 'Tint & PPF', running: true },
+  { key: 'carwash', label: 'Carwash', running: false, catalog: true },
+  { key: 'detailing', label: 'Detailing', running: true, catalog: true },
+  { key: 'tint_ppf', label: 'Tint & PPF', running: true, catalog: true },
+  { key: 'parts', label: 'Parts counter', running: false, catalog: false },
 ];
 export const departmentOf = key => DEPARTMENTS.find(d => d.key === key) || DEPARTMENTS[0];
 
@@ -112,7 +113,10 @@ export const state = { user: null, catalog: null };
 export const isOwner = () => state.user?.role === 'owner';
 
 export async function loadCatalog(force = false) {
-  if (!state.catalog || force) state.catalog = await api('GET', '/catalog');
+  if (!state.catalog || force) {
+    const [catalog, parts] = await Promise.all([api('GET', '/catalog'), api('GET', '/parts')]);
+    state.catalog = { ...catalog, parts };
+  }
   return state.catalog;
 }
 export const activeClasses = () => state.catalog.classes.filter(c => c.active);

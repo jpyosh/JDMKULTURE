@@ -73,6 +73,7 @@ test('jobs: line items, frozen prices, JO numbers, repricing, validation', async
   assert.deepEqual(job.items.map(i => [i.kind, i.name, i.price, i.commission]), [
     ['service', 'Premium Wash', 650, 100], ['addon', 'Engine Wash', 800, 150], ['custom', 'Tire black', 100, 20],
   ]);
+  // Staff response: no cost field (costs are owner-only).
   assert.deepEqual(job.totals, { subtotal: 1550, discount: 0, total: 1550, commission: 270, net: 1280 });
 
   // Changing the matrix does not touch the existing job.
@@ -164,7 +165,7 @@ test('closing a day locks it for staff until the owner reopens it', async () => 
 test('range report sums days with the same rule', async () => {
   const r = await ok(api(OWNER, 'GET', '/reports/range?start=2026-10-02&end=2026-10-02'));
   assert.deepEqual(r.days.map(d => [d.date, d.collected, d.commission, d.expenses, d.profit]), [['2026-10-02', 1100, 300, 150, 650]]);
-  assert.deepEqual(r.days[0].departments, { carwash: 1100, detailing: 0, tint_ppf: 0 });
+  assert.deepEqual(r.days[0].departments, { carwash: 1100, detailing: 0, tint_ppf: 0, parts: 0 });
   assert.equal(r.totals.profit, 650);
   assert.equal((await api(OWNER, 'GET', '/reports/range?start=2026-10-05&end=2026-10-01')).status, 400);
 });
@@ -339,7 +340,7 @@ test('running job (detailing): carried over until done and paid, counted on the 
   assert.equal(s14.gcashReceived, 4500);
 
   const report = await ok(api(OWNER, 'GET', '/reports/range?start=2026-10-10&end=2026-10-14'));
-  assert.deepEqual(report.days.find(d => d.date === '2026-10-14').departments, { carwash: 0, detailing: 4500, tint_ppf: 0 });
+  assert.deepEqual(report.days.find(d => d.date === '2026-10-14').departments, { carwash: 0, detailing: 4500, tint_ppf: 0, parts: 0 });
   assert.equal(report.totals.departments.detailing, 4500);
 });
 
@@ -420,7 +421,8 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   assert.equal((await api(STAFF, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30')).status, 403);
   const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30'));
   assert.deepEqual(f.income, {
-    departments: { carwash: 600, detailing: 0, tint_ppf: 0 }, gross: 600, commission: 100, net: 500, receivables: 0,
+    departments: { carwash: 600, detailing: 0, tint_ppf: 0, parts: 0 }, gross: 600, commission: 100, net: 500,
+    partsSales: 0, partsCost: 0, receivables: 0,
   });
   assert.equal(f.opex.payroll, 1000);
   assert.deepEqual(f.opex.bills, [{ fund_id: meralco.id, name: 'Meralco', amount: 8000 }]);
@@ -433,4 +435,81 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   });
   const fundRow = f.funds.find(x => x.id === meralco.id);
   assert.deepEqual([fundRow.setAside, fundRow.paid, fundRow.balance], [6000, 8000, 0]);
+});
+
+test('parts: inventory, average cost, selling on jobs and over the counter, stock never negative', async () => {
+  // Owner sets up a part; staff can see it but not change it.
+  assert.equal((await api(STAFF, 'POST', '/parts', { name: 'Nope', price: 1 })).status, 403);
+  const part = await ok(api(OWNER, 'POST', '/parts', { sku: 'WB-18', name: 'Wiper blade 18in', unit: 'pc', price: 450, commission: 20, reorder_level: 3 }));
+  assert.deepEqual([part.stock, part.avg_cost, part.low], [0, 0, true]);
+  assert.equal((await api(OWNER, 'POST', '/parts', { sku: 'wb-18', name: 'Another', price: 1 })).status, 409, 'SKU must be unique');
+
+  // Deliveries update the weighted average cost.
+  assert.equal((await api(STAFF, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200 })).status, 403);
+  await ok(api(OWNER, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200, supplier: 'Bosch PH' }));
+  const received = await ok(api(OWNER, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-02', quantity: 10, unit_cost: 260 }));
+  assert.deepEqual([received.stock, received.avg_cost, received.low], [20, 230, false]);
+
+  // Sold on a carwash job: price x quantity, commission per unit, cost frozen at the average.
+  const premium = await catalogItem('Premium Wash');
+  const job = await ok(api(OWNER, 'POST', '/jobs', {
+    job_date: '2026-12-03', vehicle_class: 'S', payment_received: true,
+    items: [{ catalog_item_id: premium.id }, { part_id: part.id, quantity: 2 }],
+  }));
+  const partLine = job.items.find(i => i.kind === 'part');
+  assert.deepEqual([partLine.name, partLine.quantity, partLine.price, partLine.commission, partLine.unit_cost], ['Wiper blade 18in', 2, 900, 40, 230]);
+  assert.deepEqual(job.totals, { subtotal: 1500, discount: 0, total: 1500, commission: 140, net: 1360, cost: 460 });
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 18);
+
+  // Selling more than in stock is blocked; nothing changes.
+  const tooMany = await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', vehicle_class: 'S', items: [{ part_id: part.id, quantity: 19 }] });
+  assert.equal(tooMany.status, 400);
+  assert.match(tooMany.data.error, /Only 18 .*in stock/);
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 18);
+
+  // Removing the part from the job returns it to stock; voiding returns it; restoring takes it again.
+  await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: job.items.find(i => i.kind === 'service').id }] }));
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 20);
+  const counter = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-12-03', department: 'parts', payment_received: true, payment_method: 'GCash', items: [{ part_id: part.id, quantity: 3 }],
+  }));
+  assert.equal(counter.jo_number, 'PC-120326-001');
+  assert.equal(counter.vehicle_class, null, 'counter sales need no vehicle');
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 17);
+  await ok(api(OWNER, 'POST', `/jobs/${counter.id}/void`, { reason: 'Customer returned it' }));
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 20);
+  await ok(api(OWNER, 'POST', `/jobs/${counter.id}/restore`));
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 17);
+  assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', items: [{ catalog_item_id: premium.id }] })).status, 400,
+    'services are not sold at the parts counter');
+
+  // Owner stock count adjustment, with a reason; cannot go below zero.
+  assert.equal((await api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -1 })).status, 400, 'reason required');
+  assert.equal((await api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -100, note: 'count' })).status, 400);
+  const adjusted = await ok(api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -1, note: 'Damaged' }));
+  assert.equal(adjusted.stock, 16);
+  const moves = await ok(api(OWNER, 'GET', `/parts/${part.id}/movements`));
+  assert.deepEqual(moves.map(m => [m.kind, m.quantity]).slice(-3), [['return', 3], ['sale', -3], ['adjust', -1]]);
+
+  // EOD shows the parts counter as its own department; Finance subtracts the cost of parts sold.
+  const eod = (await ok(api(OWNER, 'GET', '/days/2026-12-03'))).summary;
+  assert.equal(eod.departments.parts.collected, 1350);
+  assert.equal(eod.gcashReceived, 1350);
+  const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-12-01&end=2026-12-31'));
+  assert.equal(f.income.partsSales, 1350);
+  assert.equal(f.income.partsCost, 690);
+  assert.equal(f.netProfit, f.income.net - f.income.partsCost - f.opex.total);
+
+  // Costs and margins are owner-only, also in the API (not just hidden on screen).
+  const staffPart = (await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id);
+  assert.equal('avg_cost' in staffPart, false);
+  assert.equal((await ok(api(OWNER, 'GET', '/parts'))).find(p => p.id === part.id).avg_cost, 230);
+  const staffSale = (await ok(api(STAFF, 'GET', '/jobs?date=2026-12-03&department=parts')))[0];
+  assert.equal('cost' in staffSale.totals, false);
+  assert.ok(staffSale.items.every(i => !('unit_cost' in i)));
+  const staffNew = await ok(api(STAFF, 'POST', '/jobs', { job_date: '2026-12-05', department: 'parts', items: [{ part_id: part.id, quantity: 1 }] }));
+  assert.equal('cost' in staffNew.totals, false);
+  const staffDay = (await ok(api(STAFF, 'GET', '/days/2026-12-03'))).summary;
+  assert.equal('partsCost' in staffDay, false);
+  assert.equal((await ok(api(OWNER, 'GET', '/jobs?date=2026-12-03&department=parts')))[0].totals.cost, 690);
 });

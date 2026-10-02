@@ -10,7 +10,7 @@ const JOB_COLUMNS = `id, jo_number, department, job_date, closed_on, paid_on, sa
 async function loadJobs(where, params, q = db) {
   const jobs = await q.many(`select ${JOB_COLUMNS} from jobs where ${where} order by job_date, id`, params);
   if (!jobs.length) return [];
-  const items = await q.many(`select id, job_id, kind, catalog_item_id, name, price, commission, sort_order
+  const items = await q.many(`select id, job_id, kind, catalog_item_id, part_id, quantity, unit_cost, name, price, commission, sort_order
     from job_items where job_id = any($1::bigint[]) order by sort_order, id`, [jobs.map(j => j.id)]);
   const byJob = new Map(jobs.map(j => [j.id, []]));
   for (const item of items) byJob.get(item.job_id)?.push(item);

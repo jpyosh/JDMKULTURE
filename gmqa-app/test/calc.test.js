@@ -12,8 +12,22 @@ function job(fields) {
 }
 const line = (price, commission) => ({ kind: 'service', name: 'x', price, commission });
 
-test('departments are carwash (same-day), detailing and tint_ppf (running)', () => {
-  assert.deepEqual(DEPARTMENTS.map(d => [d.key, d.running]), [['carwash', false], ['detailing', true], ['tint_ppf', true]]);
+test('departments: carwash (same-day), detailing and tint_ppf (running), parts counter (same-day, no catalog)', () => {
+  assert.deepEqual(DEPARTMENTS.map(d => [d.key, d.running, d.catalog]),
+    [['carwash', false, true], ['detailing', true, true], ['tint_ppf', true, true], ['parts', false, false]]);
+});
+
+test('parts: line cost is frozen per unit; cost and parts sales are counted with paid sales', () => {
+  const partLine = { kind: 'part', name: 'Wiper blade', quantity: 2, price: 900, commission: 40, unit_cost: 300 };
+  const counter = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', payment_received: true, items: [partLine] });
+  assert.deepEqual(counter.totals, { subtotal: 900, discount: 0, total: 900, commission: 40, net: 860, cost: 600 });
+  const wash = job({ job_date: '2026-12-01', payment_received: true, items: [line(600, 100), { ...partLine, quantity: 1, price: 450, commission: 20 }] });
+  const unpaid = job({ job_date: '2026-12-01', payment_received: false, items: [{ ...partLine, quantity: 1, price: 450 }] });
+  const s = daySummary({ date: '2026-12-01', jobs: [counter, wash, unpaid] });
+  assert.equal(s.departments.parts.collected, 900, 'counter sale counts on its date without a vehicle');
+  assert.equal(s.departments.carwash.collected, 1050);
+  assert.equal(s.partsSales, 900 + 450, 'parts revenue across departments (paid only)');
+  assert.equal(s.partsCost, 600 + 300, 'cost of parts sold (paid only)');
 });
 
 test('saleDate: carwash counts on its job date; running jobs when both closed and paid', () => {

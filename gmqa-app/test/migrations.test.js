@@ -89,7 +89,7 @@ test('audit log records the actor and constraints reject bad data', async () => 
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -200,4 +200,28 @@ test('005 adds bill funds, set-asides and bill payments', async () => {
     values ($1, '2026-10-25', 8000, 6000, 2000, null)`, [meralco]), /check/i, 'a drawer top-up needs a side');
   await driver.query(`insert into bill_payments (fund_id, paid_on, amount, from_fund, from_drawer, drawer_side)
     values ($1, '2026-10-25', 8000, 8000, 0, null)`, [meralco]);
+});
+
+test('006 adds parts inventory, part line items and the parts counter department', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  await migrate(driver, { ...quiet, to: '005' });
+  const before = await all(driver, 'select id, sale_date from jobs order by id');
+  await migrate(driver, quiet);
+  assert.deepEqual(await all(driver, 'select id, sale_date from jobs order by id'), before, 'sale dates unchanged');
+  assert.equal((await one(driver, 'select count(*)::int n from job_items where quantity <> 1')).n, 0, 'existing lines are quantity 1');
+
+  const part = await one(driver, "insert into parts (sku, name, price, avg_cost, stock) values ('WB-18', 'Wiper blade 18in', 450, 300, 5) returning id");
+  await assert.rejects(driver.query("insert into parts (name) values ('wiper blade 18in')"), /unique/i);
+  await assert.rejects(driver.query('update parts set stock = -1 where id = $1', [part.id]), /check/i, 'stock can never go below zero');
+  await assert.rejects(driver.query("insert into stock_movements (part_id, moved_on, kind, quantity) values ($1, '2026-12-01', 'sale', 2)", [part.id]), /check/i);
+
+  const counter = await one(driver, "insert into jobs (job_date, department, jo_number) values ('2026-12-01', 'parts', 'PC-120126-001') returning id, sale_date");
+  assert.equal(counter.sale_date, '2026-12-01', 'counter sales count on their date like carwash');
+  await assert.rejects(driver.query("insert into jobs (job_date, department, closed_on) values ('2026-12-01', 'parts', '2026-12-01')"), /check/i);
+  await driver.query(`insert into job_items (job_id, kind, part_id, name, quantity, price, commission, unit_cost)
+    values ($1, 'part', $2, 'Wiper blade 18in', 2, 900, 0, 300)`, [counter.id, part.id]);
+  await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price) values ($1, 'part', 'No part id', 1)", [counter.id]), /check/i);
+  await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price, quantity) values ($1, 'custom', 'x', 1, 0)", [counter.id]), /check/i);
 });

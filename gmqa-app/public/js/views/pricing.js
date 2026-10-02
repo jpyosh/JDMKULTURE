@@ -12,7 +12,7 @@ function mount(el) {
       <div class="owner-only header-actions"><button class="btn" type="button" data-save-all>Save changes</button></div>
     </div>
     <div class="segmented" role="tablist">
-      ${DEPARTMENTS.map(d => `<button type="button" role="tab" data-dept-tab="${d.key}">${esc(d.label)}</button>`).join('')}
+      ${DEPARTMENTS.filter(d => d.catalog).map(d => `<button type="button" role="tab" data-dept-tab="${d.key}">${esc(d.label)}</button>`).join('')}
     </div>
     <div class="card">
       <div class="section-header"><h2>Services</h2><button class="btn ghost owner-only" type="button" data-add="service">+ Add service</button></div>
@@ -63,7 +63,7 @@ function render() {
       <tbody>${items.length ? items.map(item => `
         <tr data-id="${item.id}">
           <td class="sticky-name">${owner ? `<input type="text" data-name value="${esc(item.name)}" maxlength="120">` : esc(item.name)}</td>
-          ${owner ? `<td><select data-dept>${DEPARTMENTS.map(d => `<option value="${d.key}" ${d.key === item.department ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select></td>` : ''}
+          ${owner ? `<td><select data-dept>${DEPARTMENTS.filter(d => d.catalog).map(d => `<option value="${d.key}" ${d.key === item.department ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select></td>` : ''}
           ${['price', 'commission'].map(field => classes.map(c => {
             const value = item.prices[c.code]?.[field] ?? 0;
             return `<td class="num">${owner ? `<input type="number" min="0" step="0.01" data-class="${esc(c.code)}" data-field="${field}" value="${value}">` : (value ? value.toLocaleString('en-PH') : '—')}</td>`;

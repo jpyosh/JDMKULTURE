@@ -9,6 +9,7 @@ const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/calc');
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
+const { loadPart, takeStock, returnStock } = require('../lib/inventory');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -53,6 +54,15 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
       const line = existingById.get(Number(input.id));
       if (!line) throw bad('Unknown line item');
       lines.push({ ...line, sort_order: index });
+    } else if (input?.part_id != null) {
+      const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true });
+      const quantity = money(input.quantity ?? 1, 'Quantity', { min: 0.01 });
+      lines.push({
+        kind: 'part', part_id: part.id, catalog_item_id: null, name: part.name, quantity, sort_order: index,
+        price: Math.round(part.price * quantity * 100) / 100,
+        commission: Math.round(part.commission * quantity * 100) / 100,
+        unit_cost: part.avg_cost,
+      });
     } else if (input?.catalog_item_id != null) {
       if (!vehicleClass) throw bad('Choose a vehicle class before adding services or add-ons');
       const row = await q.one(`select i.id, i.kind, i.name, i.department, coalesce(p.price, 0) as price, coalesce(p.commission, 0) as commission
@@ -78,6 +88,9 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
 async function saveLines(q, jobId, lines, existing) {
   const keep = new Set(lines.filter(l => l.id).map(l => l.id));
   const removed = existing.filter(l => !keep.has(l.id)).map(l => l.id);
+  for (const line of existing.filter(l => !keep.has(l.id) && l.kind === 'part')) {
+    await returnStock(q, line.part_id, line.quantity, jobId, 'Removed from job');
+  }
   if (removed.length) await q.query('delete from job_items where id = any($1::bigint[])', [removed]);
   for (const line of lines) {
     if (line.id) {
@@ -85,9 +98,11 @@ async function saveLines(q, jobId, lines, existing) {
         where id = $1 and (sort_order, price, commission) is distinct from ($2::int, $3::numeric, $4::numeric)`,
       [line.id, line.sort_order, line.price, line.commission]);
     } else {
-      await q.query(`insert into job_items (job_id, kind, catalog_item_id, name, price, commission, sort_order)
-        values ($1, $2, $3, $4, $5, $6, $7)`,
-      [jobId, line.kind, line.catalog_item_id, line.name, line.price, line.commission, line.sort_order]);
+      if (line.kind === 'part') await takeStock(q, line.part_id, line.quantity, jobId);
+      await q.query(`insert into job_items (job_id, kind, catalog_item_id, part_id, quantity, unit_cost, name, price, commission, sort_order)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [jobId, line.kind, line.catalog_item_id, line.part_id ?? null, line.quantity ?? 1, line.unit_cost ?? null,
+        line.name, line.price, line.commission, line.sort_order]);
     }
   }
 }
@@ -150,7 +165,7 @@ router.post('/jobs', async (req, res) => {
   const jobId = await db.tx(req.user.email, async q => {
     if (!running) await assertDayOpen(q, jobDate, req.user);
     const fields = await cleanJobFields(q, req.body);
-    if (!fields.vehicle_class) throw bad('Choose a vehicle class');
+    if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
     if (running && fields.payment_received) throw bad('Record payment for this job with "Mark paid" once the customer pays');
     const lines = await buildLines(q, req.body.items || [], fields.vehicle_class, dept);
     if (!lines.length) throw bad('Add at least one service, add-on or custom item');
@@ -270,18 +285,26 @@ router.post('/jobs/:id/unpay', async (req, res) => {
 router.post('/jobs/:id/void', requireOwner, async (req, res) => {
   const jobId = id(req.params.id, 'job');
   const reason = text(req.body.reason, 'Reason', { required: true, max: 200 });
-  const changed = await db.tx(req.user.email, q => q.exec(
-    'update jobs set voided_at = now(), voided_by = $2, void_reason = $3 where id = $1 and voided_at is null',
-    [jobId, req.user.email, reason]));
-  if (!changed) throw notFound('Active job');
+  await db.tx(req.user.email, async q => {
+    const changed = await q.exec('update jobs set voided_at = now(), voided_by = $2, void_reason = $3 where id = $1 and voided_at is null',
+      [jobId, req.user.email, reason]);
+    if (!changed) throw notFound('Active job');
+    for (const line of (await loadJob(jobId, q)).items.filter(l => l.kind === 'part')) {
+      await returnStock(q, line.part_id, line.quantity, jobId, 'Job voided');
+    }
+  });
   res.json(await loadJob(jobId));
 });
 
 router.post('/jobs/:id/restore', requireOwner, async (req, res) => {
   const jobId = id(req.params.id, 'job');
-  const changed = await db.tx(req.user.email, q => q.exec(
-    'update jobs set voided_at = null, voided_by = null, void_reason = null where id = $1 and voided_at is not null', [jobId]));
-  if (!changed) throw notFound('Voided job');
+  await db.tx(req.user.email, async q => {
+    const changed = await q.exec('update jobs set voided_at = null, voided_by = null, void_reason = null where id = $1 and voided_at is not null', [jobId]);
+    if (!changed) throw notFound('Voided job');
+    for (const line of (await loadJob(jobId, q)).items.filter(l => l.kind === 'part')) {
+      await takeStock(q, line.part_id, line.quantity, jobId);
+    }
+  });
   res.json(await loadJob(jobId));
 });
 

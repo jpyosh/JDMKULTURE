@@ -1,6 +1,7 @@
 import { $, api, esc, state, setTokenProvider, toast, ApiError } from './ui.js';
 import carwash from './views/carwash.js';
 import { detailing, tintPpf } from './views/running.js';
+import parts from './views/parts.js';
 import eod from './views/eod.js';
 import pricing from './views/pricing.js';
 import reports from './views/reports.js';
@@ -12,6 +13,7 @@ const VIEWS = [
   { key: 'carwash', label: 'Carwash', module: carwash, roles: ['owner', 'staff'] },
   { key: 'detailing', label: 'Detailing', module: detailing, roles: ['owner', 'staff'] },
   { key: 'tint_ppf', label: 'Tint & PPF', module: tintPpf, roles: ['owner', 'staff'] },
+  { key: 'parts', label: 'Parts & Inventory', module: parts, roles: ['owner', 'staff'] },
   { key: 'eod', label: 'EOD Closing', module: eod, roles: ['owner', 'staff'] },
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
