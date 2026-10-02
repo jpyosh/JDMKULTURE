@@ -3,13 +3,14 @@ const express = require('express');
 const { db } = require('../lib/db');
 const { requireOwner } = require('../lib/auth');
 const { bad, notFound, money, text, oneOf, id, pick } = require('../lib/http');
+const { DEPARTMENT_KEYS } = require('../lib/calc');
 
 const router = express.Router();
 
 async function loadCatalog(q = db) {
   const [classes, items, prices] = await Promise.all([
     q.many('select code, label, sort_order, active from vehicle_classes order by sort_order, code'),
-    q.many('select id, kind, name, sort_order, active from catalog_items where active order by kind desc, sort_order, id'),
+    q.many('select id, kind, department, name, sort_order, active from catalog_items where active order by kind desc, sort_order, id'),
     q.many('select p.item_id, p.vehicle_class, p.price, p.commission from catalog_prices p join catalog_items i on i.id = p.item_id where i.active'),
   ]);
   const byItem = new Map(items.map(item => [item.id, { ...item, prices: {} }]));
@@ -50,11 +51,12 @@ router.get('/catalog', async (req, res) => {
 
 router.post('/catalog', requireOwner, async (req, res) => {
   const kind = oneOf(req.body.kind, ['service', 'addon'], 'kind');
+  const department = oneOf(req.body.department, DEPARTMENT_KEYS, 'Department');
   const name = text(req.body.name, 'Name', { required: true, max: 120 });
   const itemId = await db.tx(req.user.email, async q => {
     const prices = await cleanPrices(q, req.body.prices);
     const { next } = await q.one('select coalesce(max(sort_order), 0) + 10 as next from catalog_items where kind = $1', [kind]);
-    const item = await q.one('insert into catalog_items (kind, name, sort_order) values ($1, $2, $3) returning id', [kind, name, next]);
+    const item = await q.one('insert into catalog_items (kind, department, name, sort_order) values ($1, $2, $3, $4) returning id', [kind, department, name, next]);
     await savePrices(q, item.id, prices);
     return item.id;
   });
@@ -64,11 +66,12 @@ router.post('/catalog', requireOwner, async (req, res) => {
 
 router.patch('/catalog/:id', requireOwner, async (req, res) => {
   const itemId = id(req.params.id);
-  const fields = pick(req.body, ['name', 'sort_order']);
+  const fields = pick(req.body, ['name', 'sort_order', 'department']);
   await db.tx(req.user.email, async q => {
     const existing = await q.one('select id from catalog_items where id = $1 and active', [itemId]);
     if (!existing) throw notFound('Item');
     if ('name' in fields) await q.query('update catalog_items set name = $2 where id = $1', [itemId, text(fields.name, 'Name', { required: true, max: 120 })]);
+    if ('department' in fields) await q.query('update catalog_items set department = $2 where id = $1', [itemId, oneOf(fields.department, DEPARTMENT_KEYS, 'Department')]);
     if ('sort_order' in fields) await q.query('update catalog_items set sort_order = $2 where id = $1', [itemId, Math.trunc(Number(fields.sort_order) || 0)]);
     await savePrices(q, itemId, await cleanPrices(q, req.body.prices));
   });

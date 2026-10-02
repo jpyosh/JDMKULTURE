@@ -1,4 +1,4 @@
-import { $, $$, api, esc, peso, todayLocal, addDays, mondayOf, weekday } from '../ui.js';
+import { $, $$, api, esc, peso, todayLocal, addDays, mondayOf, weekday, DEPARTMENTS } from '../ui.js';
 
 let root;
 
@@ -22,7 +22,7 @@ function mount(el) {
     <div class="weekly-summary" data-summary></div>
     <div class="card">
       <div class="table-wrap"><table class="weekly-table">
-        <thead><tr><th>Date</th><th class="num">Vehicles</th><th class="num">Cash</th><th class="num">GCash</th><th class="num">Collected</th>
+        <thead><tr><th>Date</th><th class="num">Vehicles</th>${DEPARTMENTS.map(d => `<th class="num">${esc(d.label)}</th>`).join('')}<th class="num">Total sales</th>
           <th class="num">Unpaid</th><th class="num">Commission</th><th class="num">Expenses</th><th class="num">Profit</th></tr></thead>
         <tbody data-rows></tbody>
       </table></div>
@@ -54,18 +54,18 @@ async function load() {
   const { days, totals: t } = await api('GET', `/reports/range?start=${start}&end=${end}`);
   $('[data-summary]', root).innerHTML = `
     <div class="weekly-stat"><span class="weekly-stat-label">Vehicles</span><strong>${t.vehicles}</strong><span class="weekly-stat-note">${days.length} trading day${days.length === 1 ? '' : 's'}</span></div>
-    <div class="weekly-stat"><span class="weekly-stat-label">Collected</span><strong>${peso(t.collected)}</strong><span class="weekly-stat-note">Cash ${peso(t.cashCollected)} · GCash ${peso(t.digitalCollected)}</span></div>
+    <div class="weekly-stat"><span class="weekly-stat-label">Collected</span><strong>${peso(t.collected)}</strong><span class="weekly-stat-note">${DEPARTMENTS.map(d => `${esc(d.label)} ${peso(t.departments[d.key])}`).join(' · ')}</span></div>
     <div class="weekly-stat"><span class="weekly-stat-label">Costs</span><strong class="amber-text">${peso(t.commission + t.expenses)}</strong><span class="weekly-stat-note">Comm. ${peso(t.commission)} · Exp. ${peso(t.expenses)}</span></div>
     <div class="weekly-stat weekly-stat-profit"><span class="weekly-stat-label">Profit</span><strong class="pos">${peso(t.profit)}</strong><span class="weekly-stat-note">${t.receivables ? `${peso(t.receivables)} still unpaid` : 'All jobs paid'}</span></div>`;
   const tbody = $('[data-rows]', root);
   if (!days.length) {
-    tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state">No sales in this range.</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state">No sales in this range.</div></td></tr>';
     return;
   }
   const row = (label, d, cls = '') => `<tr class="${cls}">
     <td>${label}</td><td class="num" data-label="Vehicles">${d.vehicles}</td>
-    <td class="num money" data-label="Cash">${peso(d.cashCollected)}</td><td class="num money" data-label="GCash">${peso(d.digitalCollected)}</td>
-    <td class="num money" data-label="Collected">${peso(d.collected)}</td><td class="num money amber-text" data-label="Unpaid">${d.receivables ? peso(d.receivables) : '—'}</td>
+    ${DEPARTMENTS.map(x => `<td class="num money" data-label="${esc(x.label)}">${peso(d.departments[x.key])}</td>`).join('')}
+    <td class="num money" data-label="Total sales">${peso(d.collected)}</td><td class="num money amber-text" data-label="Unpaid">${d.receivables ? peso(d.receivables) : '—'}</td>
     <td class="num money" data-label="Commission">${peso(d.commission)}</td><td class="num money" data-label="Expenses">${peso(d.expenses)}</td>
     <td class="num money weekly-profit ${d.profit < 0 ? 'neg' : 'pos'}" data-label="Profit">${peso(d.profit)}</td></tr>`;
   tbody.innerHTML = days.map(d => row(`<strong class="weekly-date">${esc(weekday(d.date))} ${esc(d.date)}</strong>`, d)).join('')

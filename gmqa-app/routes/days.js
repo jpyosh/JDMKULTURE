@@ -14,10 +14,11 @@ async function loadDay(day, q = db) {
   const [meta, expenses, jobs] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
     q.many('select id, side, description, amount, created_by, created_at from expenses where expense_date = $1 order by id', [day]),
-    loadJobs('job_date = $1', [day], q),
+    // Sales booked today (carwash by job date, running jobs by sale date) + running jobs paid today.
+    loadJobs('sale_date = $1 or paid_on = $1', [day], q),
   ]);
   const m = { ...EMPTY_META, ...meta, job_date: day };
-  return { date: day, meta: m, expenses, summary: daySummary({ jobs, expenses, meta: m }) };
+  return { date: day, meta: m, expenses, summary: daySummary({ date: day, jobs, expenses, meta: m }) };
 }
 
 router.get('/days/:date', async (req, res) => {

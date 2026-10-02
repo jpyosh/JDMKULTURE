@@ -15,6 +15,22 @@ Auth, deployed on Vercel.
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
 | Settings — users & roles, vehicle classes, change history | ✓ | — |
 
+## Departments
+
+| Department | Tab | JO numbers | Counts as a sale |
+|---|---|---|---|
+| Carwash | Carwash | `CW-MMDDYY-###` | on the day it is entered (same-day) |
+| Detailing | Detailing | `DT-MMDDYY-###` | when it is both **marked done** and **paid**, on the later of the two days |
+| Tint & PPF | Tint & PPF | `TP-MMDDYY-###` | same as Detailing |
+
+- Detailing and Tint & PPF jobs are **running**: they stay on their board day after day until done and paid.
+- Every service/add-on belongs to one department (Pricing Matrix → department tabs) and is only offered there.
+- EOD and Sales Reports combine all departments and show each department's sales separately.
+- Money is counted the day it is received: a running job paid before it is finished is in that day's
+  drawer, while its sale and commission are booked on the day it is done.
+- Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
+- Older `JO-` numbers from before departments existed are kept as they were.
+
 ## Business rules (all in `lib/calc.js`)
 
 - A job **counts** once it has a vehicle class or a line item and is not voided.

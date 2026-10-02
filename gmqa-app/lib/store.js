@@ -3,7 +3,7 @@ const { db } = require('./db');
 const { jobTotals } = require('./calc');
 const { forbidden } = require('./http');
 
-const JOB_COLUMNS = `id, jo_number, job_date, time_in, time_out, vehicle_class, plate, payment_method, payment_received,
+const JOB_COLUMNS = `id, jo_number, department, job_date, closed_on, paid_on, sale_date, time_in, time_out, vehicle_class, plate, payment_method, payment_received,
   discount, discount_reason, tip_gcash, detailer, remarks, created_by, created_at, voided_at, voided_by, void_reason`;
 
 // Loads jobs with their line items and computed totals. `where` uses $1..$n placeholders.

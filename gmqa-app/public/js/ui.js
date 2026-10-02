@@ -100,6 +100,14 @@ export async function busy(button, fn) {
   }
 }
 
+// Mirrors DEPARTMENTS in lib/calc.js.
+export const DEPARTMENTS = [
+  { key: 'carwash', label: 'Carwash', running: false },
+  { key: 'detailing', label: 'Detailing', running: true },
+  { key: 'tint_ppf', label: 'Tint & PPF', running: true },
+];
+export const departmentOf = key => DEPARTMENTS.find(d => d.key === key) || DEPARTMENTS[0];
+
 export const state = { user: null, catalog: null };
 export const isOwner = () => state.user?.role === 'owner';
 

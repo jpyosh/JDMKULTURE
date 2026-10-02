@@ -1,10 +1,14 @@
 // Job order form: vehicle class + any number of services, add-ons and custom lines.
 // Used for new jobs (Daily Log card) and for editing existing jobs (modal).
-import { $, $$, esc, peso, state, activeClasses } from '../ui.js';
+import { $, $$, esc, peso, state, activeClasses, departmentOf } from '../ui.js';
 
 const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom' };
 
-export function createJobEditor(root, { job = null } = {}) {
+// department: which catalog items are offered. Running departments (detailing, tint/PPF) record
+// payment with Mark paid instead of the checkbox, and lock the amount once paid.
+export function createJobEditor(root, { job = null, department = job?.department || 'carwash' } = {}) {
+  const running = departmentOf(department).running;
+  const locked = Boolean(running && job?.paid_on);
   const originalClass = job?.vehicle_class || '';
   const editor = {
     lines: (job?.items || []).map(i => ({ id: i.id, kind: i.kind, catalog_item_id: i.catalog_item_id, name: i.name, price: i.price, commission: i.commission })),
@@ -12,7 +16,7 @@ export function createJobEditor(root, { job = null } = {}) {
   const v = (key, fallback = '') => esc(job?.[key] ?? fallback);
   const classes = activeClasses();
   if (job?.vehicle_class && !classes.some(c => c.code === job.vehicle_class)) classes.push({ code: job.vehicle_class, label: job.vehicle_class });
-  const items = state.catalog.items;
+  const items = state.catalog.items.filter(i => i.department === department);
 
   root.innerHTML = `
     <div class="job-editor">
@@ -23,11 +27,12 @@ export function createJobEditor(root, { job = null } = {}) {
         <div><label>Detailer</label><input type="text" data-f="detailer" value="${v('detailer')}" placeholder="Name" maxlength="80"></div>
         <div><label>Time in</label><input type="time" data-f="time_in" value="${v('time_in')}"></div>
         ${job ? `<div><label>Time out</label><input type="time" data-f="time_out" value="${v('time_out')}"></div>` : ''}
-        <div><label>Payment</label><select data-f="payment_method">
+        ${running ? '' : `<div><label>Payment</label><select data-f="payment_method">
           ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
-        <div class="check-cell"><label class="check"><input type="checkbox" data-f="payment_received" ${job?.payment_received ? 'checked' : ''}> Customer paid</label></div>
+        <div class="check-cell"><label class="check"><input type="checkbox" data-f="payment_received" ${job?.payment_received ? 'checked' : ''}> Customer paid</label></div>`}
       </div>
 
+      ${locked ? '<div class="banner">This job is already paid, so its items, class, discount and tip are locked. Undo the payment first to change them.</div>' : ''}
       <div class="line-editor">
         <div class="line-adders">
           <select data-add="service"><option value="">+ Add service…</option>
@@ -42,7 +47,7 @@ export function createJobEditor(root, { job = null } = {}) {
       <div class="entry-grid">
         <div><label>Discount</label><input type="number" min="0" step="0.01" data-f="discount" value="${job?.discount || ''}" placeholder="0.00"></div>
         <div class="span-2"><label>Discount reason</label><input type="text" data-f="discount_reason" value="${v('discount_reason')}" placeholder="Optional" maxlength="200"></div>
-        <div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>
+        ${running ? '' : `<div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>`}
         <div class="span-2"><label>Remarks</label><input type="text" data-f="remarks" value="${v('remarks')}" placeholder="Optional" maxlength="500"></div>
       </div>
       <div class="editor-totals" data-totals></div>
@@ -125,6 +130,13 @@ export function createJobEditor(root, { job = null } = {}) {
   field('discount').addEventListener('input', renderTotals);
   renderLines();
 
+  // Matches AMOUNT_FIELDS in routes/jobs.js (payment method and tip are not shown for running jobs).
+  const LOCKED_FIELDS = ['vehicle_class', 'discount'];
+  if (locked) {
+    LOCKED_FIELDS.forEach(key => { field(key).disabled = true; });
+    $$('.line-adders select, .line-adders button, [data-lines] button, [data-lines] input', root).forEach(el => { el.disabled = true; });
+  }
+
   return {
     totals,
     lines: () => editor.lines.map(l => ({ ...l, ...linePrice(l) })),
@@ -132,10 +144,13 @@ export function createJobEditor(root, { job = null } = {}) {
       const out = {};
       $$('[data-f]', root).forEach(el => {
         const key = el.dataset.f;
+        if (locked && LOCKED_FIELDS.includes(key)) return;
         out[key] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value || 0) : el.value.trim();
       });
-      out.items = editor.lines.map(l => (l.id ? { id: l.id } : l.catalog_item_id ? { catalog_item_id: l.catalog_item_id }
-        : { name: l.name.trim(), price: Number(l.price) || 0, commission: Number(l.commission) || 0 }));
+      if (!locked) {
+        out.items = editor.lines.map(l => (l.id ? { id: l.id } : l.catalog_item_id ? { catalog_item_id: l.catalog_item_id }
+          : { name: l.name.trim(), price: Number(l.price) || 0, commission: Number(l.commission) || 0 }));
+      }
       return out;
     },
     // Returns an error message or null.

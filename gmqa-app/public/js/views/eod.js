@@ -1,4 +1,4 @@
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, prettyTime, isOwner } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, prettyTime, isOwner, DEPARTMENTS } from '../ui.js';
 
 let root;
 let current = { date: todayLocal(), day: null };
@@ -17,6 +17,7 @@ function mount(el) {
     </div>
     <div data-status></div>
     <div class="metrics-row" data-metrics></div>
+    <div class="card"><h2>Sales by department</h2><div class="table-wrap"><table class="simple-table dept-table" data-departments></table></div></div>
     <div class="two-col">
       <div>
         <div class="card">
@@ -95,6 +96,15 @@ function render() {
     <div class="metric"><div class="label">Commission</div><div class="value amber">${peso(s.commission)}</div></div>
     <div class="metric"><div class="label">Net</div><div class="value teal">${peso(s.net)}</div></div>`;
 
+  const deptRow = (label, d, cls = '') => `<tr class="${cls}"><td>${label}</td><td class="num">${d.jobs}</td>
+    <td class="num money">${peso(d.collected)}</td><td class="num money amber-text">${d.receivables ? peso(d.receivables) : '—'}</td>
+    <td class="num money">${peso(d.commission)}</td><td class="num money pos">${peso(d.net)}</td></tr>`;
+  $('[data-departments]', root).innerHTML = `
+    <thead><tr><th>Department</th><th class="num">Jobs</th><th class="num">Sales collected</th><th class="num">Unpaid</th>
+      <th class="num">Commission</th><th class="num">Net</th></tr></thead>
+    <tbody>${DEPARTMENTS.map(d => deptRow(esc(d.label), s.departments[d.key])).join('')}
+      ${deptRow('<b>All departments</b>', { jobs: s.vehicles, collected: s.collected, receivables: s.receivables, commission: s.commission, net: s.net }, 'total-row')}</tbody>`;
+
   for (const el of $$('[data-m]', root)) {
     const value = meta[el.dataset.m];
     el.value = value ?? (el.type === 'number' && !['actual_cash', 'actual_gcash'].includes(el.dataset.m) ? 0 : '');
@@ -124,23 +134,27 @@ function renderMath() {
   const commissionGcash = Math.min(num('commission_gcash_paid'), s.commission);
   const commissionCash = s.commission - commissionGcash;
   const tips = s.jobTips + num('gcash_tips_to_distribute');
-  const expectedCash = num('cash_float') + s.cashCollected - commissionCash - s.cashExpenses;
-  const expectedGcash = s.digitalCollected + tips - commissionGcash - s.gcashExpenses - tips;
+  const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses;
+  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
 
   $('[data-cash]', root).innerHTML =
     line('Cash float', peso(num('cash_float')))
-    + line('+ Cash collected', peso(s.cashCollected))
+    + line('+ Cash received today', peso(s.cashReceived))
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
-    line('GCash collected', peso(s.digitalCollected))
+    line('GCash received today', peso(s.gcashReceived))
     + line('+ Tips received', peso(tips))
     + line('− Tips passed to crew', peso(tips))
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
     + line('Expected GCash', peso(expectedGcash), 'total');
+  const notes = [];
+  if (s.paidInAdvance) notes.push(`${peso(s.paidInAdvance)} received today is for running jobs that are not done yet. It is in today's count but becomes a sale when the job is done.`);
+  if (s.paidEarlier) notes.push(`${peso(s.paidEarlier)} of today's sales were paid on an earlier day, so that money is not in today's count.`);
+  $('[data-cash]', root).insertAdjacentHTML('beforeend', notes.map(n => `<div class="hint mt">${esc(n)}</div>`).join(''));
 
   const variance = (key, expected) => {
     if (val(key) === '') return '<span class="muted">not counted</span>';

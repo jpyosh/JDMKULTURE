@@ -6,6 +6,28 @@
 //   * Receivables            = totals of counted jobs not yet paid.
 //   * Commission             = every counted job (detailers are paid at EOD either way).
 //   * Net                    = Collected − Commission.
+//
+// Departments (agreed 2026-10-03):
+//   * Carwash jobs are same-day and count on their job date.
+//   * Detailing and Tint & PPF jobs are "running": they count (sale + commission) only on their
+//     sale date = the later of the day the work was closed and the day they were paid in full.
+//   * Money is reconciled on the day it is received: a running job paid before it is done puts
+//     cash in that day's drawer, while its sale is booked on the sale date.
+
+const DEPARTMENTS = [
+  { key: 'carwash', label: 'Carwash', prefix: 'CW', running: false },
+  { key: 'detailing', label: 'Detailing', prefix: 'DT', running: true },
+  { key: 'tint_ppf', label: 'Tint & PPF', prefix: 'TP', running: true },
+];
+const DEPARTMENT_KEYS = DEPARTMENTS.map(d => d.key);
+const department = key => DEPARTMENTS.find(d => d.key === key) || null;
+const isRunning = job => Boolean(department(job.department || 'carwash')?.running);
+
+function saleDate(job) {
+  if (!isRunning(job)) return job.job_date;
+  if (!job.closed_on || !job.paid_on) return null;
+  return job.closed_on > job.paid_on ? job.closed_on : job.paid_on;
+}
 
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const sum = (list, fn) => round2(list.reduce((total, x) => total + (Number(fn(x)) || 0), 0));
@@ -21,23 +43,41 @@ function jobTotals(job) {
 
 const isCounted = job => !job.voided_at && Boolean(job.vehicle_class || (job.items && job.items.length));
 
-// jobs must already carry .totals (see withTotals).
-function daySummary({ jobs, expenses = [], meta = {} }) {
-  const counted = jobs.filter(isCounted);
-  const paid = counted.filter(j => j.payment_received);
-  const unpaid = counted.filter(j => !j.payment_received);
-
+function salesFigures(jobs) {
+  const paid = jobs.filter(j => j.payment_received);
   const collected = sum(paid, j => j.totals.total);
-  const cashCollected = sum(paid.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
-  const digitalCollected = round2(collected - cashCollected);
-  const receivables = sum(unpaid, j => j.totals.total);
-  const commission = sum(counted, j => j.totals.commission);
+  const commission = sum(jobs, j => j.totals.commission);
+  return {
+    jobs: jobs.length,
+    collected,
+    receivables: sum(jobs.filter(j => !j.payment_received), j => j.totals.total),
+    commission,
+    net: round2(collected - commission),
+  };
+}
+
+// The business day `date`: sales booked that day (by department) and money received that day.
+// `jobs` may contain any jobs; only the ones relevant to `date` are used. Jobs carry .totals.
+function daySummary({ date, jobs, expenses = [], meta = {} }) {
+  const live = jobs.filter(isCounted);
+  const sales = live.filter(j => saleDate(j) === date);
+  const departments = Object.fromEntries(DEPARTMENTS.map(d =>
+    [d.key, salesFigures(sales.filter(j => (j.department || 'carwash') === d.key))]));
+  const { collected, receivables, commission } = salesFigures(sales);
+
+  // Money in today: paid carwash jobs of today + running jobs paid today (finished or not).
+  const runningPaidToday = live.filter(j => isRunning(j) && j.paid_on === date);
+  const received = [...sales.filter(j => !isRunning(j) && j.payment_received), ...runningPaidToday];
+  const cashReceived = sum(received.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
+  const gcashReceived = round2(sum(received, j => j.totals.total) - cashReceived);
+  const paidInAdvance = sum(runningPaidToday.filter(j => saleDate(j) !== date), j => j.totals.total);
+  const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on !== date), j => j.totals.total);
 
   const cashExpenses = sum(expenses.filter(e => e.side === 'cash'), e => e.amount);
   const gcashExpenses = sum(expenses.filter(e => e.side === 'gcash'), e => e.amount);
 
   // Tips arrive in GCash and are passed on to the crew, so they net to zero in the GCash count.
-  const jobTips = sum(paid, j => j.tip_gcash);
+  const jobTips = sum(received, j => j.tip_gcash);
   const otherTips = round2(meta.gcash_tips_to_distribute);
   const tips = round2(jobTips + otherTips);
 
@@ -45,17 +85,19 @@ function daySummary({ jobs, expenses = [], meta = {} }) {
   const commissionCash = round2(commission - commissionGcash);
   const cashFloat = round2(meta.cash_float);
 
-  const expectedCash = round2(cashFloat + cashCollected - commissionCash - cashExpenses);
-  const expectedGcash = round2(digitalCollected + tips - commissionGcash - gcashExpenses - tips);
+  const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses);
+  const expectedGcash = round2(gcashReceived + tips - commissionGcash - gcashExpenses - tips);
   const actualCash = meta.actual_cash ?? null;
   const actualGcash = meta.actual_gcash ?? null;
 
   return {
-    vehicles: counted.length,
-    paidJobs: paid.length,
-    unpaidJobs: unpaid.length,
-    collected, cashCollected, digitalCollected, receivables, commission,
+    vehicles: sales.length,
+    paidJobs: sales.filter(j => j.payment_received).length,
+    unpaidJobs: sales.filter(j => !j.payment_received).length,
+    departments,
+    collected, receivables, commission,
     net: round2(collected - commission),
+    cashReceived, gcashReceived, paidInAdvance, paidEarlier,
     cashExpenses, gcashExpenses, expenses: round2(cashExpenses + gcashExpenses),
     jobTips, otherTips, tips,
     cashFloat, commissionCash, commissionGcash,
@@ -114,12 +156,13 @@ function mondayOf(date) {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return addDays(date, day === 0 ? -6 : 1 - day);
 }
-function joPrefix(date) {
+function joPrefix(date, prefix = 'JO') {
   const [y, m, d] = date.split('-');
-  return `JO-${m}${d}${y.slice(2)}-`;
+  return `${prefix}-${m}${d}${y.slice(2)}-`;
 }
 
 module.exports = {
+  DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, isCounted, daySummary,
   ATTENDANCE_CODES, attendanceCounts, payrollPay,
   isDate, addDays, mondayOf, joPrefix,

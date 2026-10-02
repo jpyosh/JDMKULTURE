@@ -18,8 +18,8 @@ test('002 converts legacy data without losing anything', async () => {
     values (100, 'JO-091426-019', '2026-09-14', 'm', $1, 1, 999, 'Undercoat', 500, 50, 'gcash', 0),
            (101, null, '2026-09-15', '', null, null, null, null, 0, 0, null, 1)`, [custom.id]);
 
-  await migrate(driver, quiet);
-  assert.deepEqual((await status(driver)).map(m => m.state), ['applied', 'applied']);
+  await migrate(driver, { ...quiet, to: '002' });
+  assert.deepEqual((await status(driver)).map(m => m.state).slice(0, 2), ['applied', 'applied']);
 
   // Legacy copies are complete.
   assert.equal((await one(driver, 'select count(*)::int n from legacy_v1_jobs')).n, legacy.jobs.length + 2);
@@ -89,6 +89,56 @@ test('audit log records the actor and constraints reject bad data', async () => 
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003']);
   assert.deepEqual(await migrate(driver, quiet), []);
+});
+
+test('003 adds departments and running jobs without changing any historical total', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  // Legacy detailing jobs (service 6 = Paint Correction): one paid, one not yet paid.
+  await driver.query(`insert into jobs (id, jo_number, job_date, vehicle_class, service_id, payment_method, payment_received)
+    values (102, 'JO-091526-001', '2026-09-15', 'M', 6, 'Cash', 1), (103, 'JO-091526-002', '2026-09-15', 'S', 6, 'GCash', 0)`);
+  await migrate(driver, { ...quiet, to: '002' });
+  const before = await all(driver, `select j.id, coalesce(sum(i.price), 0) total from jobs j left join job_items i on i.job_id = j.id
+    group by j.id order by j.id`);
+
+  await migrate(driver, quiet);
+  assert.deepEqual((await status(driver)).map(m => m.state), ['applied', 'applied', 'applied']);
+
+  const dept = async name => (await one(driver, 'select department from catalog_items where name = $1', [name])).department;
+  assert.equal(await dept('Premium Wash'), 'carwash');
+  assert.equal(await dept('Wash and Wax: Soft99 Fusso Coat'), 'carwash');
+  assert.equal(await dept('Engine Wash'), 'carwash');
+  assert.equal(await dept('Paint Correction'), 'detailing');
+  assert.equal(await dept('Soft99 H9 Dual Layer Glass Coat'), 'detailing');
+  assert.equal(await dept('Ceramic Coating: Motorcycle'), 'detailing');
+  assert.equal(await dept('Headlight Restoration'), 'detailing');
+
+  // All dry-run wash jobs stay carwash and still count on their own date.
+  const carwash = await one(driver, `select count(*)::int n, count(*) filter (where sale_date = job_date)::int same
+    from jobs where department = 'carwash'`);
+  assert.equal(carwash.n, legacy.jobs.length);
+  assert.equal(carwash.same, carwash.n);
+
+  // Legacy detailing jobs become running jobs already finished on their date.
+  const paid = await one(driver, 'select department, closed_on, paid_on, sale_date from jobs where id = 102');
+  assert.deepEqual(paid, { department: 'detailing', closed_on: '2026-09-15', paid_on: '2026-09-15', sale_date: '2026-09-15' });
+  const unpaid = await one(driver, 'select department, closed_on, paid_on, sale_date from jobs where id = 103');
+  assert.deepEqual(unpaid, { department: 'detailing', closed_on: '2026-09-15', paid_on: null, sale_date: null },
+    'done but unpaid: waits on the board for payment');
+
+  const after = await all(driver, `select j.id, coalesce(sum(i.price), 0) total from jobs j left join job_items i on i.job_id = j.id
+    group by j.id order by j.id`);
+  assert.deepEqual(after, before, 'no job total changed');
+
+  // Rules enforced by the database.
+  await assert.rejects(driver.query("insert into jobs (job_date, department, closed_on) values ('2026-10-01', 'carwash', '2026-10-01')"), /check/i);
+  await assert.rejects(driver.query("insert into jobs (job_date, department, payment_received) values ('2026-10-01', 'detailing', true)"), /check/i);
+  await assert.rejects(driver.query("insert into jobs (job_date, department, closed_on) values ('2026-10-05', 'detailing', '2026-10-01')"), /check/i);
+  await assert.rejects(driver.query("insert into jobs (job_date, department) values ('2026-10-05', 'bakery')"), /check/i);
+  const running = await one(driver, `insert into jobs (job_date, department, closed_on, paid_on, payment_received)
+    values ('2026-10-01', 'tint_ppf', '2026-10-03', '2026-10-02', true) returning sale_date`);
+  assert.equal(running.sale_date, '2026-10-03');
 });

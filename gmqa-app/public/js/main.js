@@ -1,5 +1,6 @@
 import { $, api, esc, state, setTokenProvider, toast, ApiError } from './ui.js';
-import daily from './views/daily.js';
+import carwash from './views/carwash.js';
+import { detailing, tintPpf } from './views/running.js';
 import eod from './views/eod.js';
 import pricing from './views/pricing.js';
 import reports from './views/reports.js';
@@ -7,7 +8,9 @@ import payroll from './views/payroll.js';
 import settings from './views/settings.js';
 
 const VIEWS = [
-  { key: 'daily', label: 'Daily Log', module: daily, roles: ['owner', 'staff'] },
+  { key: 'carwash', label: 'Carwash', module: carwash, roles: ['owner', 'staff'] },
+  { key: 'detailing', label: 'Detailing', module: detailing, roles: ['owner', 'staff'] },
+  { key: 'tint_ppf', label: 'Tint & PPF', module: tintPpf, roles: ['owner', 'staff'] },
   { key: 'eod', label: 'EOD Closing', module: eod, roles: ['owner', 'staff'] },
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
