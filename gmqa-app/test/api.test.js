@@ -236,6 +236,119 @@ test('payroll: any date range, daily records, dated rates, adjustments and payou
   assert.equal((await api(OWNER, 'POST', '/payroll/payouts', { payout_date: '2026-09-20', period_start: '2026-09-20', period_end: '2026-09-14', side: 'cash', amount: 10 })).status, 400);
 });
 
+// Text of a PDF as lines (items grouped by height on the page, left to right), one array per page.
+async function pdfLines(buffer) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), useSystemFonts: false }).promise;
+  const pages = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const items = (await (await doc.getPage(p)).getTextContent()).items.filter(i => i.str.trim());
+    const rows = [];
+    for (const item of items) {
+      const y = item.transform[5];
+      const row = rows.find(r => Math.abs(r.y - y) <= 2) || rows[rows.push({ y, items: [] }) - 1];
+      row.items.push(item);
+    }
+    pages.push(rows.sort((a, b) => b.y - a.y).map(r => r.items.sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str.trim()).join(' | ')));
+  }
+  await doc.destroy();
+  return pages;
+}
+async function download(as, path) {
+  const res = await fetch(base + path, { headers: as ? { Authorization: `Bearer ${as}` } : {} });
+  return { res, body: Buffer.from(await res.arrayBuffer()) };
+}
+
+test('payroll sign-off sheet: a PDF of the range with every day, totals and signature boxes', async () => {
+  // A week shaped like the owner's Sep 27 - Oct 4 sheet: Sunday to Sunday, 8 days.
+  const add = body => ok(api(OWNER, 'POST', '/employees', body));
+  const menan = await add({ name: 'Signoff Menan', role: '', rate_per_day: 560, construction_rate: 1200 });
+  const rene = await add({ name: 'Signoff Rene', role: 'Construction', rate_per_day: 250, construction_rate: 850 });
+  const joy = await add({ name: 'Signoff Joy', role: '', rate_per_day: 200, construction_rate: 0 });
+  await add({ name: 'Signoff Idle', role: '', rate_per_day: 300, construction_rate: 0 }); // nothing to pay: not listed
+  const mark = (emp, date, body) => ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/${date}`, body));
+  await mark(menan, '2027-01-31', { code: 'OFF' });
+  await mark(menan, '2027-02-01', { code: 'CN', cn_ot_hours: 15 });
+  for (const d of ['2027-02-02', '2027-02-03', '2027-02-04', '2027-02-05', '2027-02-06']) await mark(menan, d, { code: 'CN' });
+  await mark(rene, '2027-01-31', { code: 'CN' });
+  const reneOt = { '2027-02-01': 2, '2027-02-02': 2, '2027-02-03': 5, '2027-02-04': 4, '2027-02-05': 4, '2027-02-06': 2 };
+  for (const [d, h] of Object.entries(reneOt)) await mark(rene, d, { code: 'CN', cn_ot_hours: h });
+  for (const d of ['2027-02-01', '2027-02-02', '2027-02-03', '2027-02-04', '2027-02-05']) await mark(joy, d, { code: 'P' });
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: menan.id, date: '2027-02-01', kind: 'deduction', amount: 2000, note: 'Cash advance' }));
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: joy.id, date: '2027-02-01', kind: 'deduction', amount: 500, note: 'Cash advance' }));
+
+  const range = 'start=2027-01-31&end=2027-02-07';
+  assert.equal((await download(STAFF, `/payroll/signoff.pdf?${range}`)).res.status, 403, 'owner only, like payroll');
+  assert.equal((await download(null, `/payroll/signoff.pdf?${range}`)).res.status, 401);
+  assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2027-02-07&end=2027-01-31')).res.status, 400);
+  assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2026-01-01&end=2026-04-01')).res.status, 400);
+  // One pay period per sheet: up to 16 days (a week, 1st-15th, 16th-31st) so every day stays readable.
+  assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2027-03-16&end=2027-03-31')).res.status, 200);
+  const tooLong = await download(OWNER, '/payroll/signoff.pdf?start=2027-03-01&end=2027-03-17');
+  assert.equal(tooLong.res.status, 400);
+  assert.match(JSON.parse(tooLong.body).error, /at most 16 days/);
+
+  const { res, body } = await download(OWNER, `/payroll/signoff.pdf?${range}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/pdf');
+  assert.equal(res.headers.get('content-disposition'), 'attachment; filename="Payroll_Signoff_Jan31-Feb7_2027.pdf"');
+  assert.equal(body.subarray(0, 5).toString(), '%PDF-');
+
+  const pages = await pdfLines(body);
+  assert.equal(pages.length, 1);
+  const text = pages[0].join('\n');
+  const line = re => pages[0].find(l => re.test(l)) || '';
+  // Header, matching the screen's numbers.
+  const screen = await ok(api(OWNER, 'GET', `/payroll?${range}`));
+  assert.equal(screen.totalNet, 16985.94);
+  assert.match(text, /JDM Kulture Auto Salon — Payroll Sign-off Sheet/);
+  assert.match(text, /Pay period: \| Jan 31 – Feb 7, 2027/);
+  assert.match(text, /Total net pay: \| ₱16,985\.94/);
+  assert.match(text, /Each employee signs to confirm they received the net pay shown\./);
+  // One column per day, Sunday to Sunday, then the totals and the signature columns.
+  assert.match(line(/^SUN/), /^SUN \| MON \| TUE \| WED \| THU \| FRI \| SAT \| SUN \| CW \| CN \| DATE$/);
+  assert.match(line(/^# \| EMPLOYEE/), /^# \| EMPLOYEE \| 01-31 \| 02-01 \| 02-02 \| 02-03 \| 02-04 \| 02-05 \| 02-06 \| 02-07 \| days \| days \| OT \| GROSS \(₱\) \| ADJUST\. \(₱\) \| NET PAY \(₱\) \| SIGNATURE \| RECEIVED$/);
+  // Rows: everyone with pay, in the screen's order; nobody with nothing to pay.
+  for (const name of ['Signoff Idle', 'JP']) assert.ok(!text.includes(name), `${name} has nothing to pay and is not listed`);
+  assert.ok(text.indexOf('Signoff Menan') < text.indexOf('Signoff Rene') && text.indexOf('Signoff Rene') < text.indexOf('Signoff Joy'));
+  // Menan: OFF Sunday, CN Mon-Sat with 15h OT on Monday, 2,000 cash advance.
+  assert.match(line(/Signoff Menan/), /Signoff Menan/);
+  assert.match(text, /₱560 \/ 1,200/);
+  assert.match(text, /\| OFF \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 6 \| 15h \| 10,012\.50 \| −2,000\.00 \| 8,012\.50/);
+  // Rene: construction, CN all seven working days, overtime shown under each day.
+  assert.match(text, /Construction · ₱250 \/ 850/);
+  assert.match(text, /CN \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 7 \| 19h \| 8,473\.44 \| 8,473\.44/);
+  assert.match(text, /\+2h \| \+2h \| \+5h \| \+4h \| \+4h \| \+2h/);
+  // Joy: five carwash days, 500 deducted.
+  assert.match(text, /Signoff Joy \| P \| P \| P \| P \| P \| 5 \| 0 \| 0h \| 1,000\.00 \| −500\.00 \| 500\.00/);
+  // Footer: total, legend, OT rule and the four sign-off boxes.
+  assert.match(text, /TOTAL NET PAY \| ₱16,985\.94/);
+  assert.match(text, /P = Carwash day · 0\.5P = Half carwash · CN = Construction · 0\.5CN = Half construction · A = Absent · OFF = Day off · \+h = overtime hours\./);
+  assert.match(text, /OT pays the day's rate ÷ 8 × 1\.25 per hour\./);
+  assert.match(text, /Prepared by \| \(Name & signature\) \| Checked by \| \(Name & signature\) \| Approved by \| \(Owner \/ Manager\) \| Released by \| \(Cash \/ GCash\)/);
+  assert.equal((text.match(/Date: ______________/g) || []).length, 4);
+});
+
+test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {
+  const names = [];
+  for (let i = 1; i <= 30; i++) {
+    const e = await ok(api(OWNER, 'POST', '/employees', { name: `Crew ${String(i).padStart(2, '0')}`, role: '', rate_per_day: 100 + i, construction_rate: 0 }));
+    await ok(api(OWNER, 'PUT', `/payroll/attendance/${e.id}/2027-04-13`, { code: 'P' }));
+    names.push(e.name);
+  }
+  const { res, body } = await download(OWNER, '/payroll/signoff.pdf?start=2027-04-12&end=2027-04-18');
+  assert.equal(res.status, 200);
+  const pages = await pdfLines(body);
+  assert.ok(pages.length >= 2, `30 employees need more than one page (got ${pages.length})`);
+  for (const page of pages) assert.ok(page.some(l => /^# \| EMPLOYEE/.test(l)), 'every page has the column header');
+  const all = pages.flat().join('\n');
+  for (const name of names) assert.equal(all.split(name).length - 1, 1, `${name} listed exactly once`);
+  const expected = names.reduce((t, _, i) => t + 100 + i + 1, 0); // one carwash day each at 101..130
+  assert.match(pages.at(-1).join('\n'), new RegExp(`TOTAL NET PAY \\| ₱${expected.toLocaleString('en-PH')}\\.00`));
+  assert.ok(pages.at(-1).some(l => /Prepared by/.test(l)), 'sign-off boxes on the last page');
+  assert.ok(!pages[0].some(l => /Prepared by/.test(l)), 'not repeated on earlier pages');
+});
+
 test('users: invite staff, keep at least one owner; audit log records who did what', async () => {
   await ok(api(OWNER, 'POST', '/users', { email: 'New.Staff@Test.ph', role: 'staff' }));
   clearUserCache();

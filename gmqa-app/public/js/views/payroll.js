@@ -1,6 +1,6 @@
 // Payroll for any date range: attendance per day, overtime per day, dated adjustments, and the
 // payout that leaves the drawer (shown in that day's EOD).
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, mondayOf, weekday, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, mondayOf, weekday, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
 let range = { start: mondayOf(todayLocal()), end: addDays(mondayOf(todayLocal()), 6) };
@@ -52,6 +52,7 @@ function mount(el) {
       <div class="row-line total mt"><span>Total net pay for this range</span><span class="money" data-total></span></div>
       <div class="entry-actions">
         <button class="btn ghost" type="button" data-add-employee>+ Add employee</button>
+        <button class="btn ghost" type="button" data-signoff title="A printable sheet for each employee to sign when paid">Download sign-off sheet</button>
         <button class="btn" type="button" data-payout>Record payout</button>
       </div>
     </div>
@@ -65,22 +66,54 @@ function mount(el) {
   $$('[data-preset]', root).forEach(b => b.addEventListener('click', () => setRange(...presets()[b.dataset.preset])));
   $('[data-add-employee]', root).addEventListener('click', () => employeeModal());
   $('[data-payout]', root).addEventListener('click', payoutModal);
+  $('[data-signoff]', root).addEventListener('click', e => busy(e.currentTarget,
+    () => apiDownload(`/payroll/signoff.pdf?start=${range.start}&end=${range.end}`)));
 }
 
 async function show() { await setRange(range.start, range.end); }
 
-function onRangeInput() {
-  const start = $('[data-start]', root).value;
-  const end = $('[data-end]', root).value;
-  if (start && end) setRange(start, end);
+// Moving "From" past "To" (or "To" before "From") moves the whole range, keeping its number of days,
+// so a week can be shifted forward or back by changing either date.
+function onRangeInput(event) {
+  let start = $('[data-start]', root).value;
+  let end = $('[data-end]', root).value;
+  if (!start || !end) return;
+  if (start > end) {
+    const length = data?.dates.length || 7; // days shown now
+    if (event?.target?.matches('[data-start]')) end = addDays(start, length - 1);
+    else start = addDays(end, 1 - length);
+  }
+  setRange(start, end);
 }
 
+// The table, the From/To dates and `range` always describe the same days: a range only takes effect
+// once its payroll has loaded, a refused range puts the dates back, and when ranges are changed quickly
+// only the latest answer is shown.
+let rangeRequest = 0;
+const showRangeInputs = () => {
+  $('[data-start]', root).value = range.start;
+  $('[data-end]', root).value = range.end;
+};
+
 async function setRange(start, end) {
-  if (start > end) return toast('Start date must be on or before the end date', 'error');
-  range = { start, end };
+  const request = ++rangeRequest;
+  if (start > end) {
+    showRangeInputs();
+    return toast('Start date must be on or before the end date', 'error');
+  }
   $('[data-start]', root).value = start;
   $('[data-end]', root).value = end;
-  data = await api('GET', `/payroll?start=${start}&end=${end}`);
+  let next;
+  try {
+    next = await api('GET', `/payroll?start=${start}&end=${end}`);
+  } catch (error) {
+    if (request === rangeRequest) showRangeInputs();
+    if (error instanceof ApiError) return; // already shown as a toast
+    throw error;
+  }
+  if (request !== rangeRequest) return; // a newer range was picked while this one loaded
+  range = { start, end };
+  data = next;
   render();
 }
 

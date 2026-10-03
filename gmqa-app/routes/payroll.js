@@ -6,6 +6,7 @@ const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { ATTENDANCE_CODES, datesBetween } = require('../lib/calc');
 const { loadPayroll, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
+const signoff = require('../lib/signoff-pdf');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -86,6 +87,20 @@ function cleanRange(query) {
 router.get('/payroll', async (req, res) => {
   const { start, end } = cleanRange(req.query);
   res.json(await loadPayroll(start, end));
+});
+
+// Printable sign-off sheet (PDF) for one pay period, from the same payroll as the screen.
+router.get('/payroll/signoff.pdf', async (req, res) => {
+  const { start, end, dates } = cleanRange(req.query);
+  if (dates.length > signoff.MAX_DAYS) {
+    throw bad(`A sign-off sheet covers one pay period of at most ${signoff.MAX_DAYS} days (a week, 1st–15th or 16th–end)`);
+  }
+  const pdf = await signoff.buildPdf(await loadPayroll(start, end));
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="${signoff.fileName(start, end)}"`,
+    'Cache-Control': 'no-store',
+  }).send(pdf);
 });
 
 router.put('/payroll/attendance/:employeeId/:date', async (req, res) => {

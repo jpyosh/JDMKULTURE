@@ -9,7 +9,7 @@ const dumpOf = tables => ({ taken_at: '2026-10-03T00:00:00Z', label: 'test', tab
 test('rehearsal migrates a copy of the data and confirms nothing was lost', async () => {
   const report = await rehearse(dumpOf(legacy));
   assert.equal(report.ok, true, JSON.stringify(report, null, 1));
-  assert.deepEqual(report.applied, ['001', '002', '003', '004', '005', '006']);
+  assert.deepEqual(report.applied, ['001', '002', '003', '004', '005', '006', '007']);
   const names = report.checks.map(c => c.name);
   for (const n of ['jobs', 'job amounts', 'expenses total', 'daily records', 'employees', 'payroll deductions', 'payroll overtime hours']) {
     assert.ok(names.includes(n), `missing check ${n}`);
