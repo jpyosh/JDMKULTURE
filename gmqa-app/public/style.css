@@ -1,4 +1,4 @@
-/* JDM Kulture Ops Console — black, white and JDM red, with Apple-style type, spacing and motion.
+/* JDM Kulture Ops Console â€” black, white and JDM red, with Apple-style type, spacing and motion.
    Tokens first; components below only use tokens. Contrast figures are against --surface (#1c1c1e). */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap');
 
@@ -186,6 +186,11 @@ button.icon-btn:focus-visible{outline:2px solid var(--accent-text);outline-offse
 .date-nav .btn{min-width:38px;}
 .header-actions{display:flex;gap:8px;flex-wrap:wrap;}
 .preset-row{display:flex;gap:6px;flex-wrap:wrap;margin:-8px 0 18px;}
+.preset-row .signoff-btn{margin-left:auto;}
+.signoff-btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+/* Native option lists take the select's colours; give options their own so a tinted cell
+   (e.g. a green "P" attendance cell) never leaves light text on a pale list. */
+select option,select optgroup{background-color:var(--surface-alt);color:var(--text);}
 .date-range-picker{display:flex;align-items:flex-end;gap:10px;}
 .date-range-picker label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px;}
 .date-range-picker input{min-width:142px;}

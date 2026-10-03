@@ -455,6 +455,14 @@ async function launch() {
 
     await step('payroll: sign-off sheet downloads as a PDF', async () => {
       await setPayrollRange('2026-09-27', '2026-10-04');
+      // Reported: the button was hard to find (it sat below the whole table). It must be on screen
+      // at the top of Payroll without scrolling.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const signoffBox = await payroll.locator('[data-signoff]').boundingBox();
+      assert.ok(signoffBox && signoffBox.y >= 0 && signoffBox.y + signoffBox.height <= 1000, `sign-off button off screen (y=${signoffBox?.y})`);
+      const above = await page.evaluate(() => document.querySelector('#view-payroll [data-signoff]').getBoundingClientRect().top
+        < document.querySelector('#view-payroll .payroll-table').getBoundingClientRect().top);
+      assert.ok(above, 'sign-off button sits above the payroll table');
       const [file] = await Promise.all([page.waitForEvent('download'), payroll.locator('[data-signoff]').click()]);
       assert.equal(file.suggestedFilename(), 'Payroll_Signoff_Sep27-Oct4_2026.pdf');
       const saved = await file.path();
@@ -468,6 +476,27 @@ async function launch() {
       const first = payroll.locator('tbody tr[data-emp]').first();
       await first.locator('[data-day="2026-09-14"]').selectOption('P');
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-total]').textContent !== '₱0.00');
+      // Reported: the option list of a coloured attendance cell was unreadable (light text on the cell's
+      // pale tint). Every option must be readable against its own background, in every select.
+      await page.waitForSelector('#view-payroll select.code-P');
+      const unreadable = await page.evaluate(() => {
+        const rgba = c => c.match(/[\d.]+/g).map(Number);
+        const lum = c => {
+          const [r, g, b] = rgba(c).slice(0, 3).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+        const bad = [];
+        for (const select of document.querySelectorAll('#view-payroll select')) {
+          for (const option of select.options) {
+            const s = getComputedStyle(option);
+            const opaque = (rgba(s.backgroundColor)[3] ?? 1) === 1;
+            if (!opaque || contrast(s.color, s.backgroundColor) < 4.5) bad.push(`${select.className} "${option.text}" ${s.color} on ${s.backgroundColor}`);
+          }
+        }
+        return [...new Set(bad)];
+      });
+      assert.deepEqual(unreadable, [], 'dropdown options must have their own solid background and readable text');
       const netBefore = await first.locator('[data-net]').textContent();
 
       await first.locator('[data-act="adjust"]').click();
@@ -567,6 +596,8 @@ async function launch() {
       await signIn('owner@sandbox');
       await page.click('#nav [data-view="payroll"]');
       await page.waitForSelector('#view-payroll [data-signoff]');
+      const phoneBox = await payroll.locator('[data-signoff]').boundingBox();
+      assert.ok(phoneBox && phoneBox.y + phoneBox.height <= 844, `sign-off button below the fold on a phone (y=${phoneBox?.y})`);
       const payrollOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(payrollOverflow <= 1, `payroll scrolls sideways by ${payrollOverflow}px on mobile`);
       const offscreen = await page.evaluate(() => [...document.querySelectorAll('#view-payroll .entry-actions .btn')]
