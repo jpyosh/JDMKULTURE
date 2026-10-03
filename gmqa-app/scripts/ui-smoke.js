@@ -47,8 +47,44 @@ async function launch() {
       await shot('00-gate');
       await signIn('owner@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
-        ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix', '07Sales Reports',
-          '08Finance', '09Payroll', '10Settings']);
+        ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
+          'Finance', 'Payroll', 'Settings']);
+    });
+
+    await step('design: system type, readable contrast, keyboard focus, reduced motion', async () => {
+      await page.waitForSelector('#view-carwash .metric');
+      const look = await page.evaluate(() => {
+        const rgb = c => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+        const lum = c => {
+          const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+        const css = sel => getComputedStyle(document.querySelector(sel));
+        const primary = css('#view-carwash [data-review]');
+        return {
+          font: css('body').fontFamily,
+          heading: css('#view-carwash h1').fontFamily,
+          muted: contrast(css('#view-carwash .desc').color, css('body').backgroundColor),
+          label: contrast(css('#view-carwash .metric .label').color, css('#view-carwash .metric').backgroundColor),
+          button: contrast(primary.color, primary.backgroundColor),
+        };
+      });
+      assert.match(look.font, /^-apple-system|^system-ui/, 'body uses the system font (SF Pro on Apple devices)');
+      assert.match(look.heading, /^-apple-system|^system-ui/, 'headings use the system font');
+      assert.ok(look.muted >= 4.5, `secondary text contrast ${look.muted.toFixed(2)}:1 is below 4.5:1`);
+      assert.ok(look.label >= 4.5, `metric label contrast ${look.label.toFixed(2)}:1 is below 4.5:1`);
+      assert.ok(look.button >= 4.5, `primary button text contrast ${look.button.toFixed(2)}:1 is below 4.5:1`);
+      // Keyboard focus is always visible.
+      await page.keyboard.press('Tab');
+      await page.locator('#nav button').first().focus();
+      const ring = await page.evaluate(() => { const s = getComputedStyle(document.activeElement); return `${s.outlineStyle} ${s.boxShadow}`; });
+      assert.notEqual(ring, 'none none', 'focused nav button shows a focus ring');
+      // Reduced motion turns animations off.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const duration = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#app-toast')).transitionDuration));
+      assert.ok(duration <= 0.01, `toast still animates (${duration}s) with reduced motion`);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
     });
 
     const daily = page.locator('#view-carwash');
@@ -404,7 +440,7 @@ async function launch() {
       const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
       assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
-      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['01Carwash', '02Detailing', '03Tint & PPF', '04Parts & Inventory', '05EOD Closing', '06Pricing Matrix']);
+      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix']);
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
@@ -434,6 +470,11 @@ async function launch() {
       await page.waitForSelector('#view-carwash [data-entry-card]:not([hidden])');
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px on mobile`);
+      // Touch targets: 44pt minimum for navigation and the main actions.
+      const short = await page.evaluate(() => [...document.querySelectorAll('#nav button, #view-carwash .date-nav .btn, #view-carwash [data-review]')]
+        .filter(el => el.offsetParent).map(el => `${el.textContent.trim() || el.getAttribute('aria-label')} ${Math.round(el.getBoundingClientRect().height)}px`)
+        .filter(s => parseInt(s.split(' ').pop(), 10) < 44));
+      assert.deepEqual(short, [], 'buttons shorter than 44px on mobile');
       await shot('12-mobile');
     });
 

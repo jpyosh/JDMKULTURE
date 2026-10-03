@@ -38,9 +38,24 @@ function allowedViews() {
   return VIEWS.filter(v => v.roles.includes(state.user.role));
 }
 
+// Line icons for the sidebar, drawn on a 24px grid in the text colour.
+const ICONS = {
+  carwash: '<path d="M12 3.5l5.2 5.6a7 7 0 1 1-10.4 0z"/>',
+  detailing: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
+  tint_ppf: '<path d="M12 21s7.5-3.6 7.5-9.5V5.8L12 3 4.5 5.8v5.7C4.5 17.4 12 21 12 21z"/>',
+  parts: '<path d="M20.5 16.2V7.8L12 3 3.5 7.8v8.4L12 21z"/><path d="M3.8 8L12 12.6 20.2 8M12 21v-8.4"/>',
+  eod: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.5 2.5 5-5.4"/>',
+  pricing: '<path d="M20.3 13.3l-7 7a1.8 1.8 0 0 1-2.6 0L3.5 13V3.5H13l7.3 7.2a1.8 1.8 0 0 1 0 2.6z"/><circle cx="8" cy="8" r="1.4"/>',
+  reports: '<path d="M3.5 20.5h17M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',
+  finance: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 10h17M15.5 15h2"/>',
+  payroll: '<circle cx="9" cy="8.5" r="3.3"/><path d="M3 19.5a6 6 0 0 1 12 0M15.5 5.3a3.3 3.3 0 0 1 0 6.4M17.5 14a5.6 5.6 0 0 1 3.5 5.5"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
+};
+const icon = key => `<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[key] || ''}</svg>`;
+
 function renderNav() {
-  $('#nav').innerHTML = allowedViews().map((v, i) =>
-    `<button type="button" data-view="${v.key}"><span class="nav-icon">${String(i + 1).padStart(2, '0')}</span>${esc(v.label)}</button>`).join('');
+  $('#nav').innerHTML = allowedViews().map(v =>
+    `<button type="button" data-view="${v.key}">${icon(v.key)}<span>${esc(v.label)}</span></button>`).join('');
   $('#nav').querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => { location.hash = btn.dataset.view; }));
 }
 
@@ -48,7 +63,10 @@ async function route() {
   const views = allowedViews();
   const view = views.find(v => v.key === location.hash.slice(1)) || views[0];
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view.key}`));
-  document.querySelectorAll('#nav button').forEach(el => el.classList.toggle('active', el.dataset.view === view.key));
+  document.querySelectorAll('#nav button').forEach(el => {
+    el.classList.toggle('active', el.dataset.view === view.key);
+    if (el.dataset.view === view.key) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+  });
   const root = $(`#view-${view.key}`);
   if (!mounted.has(view.key)) {
     view.module.mount(root);
