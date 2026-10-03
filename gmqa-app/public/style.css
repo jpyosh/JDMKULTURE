@@ -565,7 +565,8 @@ body:not([data-role="owner"]) .owner-only{display:none !important;}
 
   .entry-grid,.form-grid{grid-template-columns:1fr 1fr;gap:10px;}
   .entry-group,.submit-cell,.job-editor .span-2,.form-grid .span-2{grid-column:1/-1;}
-  .submit-cell .btn,.entry-actions .btn{flex:1;}
+  .entry-actions{flex-wrap:wrap;}
+  .submit-cell .btn,.entry-actions .btn{flex:1 1 auto;}
   .line-row{grid-template-columns:64px 1fr 30px;}
   .line-row > :nth-child(3),.line-row > :nth-child(4){grid-column:2;}
   .expense-form,.inline-form{grid-template-columns:1fr 1fr;}

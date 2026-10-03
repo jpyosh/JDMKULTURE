@@ -86,6 +86,33 @@ export async function api(method, path, body, { quiet = false } = {}) {
   }
 }
 
+// Downloads a file from the API (e.g. a PDF) with the signed-in user's token, under the file name the
+// server gives it.
+export async function apiDownload(path) {
+  const token = await tokenProvider();
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    const err = new ApiError(0, 'Cannot reach the server. Check the internet connection.');
+    toast(err.message, 'error');
+    throw err;
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new ApiError(res.status, data.error || `Download failed (${res.status})`);
+    toast(err.message, 'error');
+    throw err;
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'download';
+  const url = URL.createObjectURL(await res.blob());
+  const link = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // Disables a button while an async action runs (prevents double submits). API errors have
 // already been shown as a toast, so they are swallowed here.
 export async function busy(button, fn) {

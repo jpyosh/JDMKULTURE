@@ -47,6 +47,12 @@ Auth, deployed on Vercel.
   effect that day (rates change from an effective date), so earlier periods never change.
 - A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
   expected drawer in EOD.
+- **Sign-off sheet** (Payroll → Download sign-off sheet): a PDF for the selected pay period (up to 16
+  days) with each employee's days, overtime, gross, adjustments, net pay and a signature / date-received
+  box, plus Prepared / Checked / Approved / Released by. Employees with nothing to pay are left off.
+  Built from the same payroll as the screen (`lib/signoff-pdf.js`, Inter font in `lib/fonts`).
+- The old app saved each weekly sheet one day early (UTC dates). Migration 007 moves those converted
+  days to the day they were worked, leaving any week already corrected by hand exactly as it is.
 - Jobs are **voided** (owner only, with a reason), never deleted. JO numbers are never reused.
 - Closing a day locks it for staff. The owner can still edit or reopen it.
 - Every insert/update/delete is written to `audit_log` with who did it (Settings → Change history).

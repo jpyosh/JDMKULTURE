@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -213,6 +213,76 @@ test('004 turns weekly payroll sheets into daily records and rate history', asyn
   await assert.rejects(driver.query("insert into attendance (employee_id, work_date, code) values (1, '2026-10-01', 'X')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_adjustments (employee_id, adj_date, kind, amount, note) values (1, '2026-10-01', 'deduction', -5, 'x')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_payouts (payout_date, period_start, period_end, side, amount) values ('2026-10-04', '2026-10-05', '2026-09-28', 'cash', 100)"), /check/i);
+});
+
+test('007 moves converted attendance to the day it was worked (the old app saved each week a day early)', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  await migrate(driver, { ...quiet, to: '003' });
+  // Sheets as the old app saved them in the Philippines: the week of Monday 09-14 stored Mon..Sun under
+  // Sun 09-13 .. Sat 09-19 (UTC dates). Overtime and deductions were weekly and 004 put them on the Monday.
+  const sheet = (emp, monday, days, extra = '0, 0, 0') => driver.query(`insert into payroll_entries
+      (employee_id, period_start, attendance, cw_ot_hours, cn_ot_hours, deductions, notes, rate_per_day, construction_rate)
+    values (${emp}, '${monday}', '${JSON.stringify(days)}', ${extra}, '', 250, 700)`);
+  // Employee 6: two consecutive weeks, never edited since.
+  await sheet(6, '2026-09-14', { '2026-09-13': 'P', '2026-09-14': 'P', '2026-09-15': 'A', '2026-09-16': 'P', '2026-09-17': 'P', '2026-09-18': '0.5P', '2026-09-19': '' }, '2, 0, 100');
+  await sheet(6, '2026-09-21', { '2026-09-20': 'CN', '2026-09-21': 'CN', '2026-09-22': 'CN', '2026-09-23': 'CN', '2026-09-24': 'CN', '2026-09-25': 'CN', '2026-09-26': 'P' });
+  // Employee 4: shifted week that the owner already corrected by hand after go-live.
+  await sheet(4, '2026-09-28', { '2026-09-27': 'CN', '2026-09-28': 'CN', '2026-09-29': 'A', '2026-09-30': 'CN', '2026-10-01': 'CN', '2026-10-02': '', '2026-10-03': '' });
+  // Employee 3: a sheet already keyed Monday..Sunday (correct) must not move.
+  await sheet(3, '2026-09-21', { '2026-09-21': 'P', '2026-09-22': 'CN', '2026-09-23': '' });
+  // Employee 7: week of 09-21 untouched, whose last day (saved Sat 09-26) belongs on Sun 09-27 - but the
+  // week of 09-28 was corrected by hand and the owner set Sun 09-27 to OFF. The correction must win.
+  await sheet(7, '2026-09-21', { '2026-09-20': 'P', '2026-09-21': 'P', '2026-09-22': 'P', '2026-09-23': 'P', '2026-09-24': 'P', '2026-09-25': 'P', '2026-09-26': 'P' });
+  await sheet(7, '2026-09-28', { '2026-09-27': 'P', '2026-09-28': 'P', '2026-09-29': '', '2026-09-30': '', '2026-10-01': '', '2026-10-02': '', '2026-10-03': '' });
+  // Employee 5: the earlier week (09-14) was corrected by hand, the next (09-21) was not. Its Monday,
+  // saved on Sun 09-20, must move to 09-21 and not stay behind on Sunday as well.
+  await sheet(5, '2026-09-14', { '2026-09-13': 'CN', '2026-09-14': 'CN', '2026-09-15': 'CN', '2026-09-16': '', '2026-09-17': '', '2026-09-18': '', '2026-09-19': '' });
+  await sheet(5, '2026-09-21', { '2026-09-20': 'CN', '2026-09-21': 'A', '2026-09-22': '', '2026-09-23': '', '2026-09-24': '', '2026-09-25': '', '2026-09-26': '' });
+  await migrate(driver, { ...quiet, to: '006' });
+
+  // The owner's hand corrections, made in the app (so they are in the change history).
+  await driver.transaction(async q => {
+    await q.query("select set_config('app.actor', 'owner@test.ph', true)");
+    await q.query("update attendance set code = 'OFF' where employee_id = 4 and work_date = '2026-09-27'");
+    await q.query("insert into attendance (employee_id, work_date, code) values (4, '2026-10-02', 'CN')");
+    await q.query("update attendance set code = 'OFF' where employee_id = 7 and work_date = '2026-09-27'");
+    // Employee 5's week of 09-14 fixed by hand: Sun 09-13 cleared, Mon..Wed CN.
+    await q.query("delete from attendance where employee_id = 5 and work_date = '2026-09-13'");
+    await q.query("insert into attendance (employee_id, work_date, code) values (5, '2026-09-16', 'CN')");
+  });
+  const emp7Before = await all(driver, "select work_date, code from attendance where employee_id = 7 and work_date >= '2026-09-27' order by work_date");
+  const days = async emp => Object.fromEntries((await all(driver,
+    'select work_date, code, cw_ot_hours from attendance where employee_id = $1 order by work_date', [emp]))
+    .map(r => [r.work_date, r.cw_ot_hours ? `${r.code || '-'}+${r.cw_ot_hours}h` : r.code]));
+  const emp4Before = await days(4);
+  const emp3Before = await days(3);
+  const adjBefore = await all(driver, 'select employee_id, adj_date, kind, amount from payroll_adjustments order by id');
+
+  await migrate(driver, quiet);
+
+  assert.deepEqual(await days(6), {
+    // week of 09-14: Mon P (+ the week's 2h OT, which was already on Monday), Tue P, Wed A, Thu P, Fri P, Sat 0.5P; Sunday 09-13 empty
+    '2026-09-14': 'P+2h', '2026-09-15': 'P', '2026-09-16': 'A', '2026-09-17': 'P', '2026-09-18': 'P', '2026-09-19': '0.5P',
+    // week of 09-21: Mon..Sat CN, Sun 09-27 P; Sunday 09-20 no longer holds Monday's day
+    '2026-09-21': 'CN', '2026-09-22': 'CN', '2026-09-23': 'CN', '2026-09-24': 'CN', '2026-09-25': 'CN', '2026-09-26': 'CN', '2026-09-27': 'P',
+  });
+  assert.deepEqual(await days(4), emp4Before, 'a week corrected by hand is left exactly as the owner set it');
+  assert.deepEqual(await days(3), emp3Before, 'a sheet already keyed Monday..Sunday does not move');
+  const emp7 = await days(7);
+  assert.deepEqual(Object.entries(emp7).filter(([d]) => d < '2026-09-27'), [
+    ['2026-09-21', 'P'], ['2026-09-22', 'P'], ['2026-09-23', 'P'], ['2026-09-24', 'P'], ['2026-09-25', 'P'], ['2026-09-26', 'P'],
+  ], 'the untouched week moves (and Sunday 09-20 no longer holds Monday)');
+  assert.deepEqual(await all(driver, "select work_date, code from attendance where employee_id = 7 and work_date >= '2026-09-27' order by work_date"),
+    emp7Before, 'nothing is written onto the hand-corrected week, not even from the week before');
+  assert.deepEqual(await days(5), {
+    '2026-09-14': 'CN', '2026-09-15': 'CN', '2026-09-16': 'CN', // the hand-corrected week, as the owner left it
+    '2026-09-21': 'CN', '2026-09-22': 'A',                      // the next week moved; nothing left on Sun 09-20
+  });
+  assert.deepEqual(await all(driver, 'select employee_id, adj_date, kind, amount from payroll_adjustments order by id'), adjBefore, 'deductions untouched');
+  const moved = await one(driver, "select count(*)::int n from audit_log where table_name = 'attendance' and actor is null");
+  assert.ok(moved.n > 0, 'the correction is recorded in the change history (as the system)');
 });
 
 test('005 adds bill funds, set-asides and bill payments', async () => {

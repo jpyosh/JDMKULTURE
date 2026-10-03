@@ -386,6 +386,83 @@ async function launch() {
       await page.waitForFunction(() => document.querySelectorAll('#view-payroll thead .attendance-day').length === 15);
     });
 
+    // Every attendance cell, read as [header date, cell date, code], so a cell in the wrong column shows up.
+    const payrollCells = () => page.evaluate(() => {
+      const heads = [...document.querySelectorAll('#view-payroll thead .attendance-day')].map(h => h.dataset.date);
+      return [...document.querySelectorAll('#view-payroll tbody tr[data-emp]')].map(tr =>
+        [...tr.querySelectorAll('select[data-day]')].map((s, i) => [heads[i], s.dataset.day, s.value]));
+    });
+    const inputsMatchTable = () => page.evaluate(() => {
+      const heads = [...document.querySelectorAll('#view-payroll thead .attendance-day')].map(h => h.dataset.date);
+      const start = document.querySelector('#view-payroll [data-start]').value;
+      const end = document.querySelector('#view-payroll [data-end]').value;
+      return heads[0] === start && heads[heads.length - 1] === end;
+    });
+
+    await step('payroll: widening the range keeps every day on its own date', async () => {
+      // Reported: Monday 09-28 attendance appeared under Sunday 09-27 when the range was widened.
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      const first = payroll.locator('tbody tr[data-emp]').first();
+      const reloaded = page.waitForResponse(r => r.url().includes('/api/payroll?') && r.request().method() === 'GET');
+      await first.locator('[data-day="2026-09-28"]').selectOption('CN');
+      await reloaded;
+      await payroll.locator('[data-start]').fill('2026-09-27');
+      await payroll.locator('[data-start]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelectorAll('#view-payroll thead .attendance-day').length === 8);
+      const rows = await payrollCells();
+      for (const row of rows) for (const [head, day] of row) assert.equal(day, head, 'cell sits under its own date');
+      assert.deepEqual(rows[0].slice(0, 2).map(([d, , code]) => [d, code]), [['2026-09-27', ''], ['2026-09-28', 'CN']]);
+      // Narrow again: Monday is still Monday.
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.equal((await payrollCells())[0][0].join(), '2026-09-28,2026-09-28,CN');
+    });
+
+    await step('payroll: a rejected or slow range never leaves the table out of step', async () => {
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      // A typo makes the range a year long: the server refuses it; the dates go back to what the table shows.
+      const problemsBefore = problems.length;
+      await payroll.locator('[data-start]').fill('2025-09-28');
+      await payroll.locator('[data-start]').dispatchEvent('change');
+      await expectToast(/at most/);
+      // The browser logs the refused request (400) as a console error; that one is expected here.
+      const expected400 = problems.slice(problemsBefore).filter(p => /status of 400/.test(p));
+      assert.ok(expected400.length >= 1, 'the over-long range was refused by the server');
+      problems.splice(problemsBefore, problems.length - problemsBefore, ...problems.slice(problemsBefore).filter(p => !/status of 400/.test(p)));
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-09-28');
+      assert.ok(await inputsMatchTable(), 'date inputs match the table after a refused range');
+      // Moving "From" past "To" moves the whole range (same number of days), and the other way round.
+      await payroll.locator('[data-start]').fill('2026-10-05');
+      await payroll.locator('[data-start]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === '2026-10-05');
+      assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-11');
+      assert.ok(await inputsMatchTable());
+      await payroll.locator('[data-end]').fill('2026-09-27');
+      await payroll.locator('[data-end]').dispatchEvent('change');
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-payroll thead .attendance-day')].at(-1)?.dataset.date === '2026-09-27');
+      assert.equal(await payroll.locator('[data-start]').inputValue(), '2026-09-21');
+      assert.ok(await inputsMatchTable());
+      // Typing quickly: an older, slower answer must not replace the newer range.
+      await page.route('**/api/payroll?start=2026-09-01*', async route => { await new Promise(r => setTimeout(r, 1500)); await route.continue(); });
+      await payroll.locator('[data-start]').fill('2026-09-01');
+      await payroll.locator('[data-end]').fill('2026-09-15');
+      await payroll.locator('[data-end]').dispatchEvent('change');
+      await setPayrollRange('2026-09-21', '2026-09-27');
+      await page.waitForTimeout(2000);
+      await page.unroute('**/api/payroll?start=2026-09-01*');
+      assert.deepEqual(await dayHeads(), ['Mon09-21', 'Tue09-22', 'Wed09-23', 'Thu09-24', 'Fri09-25', 'Sat09-26', 'Sun09-27'], 'the latest range wins');
+      assert.ok(await inputsMatchTable());
+    });
+
+    await step('payroll: sign-off sheet downloads as a PDF', async () => {
+      await setPayrollRange('2026-09-27', '2026-10-04');
+      const [file] = await Promise.all([page.waitForEvent('download'), payroll.locator('[data-signoff]').click()]);
+      assert.equal(file.suggestedFilename(), 'Payroll_Signoff_Sep27-Oct4_2026.pdf');
+      const saved = await file.path();
+      const bytes = fs.readFileSync(saved);
+      assert.equal(bytes.subarray(0, 5).toString(), '%PDF-');
+      assert.ok(bytes.length > 5000, 'a real document, not an error page');
+    });
+
     await step('payroll: attendance, adjustment and payout', async () => {
       await setPayrollRange('2026-09-14', '2026-09-20');
       const first = payroll.locator('tbody tr[data-emp]').first();
@@ -485,6 +562,17 @@ async function launch() {
         .filter(el => el.offsetParent).map(el => `${el.textContent.trim() || el.getAttribute('aria-label')} ${Math.round(el.getBoundingClientRect().height)}px`)
         .filter(s => parseInt(s.split(' ').pop(), 10) < 44));
       assert.deepEqual(short, [], 'buttons shorter than 44px on mobile');
+      // Payroll (owner): the action buttons, including the sign-off sheet, fit the phone width.
+      await page.click('#signout-btn');
+      await signIn('owner@sandbox');
+      await page.click('#nav [data-view="payroll"]');
+      await page.waitForSelector('#view-payroll [data-signoff]');
+      const payrollOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(payrollOverflow <= 1, `payroll scrolls sideways by ${payrollOverflow}px on mobile`);
+      const offscreen = await page.evaluate(() => [...document.querySelectorAll('#view-payroll .entry-actions .btn')]
+        .filter(b => { const r = b.getBoundingClientRect(); return r.left < -1 || r.right > window.innerWidth + 1; }).map(b => b.textContent.trim()));
+      assert.deepEqual(offscreen, [], 'payroll buttons cut off on mobile');
+      await shot('13-mobile-payroll');
       await shot('12-mobile');
     });
 
