@@ -40,6 +40,8 @@ function mount(el) {
       <button class="btn ghost small" type="button" data-preset="last-week">Last week</button>
       <button class="btn ghost small" type="button" data-preset="first-half">1st–15th</button>
       <button class="btn ghost small" type="button" data-preset="second-half">16th–end</button>
+      <button class="btn small signoff-btn" type="button" data-signoff title="A printable PDF for each employee to sign when paid">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>Sign-off sheet (PDF)</button>
     </div>
     <div class="card">
       <div class="attendance-legend">
@@ -52,7 +54,6 @@ function mount(el) {
       <div class="row-line total mt"><span>Total net pay for this range</span><span class="money" data-total></span></div>
       <div class="entry-actions">
         <button class="btn ghost" type="button" data-add-employee>+ Add employee</button>
-        <button class="btn ghost" type="button" data-signoff title="A printable sheet for each employee to sign when paid">Download sign-off sheet</button>
         <button class="btn" type="button" data-payout>Record payout</button>
       </div>
     </div>
