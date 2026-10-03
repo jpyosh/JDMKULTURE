@@ -162,6 +162,10 @@ async function launch() {
       await detailing.locator('[data-open-date]').fill(DAY);
       const services = await editor.locator('[data-add="service"] option').allTextContents();
       assert.ok(services.includes('Paint Correction') && !services.includes('Premium Wash'), 'only detailing services offered');
+      const addons = await editor.locator('[data-add="addon"] option').allTextContents();
+      for (const name of ['Asphalt Removal', 'Headlight Restoration', 'Waterless Engine Detail', 'Engine Wash', 'Bac 2 Zero']) {
+        assert.ok(addons.includes(name), `${name} is offered on detailing jobs`);
+      }
       await editor.locator('[data-f="vehicle_class"]').selectOption('M');
       await editor.locator('[data-f="plate"]').fill('dtl 777');
       await editor.locator('[data-add="service"]').selectOption({ label: 'Paint Correction' });
@@ -250,10 +254,15 @@ async function launch() {
       await expectToast(/Saved 1 item/);
       await shot('07-pricing');
 
-      // Department tabs: each shows only its own items.
+      // Department tabs: each shows only its own services; add-ons are one shared list on every tab.
+      const addonNames = () => page.locator('#view-pricing [data-table="addon"] [data-name]').evaluateAll(els => els.map(e => e.value));
+      const allAddons = await addonNames();
+      assert.ok(allAddons.includes('Engine Wash') && allAddons.includes('Headlight Restoration'), 'carwash tab lists every add-on');
       await page.click('#view-pricing [data-dept-tab="detailing"]');
       await page.waitForSelector('#view-pricing [data-name][value="Paint Correction"]');
       assert.equal(await page.locator('#view-pricing [data-name][value="Standard Wash"]').count(), 0);
+      assert.deepEqual(await addonNames(), allAddons, 'detailing tab lists the same add-ons');
+      assert.equal(await page.locator('#view-pricing [data-table="addon"] select[data-dept]').count(), 0, 'add-ons have no department');
       await page.click('#view-pricing [data-dept-tab="tint_ppf"]');
       await page.click('#view-pricing [data-add="service"]');
       await page.waitForSelector('#modal[open] [data-new-name]');
@@ -261,6 +270,7 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Ceramic Tint 70% added/);
       await page.waitForSelector('#view-pricing [data-name][value="Ceramic Tint 70%"]');
+      assert.deepEqual(await addonNames(), allAddons, 'tint & PPF tab lists the same add-ons');
       await shot('07b-pricing-tint');
     });
 

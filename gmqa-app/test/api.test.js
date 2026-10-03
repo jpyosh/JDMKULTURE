@@ -274,6 +274,73 @@ test('catalog items belong to a department', async () => {
   assert.equal((await api(OWNER, 'PATCH', `/catalog/${tint.id}`, { department: 'bakery' })).status, 400);
 });
 
+test('price changes never rewrite past jobs or past reports', async () => {
+  const standard = await catalogItem('Standard Wash');
+  await ok(api(OWNER, 'PATCH', `/catalog/${standard.id}`, { prices: { S: { price: 250, commission: 0 } } }));
+  const lastMonth = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-08-12', vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: standard.id }],
+  }));
+  assert.equal(lastMonth.totals.total, 250);
+  const before = (await ok(api(STAFF, 'GET', '/days/2026-08-12'))).summary;
+
+  // This month the price goes up.
+  await ok(api(OWNER, 'PATCH', `/catalog/${standard.id}`, { prices: { S: { price: 300, commission: 0 } } }));
+
+  const thisMonth = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-09-12', vehicle_class: 'S', items: [{ catalog_item_id: standard.id }],
+  }));
+  assert.equal(thisMonth.totals.total, 300, 'new jobs use the new price');
+  const old = (await ok(api(STAFF, 'GET', '/jobs?date=2026-08-12'))).find(j => j.id === lastMonth.id);
+  assert.equal(old.totals.total, 250, 'last month keeps the price it was charged');
+  assert.deepEqual((await ok(api(STAFF, 'GET', '/days/2026-08-12'))).summary, before, 'last month\'s day totals are unchanged');
+  const report = await ok(api(OWNER, 'GET', '/reports/range?start=2026-08-12&end=2026-08-12'));
+  assert.equal(report.days[0].departments.carwash, before.collected);
+
+  // Editing something else on the old job (not the class) keeps its frozen price.
+  const edited = await ok(api(STAFF, 'PATCH', `/jobs/${lastMonth.id}`, { plate: 'old 001' }));
+  assert.equal(edited.totals.total, 250);
+});
+
+test('add-ons are shared by every department; services stay in their own department', async () => {
+  const engine = await catalogItem('Engine Wash');        // was a carwash add-on
+  const headlight = await catalogItem('Headlight Restoration'); // was a detailing add-on
+  const paint = await catalogItem('Paint Correction');
+  const premium = await catalogItem('Premium Wash');
+
+  const detailing = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-10-11', department: 'detailing', vehicle_class: 'M',
+    items: [{ catalog_item_id: paint.id }, { catalog_item_id: engine.id }],
+  }));
+  assert.deepEqual(detailing.items.map(i => i.name), ['Paint Correction', 'Engine Wash']);
+
+  const carwash = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-10-11', department: 'carwash', vehicle_class: 'M',
+    items: [{ catalog_item_id: premium.id }, { catalog_item_id: headlight.id }],
+  }));
+  assert.deepEqual(carwash.items.map(i => i.name), ['Premium Wash', 'Headlight Restoration']);
+
+  const tint = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-10-11', department: 'tint_ppf', vehicle_class: 'M', items: [{ catalog_item_id: engine.id }],
+  }));
+  assert.equal(tint.items[0].name, 'Engine Wash');
+
+  // A new add-on is offered everywhere too.
+  const added = await ok(api(OWNER, 'POST', '/catalog', {
+    kind: 'addon', department: 'tint_ppf', name: 'Tire Shine', prices: { M: { price: 150, commission: 20 } },
+  }));
+  const onCarwash = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-10-11', vehicle_class: 'M', items: [{ catalog_item_id: premium.id }, { catalog_item_id: added.id }],
+  }));
+  assert.equal(onCarwash.items[1].price, 150);
+
+  // Services are still department-only.
+  const wrong = await api(STAFF, 'POST', '/jobs', {
+    job_date: '2026-10-11', department: 'carwash', vehicle_class: 'M', items: [{ catalog_item_id: paint.id }],
+  });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.data.error, /Detailing/);
+});
+
 test('running job (detailing): carried over until done and paid, counted on the later date', async () => {
   const paint = await catalogItem('Paint Correction');
   const premium = await catalogItem('Premium Wash');

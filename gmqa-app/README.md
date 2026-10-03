@@ -24,7 +24,8 @@ Auth, deployed on Vercel.
 | Tint & PPF | Tint & PPF | `TP-MMDDYY-###` | same as Detailing |
 
 - Detailing and Tint & PPF jobs are **running**: they stay on their board day after day until done and paid.
-- Every service/add-on belongs to one department (Pricing Matrix → department tabs) and is only offered there.
+- Every service belongs to one department (Pricing Matrix → department tabs) and is only offered there.
+  Add-ons are shared: every add-on is offered on Carwash, Detailing and Tint & PPF jobs.
 - EOD and Sales Reports combine all departments and show each department's sales separately.
 - Money is counted the day it is received: a running job paid before it is finished is in that day's
   drawer, while its sale and commission are booked on the day it is done.

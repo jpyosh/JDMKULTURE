@@ -19,11 +19,12 @@ function mount(el) {
       <div class="table-wrap"><table class="matrix-table" data-table="service"></table></div>
     </div>
     <div class="card">
-      <div class="section-header"><h2>Add-ons</h2><button class="btn ghost owner-only" type="button" data-add="addon">+ Add add-on</button></div>
+      <div class="section-header"><div><h2>Add-ons</h2><p class="hint">Offered on Carwash, Detailing and Tint &amp; PPF jobs.</p></div>
+        <button class="btn ghost owner-only" type="button" data-add="addon">+ Add add-on</button></div>
       <div class="table-wrap"><table class="matrix-table" data-table="addon"></table></div>
     </div>
-    <p class="hint">Each item belongs to one department and is only offered on that department's job orders. Vehicle classes are managed in Settings.
-      A price of ₱0 means the item is not normally offered for that class.</p>`;
+    <p class="hint">Each service belongs to one department and is only offered on that department's job orders; add-ons are offered on all of them.
+      Vehicle classes are managed in Settings. A price of ₱0 means the price is not set yet (TBD) for that class.</p>`;
 
   $$('[data-dept-tab]', root).forEach(b => b.addEventListener('click', () => switchDept(b.dataset.deptTab)));
   $$('[data-add]', root).forEach(b => b.addEventListener('click', () => addItem(b.dataset.add)));
@@ -50,12 +51,15 @@ function render() {
   const owner = isOwner();
   $$('[data-dept-tab]', root).forEach(b => b.classList.toggle('active', b.dataset.deptTab === currentDept));
   for (const kind of ['service', 'addon']) {
-    const items = state.catalog.items.filter(i => i.kind === kind && i.department === currentDept);
-    const cols = classes.length * 2 + (owner ? 3 : 1);
+    // Services are per department; add-ons are one shared list shown on every tab.
+    const shared = kind === 'addon';
+    const items = state.catalog.items.filter(i => i.kind === kind && (shared || i.department === currentDept));
+    const showDept = owner && !shared;
+    const cols = classes.length * 2 + (owner ? 2 : 1) + (showDept ? 1 : 0);
     $(`[data-table="${kind}"]`, root).innerHTML = `
       <thead>
         <tr><th class="sticky-name" rowspan="2">${kind === 'service' ? 'Service' : 'Add-on'}</th>
-          ${owner ? '<th rowspan="2">Department</th>' : ''}
+          ${showDept ? '<th rowspan="2">Department</th>' : ''}
           <th colspan="${classes.length}" class="group-head">Price</th><th colspan="${classes.length}" class="group-head">Commission</th>
           ${owner ? '<th rowspan="2"></th>' : ''}</tr>
         <tr>${classes.map(c => `<th class="num">${esc(c.label)}</th>`).join('').repeat(2)}</tr>
@@ -63,13 +67,13 @@ function render() {
       <tbody>${items.length ? items.map(item => `
         <tr data-id="${item.id}">
           <td class="sticky-name">${owner ? `<input type="text" data-name value="${esc(item.name)}" maxlength="120">` : esc(item.name)}</td>
-          ${owner ? `<td><select data-dept>${DEPARTMENTS.filter(d => d.catalog).map(d => `<option value="${d.key}" ${d.key === item.department ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select></td>` : ''}
+          ${showDept ? `<td><select data-dept>${DEPARTMENTS.filter(d => d.catalog).map(d => `<option value="${d.key}" ${d.key === item.department ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select></td>` : ''}
           ${['price', 'commission'].map(field => classes.map(c => {
             const value = item.prices[c.code]?.[field] ?? 0;
             return `<td class="num">${owner ? `<input type="number" min="0" step="0.01" data-class="${esc(c.code)}" data-field="${field}" value="${value}">` : (value ? value.toLocaleString('en-PH') : '—')}</td>`;
           }).join('')).join('')}
           ${owner ? '<td><button class="icon-btn" type="button" data-archive title="Archive">✕</button></td>' : ''}
-        </tr>`).join('') : `<tr><td colspan="${cols}"><div class="empty-state small">No ${departmentOf(currentDept).label} ${kind === 'service' ? 'services' : 'add-ons'} yet.</div></td></tr>`}</tbody>`;
+        </tr>`).join('') : `<tr><td colspan="${cols}"><div class="empty-state small">${shared ? 'No add-ons yet.' : `No ${departmentOf(currentDept).label} services yet.`}</div></td></tr>`}</tbody>`;
   }
   $$('tbody input, tbody select', root).forEach(input => input.addEventListener('input', () => input.closest('tr').classList.add('dirty')));
   $$('[data-archive]', root).forEach(b => b.addEventListener('click', () => archive(Number(b.closest('tr').dataset.id))));
@@ -81,7 +85,8 @@ function rowPayload(tr) {
     prices[input.dataset.class] ??= {};
     prices[input.dataset.class][input.dataset.field] = Number(input.value || 0);
   });
-  return { name: $('[data-name]', tr).value.trim(), department: $('[data-dept]', tr).value, prices };
+  const dept = $('[data-dept]', tr);
+  return { name: $('[data-name]', tr).value.trim(), ...(dept ? { department: dept.value } : {}), prices };
 }
 
 async function saveAll() {
@@ -101,7 +106,9 @@ function addItem(kind) {
   if (!unsavedOk()) return;
   const dept = departmentOf(currentDept);
   const what = kind === 'service' ? 'service' : 'add-on';
-  openModal(`${modalHeader(`New ${dept.label} ${what}`, 'Set its prices in the matrix after adding it.')}
+  const title = kind === 'service' ? `New ${dept.label} service` : 'New add-on';
+  const subtitle = kind === 'service' ? 'Set its prices in the matrix after adding it.' : 'Offered on every department. Set its prices in the matrix after adding it.';
+  openModal(`${modalHeader(title, subtitle)}
     <div class="form-grid modal-form-grid"><div class="span-2"><label>Name</label><input type="text" data-new-name maxlength="120"></div></div>
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Add ${what}</button></div>`,
   card => {
