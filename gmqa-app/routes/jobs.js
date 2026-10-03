@@ -69,7 +69,8 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
         from catalog_items i left join catalog_prices p on p.item_id = i.id and p.vehicle_class = $2
         where i.id = $1 and i.active`, [id(input.catalog_item_id, 'service'), vehicleClass]);
       if (!row) throw bad('That service or add-on is no longer available');
-      if (row.department !== dept) {
+      // Services belong to one department; add-ons are shared by every department.
+      if (row.kind === 'service' && row.department !== dept) {
         throw bad(`${row.name} is a ${department(row.department).label} item and cannot be added to a ${department(dept).label} job`);
       }
       lines.push({ kind: row.kind, catalog_item_id: row.id, name: row.name, price: row.price, commission: row.commission, sort_order: index });

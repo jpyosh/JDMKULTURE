@@ -118,6 +118,7 @@ h1,h2,h3{font-family:var(--display);color:var(--text);}
 .view-header .desc{color:var(--muted);font-size:15px;margin-top:6px;letter-spacing:-.01em;}
 .card h2,.breakdown-card h2,.section-header h2{font-size:17px;font-weight:600;letter-spacing:-.015em;margin:0 0 14px;}
 .section-header h2{margin:0;}
+.section-header .hint{margin:4px 0 0;}
 .eyebrow{display:block;color:var(--accent-text);font-size:12px;font-weight:600;letter-spacing:0;margin-bottom:4px;}
 .muted{color:var(--muted);}
 .small{font-size:12px;}

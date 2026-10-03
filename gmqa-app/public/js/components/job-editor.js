@@ -22,7 +22,8 @@ export function createJobEditor(root, { job = null, department = job?.department
   const v = (key, fallback = '') => esc(job?.[key] ?? fallback);
   const classes = activeClasses();
   if (job?.vehicle_class && !classes.some(c => c.code === job.vehicle_class)) classes.push({ code: job.vehicle_class, label: job.vehicle_class });
-  const items = state.catalog.items.filter(i => i.department === department);
+  // This department's services, plus every add-on (add-ons are shared by all departments).
+  const items = state.catalog.items.filter(i => i.kind === 'addon' || i.department === department);
   const parts = state.catalog.parts || [];
   const partOf = partId => parts.find(p => p.id === partId);
 
