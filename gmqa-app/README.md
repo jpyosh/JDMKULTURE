@@ -45,6 +45,9 @@ Auth, deployed on Vercel.
 - Payroll works for any date range (a week, 1st–15th, 16th–end...). Attendance and overtime are
   recorded per day; cash advances, bonuses etc. are dated adjustments. Each day is paid at the rate in
   effect that day (rates change from an effective date), so earlier periods never change.
+- Overtime pays the day's rate ÷ 8 per hour × a multiplier that depends on the day it was worked:
+  ×1.25 up to Sun Oct 4, 2026, ×1 from Mon Oct 5, 2026 (`OT_RULES` in `lib/calc.js`). Like rates, a
+  change only applies from its date, so earlier weeks never change.
 - A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
   expected drawer in EOD.
 - **Sign-off sheet** (Payroll → Download sign-off sheet): a PDF for the selected pay period (up to 16

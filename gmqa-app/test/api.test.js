@@ -267,20 +267,21 @@ test('payroll sign-off sheet: a PDF of the range with every day, totals and sign
   const joy = await add({ name: 'Signoff Joy', role: '', rate_per_day: 200, construction_rate: 0 });
   await add({ name: 'Signoff Idle', role: '', rate_per_day: 300, construction_rate: 0 }); // nothing to pay: not listed
   const mark = (emp, date, body) => ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/${date}`, body));
-  await mark(menan, '2027-01-31', { code: 'OFF' });
-  await mark(menan, '2027-02-01', { code: 'CN', cn_ot_hours: 15 });
-  for (const d of ['2027-02-02', '2027-02-03', '2027-02-04', '2027-02-05', '2027-02-06']) await mark(menan, d, { code: 'CN' });
-  await mark(rene, '2027-01-31', { code: 'CN' });
-  const reneOt = { '2027-02-01': 2, '2027-02-02': 2, '2027-02-03': 5, '2027-02-04': 4, '2027-02-05': 4, '2027-02-06': 2 };
+  // (Before 2026-10-05, so overtime is ×1.25 as on the owner's sheet.)
+  await mark(menan, '2026-08-16', { code: 'OFF' });
+  await mark(menan, '2026-08-17', { code: 'CN', cn_ot_hours: 15 });
+  for (const d of ['2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21', '2026-08-22']) await mark(menan, d, { code: 'CN' });
+  await mark(rene, '2026-08-16', { code: 'CN' });
+  const reneOt = { '2026-08-17': 2, '2026-08-18': 2, '2026-08-19': 5, '2026-08-20': 4, '2026-08-21': 4, '2026-08-22': 2 };
   for (const [d, h] of Object.entries(reneOt)) await mark(rene, d, { code: 'CN', cn_ot_hours: h });
-  for (const d of ['2027-02-01', '2027-02-02', '2027-02-03', '2027-02-04', '2027-02-05']) await mark(joy, d, { code: 'P' });
-  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: menan.id, date: '2027-02-01', kind: 'deduction', amount: 2000, note: 'Cash advance' }));
-  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: joy.id, date: '2027-02-01', kind: 'deduction', amount: 500, note: 'Cash advance' }));
+  for (const d of ['2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21']) await mark(joy, d, { code: 'P' });
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: menan.id, date: '2026-08-17', kind: 'deduction', amount: 2000, note: 'Cash advance' }));
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: joy.id, date: '2026-08-17', kind: 'deduction', amount: 500, note: 'Cash advance' }));
 
-  const range = 'start=2027-01-31&end=2027-02-07';
+  const range = 'start=2026-08-16&end=2026-08-23';
   assert.equal((await download(STAFF, `/payroll/signoff.pdf?${range}`)).res.status, 403, 'owner only, like payroll');
   assert.equal((await download(null, `/payroll/signoff.pdf?${range}`)).res.status, 401);
-  assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2027-02-07&end=2027-01-31')).res.status, 400);
+  assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2026-08-23&end=2026-08-16')).res.status, 400);
   assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2026-01-01&end=2026-04-01')).res.status, 400);
   // One pay period per sheet: up to 16 days (a week, 1st-15th, 16th-31st) so every day stays readable.
   assert.equal((await download(OWNER, '/payroll/signoff.pdf?start=2027-03-16&end=2027-03-31')).res.status, 200);
@@ -291,7 +292,7 @@ test('payroll sign-off sheet: a PDF of the range with every day, totals and sign
   const { res, body } = await download(OWNER, `/payroll/signoff.pdf?${range}`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('content-type'), 'application/pdf');
-  assert.equal(res.headers.get('content-disposition'), 'attachment; filename="Payroll_Signoff_Jan31-Feb7_2027.pdf"');
+  assert.equal(res.headers.get('content-disposition'), 'attachment; filename="Payroll_Signoff_Aug16-Aug23_2026.pdf"');
   assert.equal(body.subarray(0, 5).toString(), '%PDF-');
 
   const pages = await pdfLines(body);
@@ -301,13 +302,14 @@ test('payroll sign-off sheet: a PDF of the range with every day, totals and sign
   // Header, matching the screen's numbers.
   const screen = await ok(api(OWNER, 'GET', `/payroll?${range}`));
   assert.equal(screen.totalNet, 16985.94);
+  assert.equal(screen.otRule, "OT pays the day's rate ÷ 8 × 1.25 per hour.");
   assert.match(text, /JDM Kulture Auto Salon — Payroll Sign-off Sheet/);
-  assert.match(text, /Pay period: \| Jan 31 – Feb 7, 2027/);
+  assert.match(text, /Pay period: \| Aug 16 – Aug 23, 2026/);
   assert.match(text, /Total net pay: \| ₱16,985\.94/);
   assert.match(text, /Each employee signs to confirm they received the net pay shown\./);
   // One column per day, Sunday to Sunday, then the totals and the signature columns.
   assert.match(line(/^SUN/), /^SUN \| MON \| TUE \| WED \| THU \| FRI \| SAT \| SUN \| CW \| CN \| DATE$/);
-  assert.match(line(/^# \| EMPLOYEE/), /^# \| EMPLOYEE \| 01-31 \| 02-01 \| 02-02 \| 02-03 \| 02-04 \| 02-05 \| 02-06 \| 02-07 \| days \| days \| OT \| GROSS \(₱\) \| ADJUST\. \(₱\) \| NET PAY \(₱\) \| SIGNATURE \| RECEIVED$/);
+  assert.match(line(/^# \| EMPLOYEE/), /^# \| EMPLOYEE \| 08-16 \| 08-17 \| 08-18 \| 08-19 \| 08-20 \| 08-21 \| 08-22 \| 08-23 \| days \| days \| OT \| GROSS \(₱\) \| ADJUST\. \(₱\) \| NET PAY \(₱\) \| SIGNATURE \| RECEIVED$/);
   // Rows: everyone with pay, in the screen's order; nobody with nothing to pay.
   for (const name of ['Signoff Idle', 'JP']) assert.ok(!text.includes(name), `${name} has nothing to pay and is not listed`);
   assert.ok(text.indexOf('Signoff Menan') < text.indexOf('Signoff Rene') && text.indexOf('Signoff Rene') < text.indexOf('Signoff Joy'));
@@ -327,6 +329,26 @@ test('payroll sign-off sheet: a PDF of the range with every day, totals and sign
   assert.match(text, /OT pays the day's rate ÷ 8 × 1\.25 per hour\./);
   assert.match(text, /Prepared by \| \(Name & signature\) \| Checked by \| \(Name & signature\) \| Approved by \| \(Owner \/ Manager\) \| Released by \| \(Cash \/ GCash\)/);
   assert.equal((text.match(/Date: ______________/g) || []).length, 4);
+});
+
+test('overtime from 2026-10-05 pays ×1 on screen and on the sign-off sheet; earlier days keep ×1.25', async () => {
+  const worker = await ok(api(OWNER, 'POST', '/employees', { name: 'OT Rule Worker', role: '', rate_per_day: 400, construction_rate: 800 }));
+  const mark = (date, body) => ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/${date}`, body));
+  await mark('2027-05-03', { code: 'CN', cn_ot_hours: 2 }); // after the change: 800 + 800/8 × 1 × 2 = 1,000
+  const after = await ok(api(OWNER, 'GET', '/payroll?start=2027-05-02&end=2027-05-09'));
+  assert.equal(after.rows.find(r => r.employee.id === worker.id).pay.gross, 1000);
+  assert.equal(after.otRule, "OT pays the day's rate ÷ 8 × 1 per hour.");
+  const pdf = (await pdfLines((await download(OWNER, '/payroll/signoff.pdf?start=2027-05-02&end=2027-05-09')).body))[0].join('\n');
+  assert.match(pdf, /OT Rule Worker/);
+  assert.match(pdf, /1,000\.00 \| 1,000\.00/);
+  assert.match(pdf, /OT pays the day's rate ÷ 8 × 1 per hour\./);
+
+  // A range across the change shows both rules; each day is paid by its own rule.
+  await mark('2026-10-04', { code: 'CN', cn_ot_hours: 2 }); // before: 800 + 800/8 × 1.25 × 2 = 1,050
+  await mark('2026-10-05', { code: 'CN', cn_ot_hours: 2 }); // after: 800 + 200 = 1,000
+  const across = await ok(api(OWNER, 'GET', '/payroll?start=2026-10-04&end=2026-10-05'));
+  assert.equal(across.rows.find(r => r.employee.id === worker.id).pay.gross, 2050);
+  assert.equal(across.otRule, "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 4, 2026, and × 1 from Oct 5, 2026.");
 });
 
 test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {

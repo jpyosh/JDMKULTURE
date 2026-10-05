@@ -135,8 +135,34 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 // ---------------------------------------------------------------- payroll
 
 const ATTENDANCE_CODES = ['P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
-const OT_MULTIPLIER = 1.25;
 const HOURS_PER_DAY = 8;
+// Overtime pays the day's rate ÷ 8 × the multiplier in effect on the day the overtime was worked.
+// Dated like employee rates, so a change never alters days before it. Newest last.
+const OT_RULES = [
+  { from: '2000-01-01', multiplier: 1.25 },
+  { from: '2026-10-05', multiplier: 1 }, // owner's decision: OT at the plain hourly rate from Mon Oct 5, 2026
+];
+function otMultiplierOn(date) {
+  let rule = OT_RULES[0];
+  for (const r of OT_RULES) if (r.from <= date) rule = r;
+  return rule.multiplier;
+}
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const longDate = date => { const [y, m, d] = date.split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${d}, ${y}`; };
+// The overtime rule(s) that apply to the days start..end, as one sentence for the screen and the sheet.
+function otRuleNote(start, end) {
+  const parts = [];
+  OT_RULES.forEach((rule, i) => {
+    const next = OT_RULES[i + 1];
+    const until = next ? addDays(next.from, -1) : null;
+    if ((until && until < start) || rule.from > end) return; // no day of the range uses this rule
+    parts.push({ rule, until, from: rule.from });
+  });
+  if (parts.length === 1) return `OT pays the day's rate ÷ 8 × ${parts[0].rule.multiplier} per hour.`;
+  return `OT pays the day's rate ÷ 8 ${parts.map((p, i) => i === 0
+    ? `× ${p.rule.multiplier} per hour up to ${longDate(p.until)}`
+    : `× ${p.rule.multiplier} from ${longDate(p.from)}`).join(', and ')}.`;
+}
 
 // rates: [{ effective_from, rate_per_day, construction_rate }]; the latest one on or before date applies.
 function rateOn(rates, date) {
@@ -164,7 +190,7 @@ function payrollForRange({ dates, days = {}, rates = [], adjustments = [] }) {
     const cwOt = Number(d.cw_ot_hours) || 0;
     const cnOt = Number(d.cn_ot_hours) || 0;
     t.otHours += cwOt + cnOt;
-    t.otPay += (cw * cwOt + cn * cnOt) / HOURS_PER_DAY * OT_MULTIPLIER;
+    t.otPay += (cw * cwOt + cn * cnOt) / HOURS_PER_DAY * otMultiplierOn(date);
   }
   const additions = sum(adjustments.filter(a => a.kind === 'addition'), a => a.amount);
   const deductions = sum(adjustments.filter(a => a.kind === 'deduction'), a => a.amount);
@@ -252,7 +278,7 @@ function joPrefix(date, prefix = 'JO') {
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, isCounted, daySummary,
-  ATTENDANCE_CODES, rateOn, payrollForRange,
+  ATTENDANCE_CODES, OT_RULES, otMultiplierOn, otRuleNote, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
 };

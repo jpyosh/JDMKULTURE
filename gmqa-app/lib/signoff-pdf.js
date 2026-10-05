@@ -3,6 +3,7 @@
 // people who prepare, check, approve and release the pay.
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { otRuleNote } = require('./calc');
 
 const MAX_DAYS = 16; // one pay period: a week, 1st-15th or 16th-end
 const FONTS = {
@@ -195,7 +196,7 @@ function buildPdf(payroll) {
     put('TOTAL NET PAY', { x: totalRight - totalW - 140, w: 130 }, top + 16, { font: 'bold', size: 9, align: 'right' });
     put('P = Carwash day · 0.5P = Half carwash · CN = Construction · 0.5CN = Half construction · A = Absent · OFF = Day off · +h = overtime hours.',
       at(M, right - M), top + 36, { size: 7, color: MUTED });
-    put('Rate shown as carwash / construction daily rate. OT pays the day\'s rate ÷ 8 × 1.25 per hour.', at(M, right - M), top + 47, { size: 7, color: MUTED });
+    put(`Rate shown as carwash / construction daily rate. ${payroll.otRule || otRuleNote(payroll.start, payroll.end)}`, at(M, right - M), top + 47, { size: 7, color: MUTED });
     const boxes = [['Prepared by', '(Name & signature)'], ['Checked by', '(Name & signature)'], ['Approved by', '(Owner / Manager)'], ['Released by', '(Cash / GCash)']];
     const boxW = (right - M) / 4;
     boxes.forEach(([label, hint], i) => {
