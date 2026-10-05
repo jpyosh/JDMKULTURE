@@ -453,6 +453,16 @@ async function launch() {
       assert.ok(await inputsMatchTable());
     });
 
+    await step('payroll: the overtime note follows the rule of the days shown', async () => {
+      const note = () => payroll.locator('[data-ot-rule]').textContent();
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
+      await setPayrollRange('2026-10-05', '2026-10-11');
+      assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1 per hour.");
+      await setPayrollRange('2026-10-01', '2026-10-07');
+      assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and × 1 from Oct 5, 2026/);
+    });
+
     await step('payroll: sign-off sheet downloads as a PDF', async () => {
       await setPayrollRange('2026-09-27', '2026-10-04');
       // Reported: the button was hard to find (it sat below the whole table). It must be on screen

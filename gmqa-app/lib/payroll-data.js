@@ -1,7 +1,7 @@
 // Loads payroll for a date range. Shared by the Payroll screen and the Finance summary so both
 // always compute pay the same way.
 const { db } = require('./db');
-const { payrollForRange, datesBetween, round2 } = require('./calc');
+const { payrollForRange, datesBetween, round2, otRuleNote } = require('./calc');
 
 const SHOP_TODAY = "(now() at time zone 'Asia/Manila')::date";
 
@@ -35,7 +35,7 @@ async function loadPayroll(start, end, q = db) {
     const pay = payrollForRange({ dates, days, rates: rates.filter(r => r.employee_id === employee.id), adjustments: adj });
     return { employee, days, adjustments: adj, pay };
   });
-  return { start, end, dates, rows, totalNet: round2(rows.reduce((t, r) => t + r.pay.net, 0)), payouts };
+  return { start, end, dates, rows, totalNet: round2(rows.reduce((t, r) => t + r.pay.net, 0)), payouts, otRule: otRuleNote(start, end) };
 }
 
 module.exports = { loadPayroll, EMPLOYEE_SELECT, SHOP_TODAY };

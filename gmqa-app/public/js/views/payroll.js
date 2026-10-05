@@ -48,7 +48,7 @@ function mount(el) {
         <span class="attendance-code present">P = Carwash day</span><span class="attendance-code half">0.5P = Half carwash</span>
         <span class="attendance-code construction">CN = Construction</span><span class="attendance-code half">0.5CN = Half construction</span>
         <span class="attendance-code absence">A = Absent</span><span class="attendance-code off">OFF = Day off</span>
-        <span class="hint">OT pays the day's rate ÷ 8 × 1.25 per hour.</span>
+        <span class="hint" data-ot-rule></span>
       </div>
       <div class="table-wrap"><table class="payroll-table"><thead data-head></thead><tbody data-body></tbody></table></div>
       <div class="row-line total mt"><span>Total net pay for this range</span><span class="money" data-total></span></div>
@@ -141,6 +141,7 @@ function render() {
         ${e.active ? '<button class="icon-btn" type="button" data-act="deactivate" title="Remove from payroll">✕</button>' : '<span class="muted small">inactive</span>'}</td>
     </tr>`).join('') : `<tr><td colspan="${data.dates.length + 8}"><div class="empty-state">No employees yet.</div></td></tr>`;
   $('[data-total]', root).textContent = peso(data.totalNet);
+  $('[data-ot-rule]', root).textContent = data.otRule; // the overtime rule(s) for these days, from lib/calc.js
 
   $('[data-payouts]', root).innerHTML = data.payouts.length
     ? data.payouts.map(p => `<div class="row-line"><span class="k">${esc(p.payout_date)} · ${p.side === 'cash' ? 'Cash' : 'GCash'} · for ${esc(p.period_start)} → ${esc(p.period_end)}${p.note ? ` · ${esc(p.note)}` : ''}</span>
