@@ -123,7 +123,7 @@ const reload = () => setRange(range.start, range.end);
 function render() {
   $('[data-head]', root).innerHTML = `<tr><th>Employee</th>
     ${data.dates.map(d => `<th class="attendance-day" data-date="${d}">${weekday(d)}<small>${d.slice(5)}</small></th>`).join('')}
-    <th class="num">CW days</th><th class="num">CN days</th><th class="num">OT</th><th class="num">Gross</th>
+    <th class="num">CW days</th><th class="num">CN days</th><th class="num">OT</th><th class="num">OT pay</th><th class="num">Gross</th>
     <th class="num">Adjust.</th><th class="num">Net</th><th></th></tr>`;
   $('[data-body]', root).innerHTML = data.rows.length ? data.rows.map(({ employee: e, days, adjustments, pay }) => `
     <tr data-emp="${e.id}" class="${e.active ? '' : 'inactive'}">
@@ -133,13 +133,14 @@ function render() {
         ${days[d]?.cw_ot_hours || days[d]?.cn_ot_hours ? `<div class="ot-badge">+${(days[d].cw_ot_hours || 0) + (days[d].cn_ot_hours || 0)}h</div>` : ''}</td>`).join('')}
       <td class="num">${pay.carwashDays}</td><td class="num">${pay.constructionDays}</td>
       <td class="num"><button class="btn ghost small" type="button" data-act="ot">${pay.otHours}h</button></td>
+      <td class="num money ${pay.otPay ? '' : 'muted'}" data-ot-pay>${pay.otPay ? peso(pay.otPay) : '—'}</td>
       <td class="num money">${peso(pay.gross - pay.additions)}</td>
       <td class="num"><button class="btn ghost small" type="button" data-act="adjust">${pay.additions || pay.deductions
         ? `${pay.additions ? `+${peso(pay.additions)}` : ''}${pay.deductions ? ` −${peso(pay.deductions)}` : ''}` : 'Add'}</button></td>
       <td class="num money pos" data-net>${peso(pay.net)}</td>
       <td class="row-actions"><button class="btn ghost small" type="button" data-act="edit" title="Edit employee / rates">Edit</button>
         ${e.active ? '<button class="icon-btn" type="button" data-act="deactivate" title="Remove from payroll">✕</button>' : '<span class="muted small">inactive</span>'}</td>
-    </tr>`).join('') : `<tr><td colspan="${data.dates.length + 8}"><div class="empty-state">No employees yet.</div></td></tr>`;
+    </tr>`).join('') : `<tr><td colspan="${data.dates.length + 9}"><div class="empty-state">No employees yet.</div></td></tr>`;
   $('[data-total]', root).textContent = peso(data.totalNet);
   $('[data-ot-rule]', root).textContent = data.otRule; // the overtime rule(s) for these days, from lib/calc.js
 

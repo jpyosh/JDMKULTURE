@@ -463,6 +463,24 @@ async function launch() {
       assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and × 1 from Oct 5, 2026/);
     });
 
+    await step('payroll: OT pay is shown next to OT hours', async () => {
+      await setPayrollRange('2026-10-05', '2026-10-11');
+      const heads = (await payroll.locator('thead th').allTextContents()).map(t => t.trim());
+      assert.equal(heads[heads.indexOf('OT') + 1], 'OT pay', 'OT pay column right after OT hours');
+      const row = payroll.locator('tbody tr[data-emp]').first();
+      assert.equal((await row.locator('[data-ot-pay]').textContent()).trim(), '—', 'no overtime: no OT pay');
+      await row.locator('[data-act="ot"]').click();
+      await page.fill('#modal [data-cw="2026-10-05"]', '2');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Overtime saved/);
+      await page.waitForFunction(() => document.querySelector('#view-payroll tbody tr[data-emp] [data-ot-pay]').textContent.trim() !== '—');
+      // Carwash rate from the row ("… · ₱600.00 / ₱0.00"), OT after Oct 5 at × 1: rate / 8 × 2.
+      const rate = Number((await row.locator('.employee-cell .muted').textContent()).match(/₱([\d,]+\.\d\d)/)[1].replace(/,/g, ''));
+      const expected = `₱${(rate / 8 * 2).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      assert.equal((await row.locator('[data-ot-pay]').textContent()).trim(), expected);
+      assert.equal((await row.locator('[data-act="ot"]').textContent()).trim(), '2h');
+    });
+
     await step('payroll: sign-off sheet downloads as a PDF', async () => {
       await setPayrollRange('2026-09-27', '2026-10-04');
       // Reported: the button was hard to find (it sat below the whole table). It must be on screen

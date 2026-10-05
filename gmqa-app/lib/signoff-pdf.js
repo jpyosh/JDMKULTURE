@@ -66,6 +66,7 @@ function sheetRows(payroll) {
       cwDays: plain(pay.carwashDays),
       cnDays: plain(pay.constructionDays),
       ot: hours(pay.otHours),
+      otPay: pay.otPay ? amount(pay.otPay) : '',
       gross: amount(pay.gross - pay.additions),
       adjust: signed(pay.additions - pay.deductions),
       net: amount(pay.net),
@@ -94,14 +95,14 @@ function buildPdf(payroll) {
   // Columns (x = left edge, w = width). Day columns share what is left.
   // Up to 8 days (a week) the columns are roomy; up to 16 (half a month) they tighten so every day fits.
   const fixed = dates.length <= 8
-    ? { num: 16, name: 104, cw: 28, cn: 28, ot: 32, gross: 60, adjust: 60, net: 64, sig: 88, date: 54 }
-    : { num: 14, name: 92, cw: 22, cn: 22, ot: 26, gross: 50, adjust: 48, net: 54, sig: 70, date: 40 };
+    ? { num: 16, name: 100, cw: 26, cn: 26, ot: 30, otPay: 52, gross: 60, adjust: 58, net: 62, sig: 78, date: 50 }
+    : { num: 14, name: 86, cw: 20, cn: 20, ot: 24, otPay: 44, gross: 50, adjust: 46, net: 52, sig: 60, date: 38 };
   const dayW = Math.min(34, (right - M - Object.values(fixed).reduce((a, b) => a + b, 0)) / dates.length);
   const col = {};
   let x = M;
   for (const key of ['num', 'name']) { col[key] = { x, w: fixed[key] }; x += fixed[key]; }
   col.days = dates.map(() => { const c = { x, w: dayW }; x += dayW; return c; });
-  for (const key of ['cw', 'cn', 'ot', 'gross', 'adjust', 'net', 'sig', 'date']) { col[key] = { x, w: fixed[key] }; x += fixed[key]; }
+  for (const key of ['cw', 'cn', 'ot', 'otPay', 'gross', 'adjust', 'net', 'sig', 'date']) { col[key] = { x, w: fixed[key] }; x += fixed[key]; }
   const dayFont = dayW < 26 ? 7 : 8;
 
   // All text sits on its baseline so every item of a line shares one y. Text never wraps: it shrinks a
@@ -158,6 +159,7 @@ function buildPdf(payroll) {
     put('#', col.num, y2, h);
     put('EMPLOYEE', col.name, y2, h);
     put('OT', col.ot, y2, { ...h, align: 'center' });
+    put('OT PAY (₱)', col.otPay, y2, { ...h, align: 'right' });
     put('GROSS (₱)', col.gross, y2, { ...h, align: 'right' });
     put('ADJUST. (₱)', col.adjust, y2, { ...h, align: 'right' });
     put('NET PAY (₱)', col.net, y2, { ...h, align: 'right' });
@@ -178,6 +180,7 @@ function buildPdf(payroll) {
     put(row.cwDays, col.cw, y1, { align: 'center' });
     put(row.cnDays, col.cn, y1, { align: 'center' });
     put(row.ot, col.ot, y1, { align: 'center' });
+    put(row.otPay, col.otPay, y1, { align: 'right' });
     put(row.gross, col.gross, y1, { align: 'right' });
     put(row.adjust, col.adjust, y1, { align: 'right', color: row.adjust.startsWith('−') ? RED : INK });
     put(row.net, col.net, y1, { font: 'bold', size: 9, align: 'right' });
