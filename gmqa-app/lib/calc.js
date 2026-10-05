@@ -135,18 +135,20 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 // ---------------------------------------------------------------- payroll
 
 const ATTENDANCE_CODES = ['P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
-const HOURS_PER_DAY = 8;
-// Overtime pays the day's rate ÷ 8 × the multiplier in effect on the day the overtime was worked.
-// Dated like employee rates, so a change never alters days before it. Newest last.
+// Overtime pays the hourly rate (the day's rate ÷ the normal hours of that kind of day) × a multiplier,
+// using the rule in effect on the day the overtime was worked. Dated like employee rates, so a change
+// never alters days before it. Newest last.
 const OT_RULES = [
-  { from: '2000-01-01', multiplier: 1.25 },
-  { from: '2026-10-05', multiplier: 1 }, // owner's decision: OT at the plain hourly rate from Mon Oct 5, 2026
+  { from: '2000-01-01', multiplier: 1.25, carwashHours: 8, constructionHours: 8 },
+  // Owner's decisions from Mon Oct 5, 2026: OT at the plain hourly rate, and a carwash day is 11 hours.
+  { from: '2026-10-05', multiplier: 1, carwashHours: 11, constructionHours: 8 },
 ];
-function otMultiplierOn(date) {
+function otRuleOn(date) {
   let rule = OT_RULES[0];
   for (const r of OT_RULES) if (r.from <= date) rule = r;
-  return rule.multiplier;
+  return rule;
 }
+const otMultiplierOn = date => otRuleOn(date).multiplier;
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const longDate = date => { const [y, m, d] = date.split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${d}, ${y}`; };
 // The overtime rule(s) that apply to the days start..end, as one sentence for the screen and the sheet.
@@ -158,10 +160,13 @@ function otRuleNote(start, end) {
     if ((until && until < start) || rule.from > end) return; // no day of the range uses this rule
     parts.push({ rule, until, from: rule.from });
   });
-  if (parts.length === 1) return `OT pays the day's rate ÷ 8 × ${parts[0].rule.multiplier} per hour.`;
-  return `OT pays the day's rate ÷ 8 ${parts.map((p, i) => i === 0
-    ? `× ${p.rule.multiplier} per hour up to ${longDate(p.until)}`
-    : `× ${p.rule.multiplier} from ${longDate(p.from)}`).join(', and ')}.`;
+  const hourly = r => (r.carwashHours === r.constructionHours
+    ? `the day's rate ÷ ${r.carwashHours}`
+    : `the carwash rate ÷ ${r.carwashHours} (construction rate ÷ ${r.constructionHours})`);
+  if (parts.length === 1) return `OT pays ${hourly(parts[0].rule)} × ${parts[0].rule.multiplier} per hour.`;
+  return `OT pays ${parts.map((p, i) => i === 0
+    ? `${hourly(p.rule)} × ${p.rule.multiplier} per hour up to ${longDate(p.until)}`
+    : `${hourly(p.rule)} × ${p.rule.multiplier} from ${longDate(p.from)}`).join(', and ')}.`;
 }
 
 // rates: [{ effective_from, rate_per_day, construction_rate }]; the latest one on or before date applies.
@@ -190,7 +195,8 @@ function payrollForRange({ dates, days = {}, rates = [], adjustments = [] }) {
     const cwOt = Number(d.cw_ot_hours) || 0;
     const cnOt = Number(d.cn_ot_hours) || 0;
     t.otHours += cwOt + cnOt;
-    t.otPay += (cw * cwOt + cn * cnOt) / HOURS_PER_DAY * otMultiplierOn(date);
+    const ot = otRuleOn(date);
+    t.otPay += (cw / ot.carwashHours * cwOt + cn / ot.constructionHours * cnOt) * ot.multiplier;
   }
   const additions = sum(adjustments.filter(a => a.kind === 'addition'), a => a.amount);
   const deductions = sum(adjustments.filter(a => a.kind === 'deduction'), a => a.amount);
