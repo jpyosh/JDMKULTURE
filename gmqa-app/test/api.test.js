@@ -309,17 +309,17 @@ test('payroll sign-off sheet: a PDF of the range with every day, totals and sign
   assert.match(text, /Each employee signs to confirm they received the net pay shown\./);
   // One column per day, Sunday to Sunday, then the totals and the signature columns.
   assert.match(line(/^SUN/), /^SUN \| MON \| TUE \| WED \| THU \| FRI \| SAT \| SUN \| CW \| CN \| DATE$/);
-  assert.match(line(/^# \| EMPLOYEE/), /^# \| EMPLOYEE \| 08-16 \| 08-17 \| 08-18 \| 08-19 \| 08-20 \| 08-21 \| 08-22 \| 08-23 \| days \| days \| OT \| GROSS \(₱\) \| ADJUST\. \(₱\) \| NET PAY \(₱\) \| SIGNATURE \| RECEIVED$/);
+  assert.match(line(/^# \| EMPLOYEE/), /^# \| EMPLOYEE \| 08-16 \| 08-17 \| 08-18 \| 08-19 \| 08-20 \| 08-21 \| 08-22 \| 08-23 \| days \| days \| OT \| OT PAY \(₱\) \| GROSS \(₱\) \| ADJUST\. \(₱\) \| NET PAY \(₱\) \| SIGNATURE \| RECEIVED$/);
   // Rows: everyone with pay, in the screen's order; nobody with nothing to pay.
   for (const name of ['Signoff Idle', 'JP']) assert.ok(!text.includes(name), `${name} has nothing to pay and is not listed`);
   assert.ok(text.indexOf('Signoff Menan') < text.indexOf('Signoff Rene') && text.indexOf('Signoff Rene') < text.indexOf('Signoff Joy'));
   // Menan: OFF Sunday, CN Mon-Sat with 15h OT on Monday, 2,000 cash advance.
   assert.match(line(/Signoff Menan/), /Signoff Menan/);
   assert.match(text, /₱560 \/ 1,200/);
-  assert.match(text, /\| OFF \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 6 \| 15h \| 10,012\.50 \| −2,000\.00 \| 8,012\.50/);
+  assert.match(text, /\| OFF \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 6 \| 15h \| 2,812\.50 \| 10,012\.50 \| −2,000\.00 \| 8,012\.50/); // OT pay 1,200/8 × 1.25 × 15
   // Rene: construction, CN all seven working days, overtime shown under each day.
   assert.match(text, /Construction · ₱250 \/ 850/);
-  assert.match(text, /CN \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 7 \| 19h \| 8,473\.44 \| 8,473\.44/);
+  assert.match(text, /CN \| CN \| CN \| CN \| CN \| CN \| CN \| 0 \| 7 \| 19h \| 2,523\.44 \| 8,473\.44 \| 8,473\.44/); // OT pay 850/8 × 1.25 × 19
   assert.match(text, /\+2h \| \+2h \| \+5h \| \+4h \| \+4h \| \+2h/);
   // Joy: five carwash days, 500 deducted.
   assert.match(text, /Signoff Joy \| P \| P \| P \| P \| P \| 5 \| 0 \| 0h \| 1,000\.00 \| −500\.00 \| 500\.00/);
@@ -340,7 +340,7 @@ test('overtime from 2026-10-05 pays ×1 on screen and on the sign-off sheet; ear
   assert.equal(after.otRule, "OT pays the day's rate ÷ 8 × 1 per hour.");
   const pdf = (await pdfLines((await download(OWNER, '/payroll/signoff.pdf?start=2027-05-02&end=2027-05-09')).body))[0].join('\n');
   assert.match(pdf, /OT Rule Worker/);
-  assert.match(pdf, /1,000\.00 \| 1,000\.00/);
+  assert.match(pdf, /2h \| 200\.00 \| 1,000\.00 \| 1,000\.00/); // OT pay 800/8 × 1 × 2
   assert.match(pdf, /OT pays the day's rate ÷ 8 × 1 per hour\./);
 
   // A range across the change shows both rules; each day is paid by its own rule.
