@@ -458,9 +458,9 @@ async function launch() {
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
       await setPayrollRange('2026-10-05', '2026-10-11');
-      assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1 per hour.");
+      assert.equal(await note(), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
       await setPayrollRange('2026-10-01', '2026-10-07');
-      assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and × 1 from Oct 5, 2026/);
+      assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 from Oct 5, 2026/);
     });
 
     await step('payroll: OT pay is shown next to OT hours', async () => {
@@ -474,9 +474,9 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Overtime saved/);
       await page.waitForFunction(() => document.querySelector('#view-payroll tbody tr[data-emp] [data-ot-pay]').textContent.trim() !== '—');
-      // Carwash rate from the row ("… · ₱600.00 / ₱0.00"), OT after Oct 5 at × 1: rate / 8 × 2.
+      // Carwash rate from the row ("… · ₱600.00 / ₱0.00"); carwash OT after Oct 5 is an 11-hour day at × 1: rate / 11 × 2.
       const rate = Number((await row.locator('.employee-cell .muted').textContent()).match(/₱([\d,]+\.\d\d)/)[1].replace(/,/g, ''));
-      const expected = `₱${(rate / 8 * 2).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const expected = `₱${(Math.round(rate / 11 * 2 * 100) / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       assert.equal((await row.locator('[data-ot-pay]').textContent()).trim(), expected);
       assert.equal((await row.locator('[data-act="ot"]').textContent()).trim(), '2h');
     });

@@ -337,18 +337,24 @@ test('overtime from 2026-10-05 pays ×1 on screen and on the sign-off sheet; ear
   await mark('2027-05-03', { code: 'CN', cn_ot_hours: 2 }); // after the change: 800 + 800/8 × 1 × 2 = 1,000
   const after = await ok(api(OWNER, 'GET', '/payroll?start=2027-05-02&end=2027-05-09'));
   assert.equal(after.rows.find(r => r.employee.id === worker.id).pay.gross, 1000);
-  assert.equal(after.otRule, "OT pays the day's rate ÷ 8 × 1 per hour.");
+  assert.equal(after.otRule, 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
   const pdf = (await pdfLines((await download(OWNER, '/payroll/signoff.pdf?start=2027-05-02&end=2027-05-09')).body))[0].join('\n');
   assert.match(pdf, /OT Rule Worker/);
   assert.match(pdf, /2h \| 200\.00 \| 1,000\.00 \| 1,000\.00/); // OT pay 800/8 × 1 × 2
-  assert.match(pdf, /OT pays the day's rate ÷ 8 × 1 per hour\./);
+  assert.match(pdf, /OT pays the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 per hour\./);
+
+  // Carwash overtime after the change uses an 11-hour day: 400 + 400/11 × 2 = 472.73.
+  await mark('2027-05-04', { code: 'P', cw_ot_hours: 2 });
+  const cw = await ok(api(OWNER, 'GET', '/payroll?start=2027-05-04&end=2027-05-04'));
+  assert.equal(cw.rows.find(r => r.employee.id === worker.id).pay.otPay, 72.73);
+  assert.equal(cw.rows.find(r => r.employee.id === worker.id).pay.gross, 472.73);
 
   // A range across the change shows both rules; each day is paid by its own rule.
   await mark('2026-10-04', { code: 'CN', cn_ot_hours: 2 }); // before: 800 + 800/8 × 1.25 × 2 = 1,050
   await mark('2026-10-05', { code: 'CN', cn_ot_hours: 2 }); // after: 800 + 200 = 1,000
   const across = await ok(api(OWNER, 'GET', '/payroll?start=2026-10-04&end=2026-10-05'));
   assert.equal(across.rows.find(r => r.employee.id === worker.id).pay.gross, 2050);
-  assert.equal(across.otRule, "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 4, 2026, and × 1 from Oct 5, 2026.");
+  assert.equal(across.otRule, "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 4, 2026, and the carwash rate ÷ 11 (construction rate ÷ 8) × 1 from Oct 5, 2026.");
 });
 
 test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {
