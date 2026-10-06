@@ -64,6 +64,7 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
         unit_cost: part.avg_cost,
       });
     } else if (input?.catalog_item_id != null) {
+      if (!department(dept).catalog) throw bad(`The ${department(dept).label} sells parts only`);
       if (!vehicleClass) throw bad('Choose a vehicle class before adding services or add-ons');
       const row = await q.one(`select i.id, i.kind, i.name, i.department, coalesce(p.price, 0) as price, coalesce(p.commission, 0) as commission
         from catalog_items i left join catalog_prices p on p.item_id = i.id and p.vehicle_class = $2

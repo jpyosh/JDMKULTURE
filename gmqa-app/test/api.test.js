@@ -693,6 +693,12 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 17);
   assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', items: [{ catalog_item_id: premium.id }] })).status, 400,
     'services are not sold at the parts counter');
+  const addon = (await ok(api(OWNER, 'GET', '/catalog'))).items.find(i => i.kind === 'addon');
+  const addonSale = await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', vehicle_class: 'S', items: [{ catalog_item_id: addon.id }] });
+  assert.equal(addonSale.status, 400, 'add-ons are not sold at the parts counter either, even with a vehicle class');
+  assert.match(addonSale.data.error, /parts only/);
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${counter.id}`, { vehicle_class: 'S', items: [...counter.items.map(i => ({ id: i.id })), { catalog_item_id: addon.id }] })).status, 400,
+    'nor added to an existing counter sale');
 
   // Owner stock count adjustment, with a reason; cannot go below zero.
   assert.equal((await api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -1 })).status, 400, 'reason required');
