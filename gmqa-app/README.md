@@ -71,13 +71,30 @@ Auth, deployed on Vercel.
   plus a money in/out view of the drawer.
 - **Bill funds** (Meralco, Maynilad, Internet, Rent, Business permit, or any you add) each have a usual
   amount and due date. The system works out a **weekly target** = what is still needed ÷ weeks left.
-- At EOD, the supervisor sets aside each fund's share ("Set aside for bills"); it leaves the drawer.
+- At EOD, the **Bill envelopes** card lists each bill that has an amount with this week's share and one
+  button ("Put ₱800.00 aside"); "Other amount" allows a different amount or GCash. It leaves the drawer:
+  the money goes in a labelled envelope handed to the owner with the day's tape.
 - When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that
   day's drawer and shows on that day's EOD.
 - Set-asides are not costs. The cost is counted when the bill is paid.
 - **Bills paid** (Finance) lists every bill paid in the period; **Undo** removes one recorded by mistake
   completely (fund, that day's drawer and profit go back). The audit log keeps a record of it.
 - Finance opens with a **How Finance works** guide for new users (it stays closed once someone closes it).
+
+## Cash fund (abonos)
+
+- Money from the boss for purchases the day's sales cannot cover yet (food, supplies, chemicals...).
+  Cash fund tab (owner): **Set fund size** (any amount), **Record money received**, **Download list (PDF)**,
+  **Replenish**, and History with **Undo**.
+- A purchase from the fund is recorded at EOD: Expenses → first box **Cash fund (abono)** (staff can do this).
+  It is a cost of that day (Finance: "Bought with the cash fund") but never changes the expected drawer.
+  Spending more than the fund holds is refused.
+- A replenishment pays back every purchase dated on or before it that was still waiting, so it works
+  weekly or monthly. Its itemized list stays printable; undoing it puts the purchases back on the list.
+  A purchase already replenished cannot be deleted until that replenishment is undone.
+- "Ask the boss for" = fund size − cash in the fund (or, with no size set, what was spent).
+- Migration 008 adds `cash_fund`, `cash_fund_topups`, expense side `fund` and `expenses.topup_id`;
+  existing expenses are unchanged.
 
 ## Parts & inventory
 

@@ -83,6 +83,9 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 
   const cashExpenses = sum(expenses.filter(e => e.side === 'cash'), e => e.amount);
   const gcashExpenses = sum(expenses.filter(e => e.side === 'gcash'), e => e.amount);
+  // Bought with the cash fund (abonos): a cost of the day, but the money never passed through the drawer.
+  const fundExpenses = sum(expenses.filter(e => e.side === 'fund'), e => e.amount);
+  const drawerExpenses = round2(cashExpenses + gcashExpenses);
 
   // Tips arrive in GCash and are passed on to the crew, so they net to zero in the GCash count.
   const jobTips = sum(received, j => j.tip_gcash);
@@ -121,7 +124,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
     collected, receivables, commission, partsSales, partsCost,
     net: round2(collected - commission),
     cashReceived, gcashReceived, paidInAdvance, paidEarlier,
-    cashExpenses, gcashExpenses, expenses: round2(cashExpenses + gcashExpenses),
+    cashExpenses, gcashExpenses, fundExpenses, drawerExpenses, expenses: round2(drawerExpenses + fundExpenses),
     jobTips, otherTips, tips,
     cashFloat, commissionCash, commissionGcash, payrollCash, payrollGcash,
     setAsideCash, setAsideGcash, billTopUpCash, billTopUpGcash,

@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -213,6 +213,23 @@ test('004 turns weekly payroll sheets into daily records and rate history', asyn
   await assert.rejects(driver.query("insert into attendance (employee_id, work_date, code) values (1, '2026-10-01', 'X')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_adjustments (employee_id, adj_date, kind, amount, note) values (1, '2026-10-01', 'deduction', -5, 'x')"), /check/i);
   await assert.rejects(driver.query("insert into payroll_payouts (payout_date, period_start, period_end, side, amount) values ('2026-10-04', '2026-10-05', '2026-09-28', 'cash', 100)"), /check/i);
+});
+
+test('008 adds the cash fund without changing any existing expense', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '007' });
+  await driver.query("insert into expenses (expense_date, side, description, amount) values ('2026-09-01', 'cash', 'Soap', 150), ('2026-09-01', 'gcash', 'Load', 50)");
+  const before = (await driver.query('select id, expense_date, side, description, amount from expenses order by id')).rows;
+  await assert.rejects(driver.query("insert into expenses (expense_date, side, amount) values ('2026-09-02', 'fund', 1)"), /check/i);
+
+  assert.deepEqual(await migrate(driver, quiet), ['008']);
+  assert.deepEqual((await driver.query('select id, expense_date, side, description, amount from expenses order by id')).rows, before);
+  assert.equal((await one(driver, "select count(*)::int n from expenses where topup_id is not null")).n, 0);
+  assert.equal(Number((await one(driver, 'select target from cash_fund')).target), 0);
+  await driver.query("insert into expenses (expense_date, side, description, amount) values ('2026-09-02', 'fund', 'Chemicals', 100)");
+  await assert.rejects(driver.query("insert into expenses (expense_date, side, amount) values ('2026-09-02', 'bank', 1)"), /check/i);
+  await assert.rejects(driver.query("insert into cash_fund_topups (entry_date, amount) values ('2026-09-02', 0)"), /check/i);
+  await assert.rejects(driver.query('insert into cash_fund (id, target) values (2, 0)'), /check|unique|duplicate/i);
 });
 
 test('007 moves converted attendance to the day it was worked (the old app saved each week a day early)', async () => {

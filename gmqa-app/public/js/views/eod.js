@@ -18,6 +18,16 @@ function mount(el) {
     <div data-status></div>
     <div class="metrics-row" data-metrics></div>
     <div class="card"><h2>Sales by department</h2><div class="table-wrap"><table class="simple-table dept-table" data-departments></table></div></div>
+    <div class="card envelopes" data-envelopes>
+      <h2>Bill envelopes</h2>
+      <p class="hint">Save a little for each bill every week, so the full amount is ready when the bill comes.</p>
+      <ol class="plain-steps">
+        <li>Each bill below shows how much to put aside <b>this week</b>. Press its button.</li>
+        <li>Take that money out of the drawer and put it in an <b>envelope</b>. Write the bill name, the amount and today's date on it.</li>
+        <li>Hand the envelope to the <b>owner</b> together with today's tape. The app already took it out of the expected drawer.</li>
+      </ol>
+      <div data-envelope-list></div>
+    </div>
     <div class="two-col">
       <div>
         <div class="card">
@@ -39,11 +49,14 @@ function mount(el) {
           <h2>Expenses</h2>
           <div data-expenses></div>
           <div class="expense-form">
-            <select data-e="side"><option value="cash">Cash</option><option value="gcash">GCash</option></select>
+            <label class="sr-only" for="expense-side">Paid from</label>
+            <select data-e="side" id="expense-side" title="Paid from"><option value="cash">Drawer cash</option><option value="gcash">GCash</option>
+              <option value="fund">Cash fund (abono)</option></select>
             <input type="text" data-e="description" placeholder="What was it for?" maxlength="200">
             <input type="number" min="0.01" step="0.01" data-e="amount" placeholder="Amount">
             <button class="btn ghost" type="button" data-add-expense>+ Add</button>
           </div>
+          <div class="hint" data-fund-hint></div>
         </div>
       </div>
       <div>
@@ -52,11 +65,7 @@ function mount(el) {
         <div class="card"><h2>Variance</h2><div data-variance></div></div>
       </div>
     </div>
-    <div class="card">
-      <h2>Set aside for bills</h2>
-      <p class="hint">Take each bill's weekly share out of the drawer and put it in its envelope/account. It is removed from the expected drawer above.</p>
-      <div class="table-wrap"><table class="simple-table funds-table" data-funds></table></div>
-    </div>`;
+`;
 
   $('[data-date]', root).addEventListener('change', e => { if (e.target.value) setDate(e.target.value); });
   $$('[data-shift]', root).forEach(b => b.addEventListener('click', () => setDate(addDays(current.date, Number(b.dataset.shift)))));
@@ -64,6 +73,7 @@ function mount(el) {
   $$('[data-m]', root).forEach(el => el.addEventListener('input', renderMath));
   $('[data-save]', root).addEventListener('click', e => busy(e.currentTarget, save));
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
+  $('[data-e="side"]', root).addEventListener('change', renderFundHint);
 }
 
 async function show() { await setDate(current.date); }
@@ -71,10 +81,11 @@ async function show() { await setDate(current.date); }
 async function setDate(date) {
   current.date = date;
   $('[data-date]', root).value = date;
-  const [day, funds] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`)]);
+  const [day, funds, cashFund] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`), api('GET', '/cash-fund')]);
   if (date !== current.date) return;
   current.day = day;
   current.funds = funds;
+  current.cashFund = cashFund;
   render();
 }
 
@@ -120,41 +131,91 @@ function render() {
   $$('.expense-form [data-e], [data-add-expense]', root).forEach(el => { el.disabled = locked(); });
 
   $('[data-expenses]', root).innerHTML = current.day.expenses.length
-    ? current.day.expenses.map(e => `<div class="row-line"><span class="k"><span class="kind-pill ${e.side === 'cash' ? 'service' : 'addon'}">${e.side === 'cash' ? 'Cash' : 'GCash'}</span> ${esc(e.description)}</span>
-        <span>${peso(e.amount)} ${locked() ? '' : `<button class="icon-btn" type="button" data-del-expense="${e.id}" title="Delete">✕</button>`}</span></div>`).join('')
+    ? current.day.expenses.map(e => `<div class="row-line"><span class="k"><span class="kind-pill ${EXPENSE_PILL[e.side].cls}">${EXPENSE_PILL[e.side].label}</span> ${esc(e.description)}</span>
+        <span>${peso(e.amount)} ${locked() || e.topup_id ? '' : `<button class="icon-btn" type="button" data-del-expense="${e.id}" title="Delete">✕</button>`}</span></div>`).join('')
+      + (current.day.summary.fundExpenses ? `<div class="hint mt">${peso(current.day.summary.fundExpenses)} was paid from the cash fund, so it is not taken out of the drawer.</div>` : '')
     : '<div class="empty-state small">No expenses recorded.</div>';
   $$('[data-del-expense]', root).forEach(b => b.addEventListener('click', async () => {
     if (!window.confirm('Delete this expense?')) return;
     current.day = await api('DELETE', `/expenses/${b.dataset.delExpense}`);
+    current.cashFund = await api('GET', '/cash-fund');
     toast('Expense deleted');
     render();
   }));
-  renderFunds();
+  renderEnvelopes();
+  renderFundHint();
   renderMath();
 }
 
-function renderFunds() {
+const EXPENSE_PILL = { cash: { cls: 'service', label: 'Cash' }, gcash: { cls: 'addon', label: 'GCash' }, fund: { cls: 'part', label: 'Cash fund' } };
+
+function renderFundHint() {
+  const fund = current.cashFund;
+  const hint = $('[data-fund-hint]', root);
+  if ($('[data-e="side"]', root).value !== 'fund') {
+    hint.textContent = 'Bought something today\'s sales can\'t cover (an abono)? Choose "Cash fund (abono)" in the first box.';
+    return;
+  }
+  hint.textContent = fund.balance > 0
+    ? `Cash fund: ${peso(fund.balance)} left. This purchase is a cost of today but does not change the drawer count.`
+    : 'The cash fund is empty. The owner records the money for it in the Cash fund tab.';
+}
+
+// Bill envelopes: one row per bill with its amount for this week filled in, so putting money aside is one press.
+function renderEnvelopes() {
   const off = locked() ? 'disabled' : '';
-  $('[data-funds]', root).innerHTML = `<thead><tr><th>Fund</th><th class="num">This week</th><th>Set aside today</th><th></th></tr></thead>
-    <tbody>${current.funds.map(f => `<tr data-fund="${f.id}">
-      <td><b>${esc(f.name)}</b><div class="muted small">balance ${peso(f.balance)} · next bill ${esc(f.nextDue || '—')}</div></td>
-      <td class="num money">${f.amount ? `${peso(f.weeklyTarget)}<div class="muted small">${f.remainingThisWeek ? `${peso(f.remainingThisWeek)} left` : 'done ✓'}</div>` : '<span class="muted small">amount not set</span>'}</td>
-      <td>${f.setAsidesOnDate.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'}
-        ${off ? '' : `<button class="icon-btn" type="button" data-del-sa="${x.id}" title="Undo">✕</button>`}</span>`).join('') || '<span class="muted small">—</span>'}</td>
-      <td class="sa-form"><input type="number" min="0.01" step="0.01" data-sa-amount placeholder="${f.remainingThisWeek || 'Amount'}" ${off}>
-        <select data-sa-side ${off}><option value="cash">Cash</option><option value="gcash">GCash</option></select>
-        <button class="btn ghost small" type="button" data-sa-add ${off}>Set aside</button></td>
-    </tr>`).join('')}</tbody>`;
-  $$('[data-sa-add]', root).forEach(btn => btn.addEventListener('click', () => busy(btn, async () => {
-    const tr = btn.closest('tr');
-    const amount = Number($('[data-sa-amount]', tr).value || 0);
-    if (!(amount > 0)) return toast('Enter the amount to set aside', 'error');
-    await api('POST', `/funds/${tr.dataset.fund}/set-asides`, { date: current.date, side: $('[data-sa-side]', tr).value, amount });
-    toast('Set aside recorded');
+  const withAmount = current.funds.filter(f => f.amount > 0);
+  const noAmount = current.funds.filter(f => !(f.amount > 0));
+  const shortDate = d => (d ? prettyDate(d).replace(/^\w+, /, '') : '—');
+  $('[data-envelope-list]', root).innerHTML = withAmount.map(f => {
+    const todays = f.setAsidesOnDate.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'} today
+      ${off ? '' : `<button class="icon-btn" type="button" data-del-sa="${x.id}" title="Undo" aria-label="Undo ${peso(x.amount)}">✕</button>`}</span>`).join('');
+    const status = f.remainingThisWeek > 0
+      ? `Put <b>${peso(f.remainingThisWeek)}</b> aside this week${f.setAsideThisWeek ? ` (${peso(f.setAsideThisWeek)} of ${peso(f.weeklyTarget)} done)` : ''}`
+      : '<span class="variance-ok">Done for this week ✓</span>';
+    return `<div class="envelope" data-envelope data-fund="${f.id}">
+      <div class="envelope-main">
+        <div><b>${esc(f.name)}</b> <span class="muted small">bill ${peso(f.amount)} · due ${esc(shortDate(f.nextDue))} · ${peso(f.balance)} saved so far</span></div>
+        <div class="envelope-status">${status}</div>
+        ${todays ? `<div class="envelope-today">${todays}</div>` : ''}
+      </div>
+      <div class="envelope-actions">
+        ${f.remainingThisWeek > 0 ? `<button class="btn" type="button" data-put-aside ${off}>Put ${peso(f.remainingThisWeek)} aside</button>` : ''}
+        <button class="btn ghost small" type="button" data-other ${off}>Other amount</button>
+      </div>
+      <div class="envelope-other" hidden>
+        <input type="number" min="0.01" step="0.01" data-sa-amount placeholder="Amount" aria-label="Amount to put aside for ${esc(f.name)}" ${off}>
+        <select data-sa-side aria-label="Taken from" ${off}><option value="cash">from drawer cash</option><option value="gcash">from GCash</option></select>
+        <button class="btn small" type="button" data-sa-add ${off}>Put aside</button>
+      </div>
+    </div>`;
+  }).join('')
+    + (noAmount.length ? `<p class="hint" data-no-amount>No amount yet for ${noAmount.map(f => esc(f.name)).join(', ')}.
+      ${isOwner() ? 'Set each bill\'s usual amount in Finance → Bill funds → Edit.' : 'The owner sets each bill\'s amount; until then there is nothing to put aside for it.'}</p>` : '')
+    + (!withAmount.length && !noAmount.length ? '<p class="hint">No bills set up.</p>' : '');
+
+  const putAside = async (row, amount, side) => {
+    const name = current.funds.find(f => f.id === Number(row.dataset.fund)).name;
+    await api('POST', `/funds/${row.dataset.fund}/set-asides`, { date: current.date, side, amount });
+    toast(`${name}: ${peso(amount)} put aside`);
     await setDate(current.date);
-  })));
+  };
+  $$('[data-envelope]', root).forEach(row => {
+    const fund = current.funds.find(f => f.id === Number(row.dataset.fund));
+    $('[data-put-aside]', row)?.addEventListener('click', e => busy(e.currentTarget, () => putAside(row, fund.remainingThisWeek, 'cash')));
+    $('[data-other]', row).addEventListener('click', () => {
+      const other = $('.envelope-other', row);
+      other.hidden = !other.hidden;
+      if (!other.hidden) $('[data-sa-amount]', row).focus();
+    });
+    $('[data-sa-add]', row).addEventListener('click', e => busy(e.currentTarget, async () => {
+      const amount = Number($('[data-sa-amount]', row).value || 0);
+      if (!(amount > 0)) return toast('Type the amount to put aside', 'error');
+      await putAside(row, amount, $('[data-sa-side]', row).value);
+    }));
+  });
   $$('[data-del-sa]', root).forEach(btn => btn.addEventListener('click', async () => {
-    if (!window.confirm('Undo this set-aside? The money goes back into the expected drawer.')) return;
+    if (!window.confirm('Undo this? The money goes back into the expected drawer.')) return;
     await api('DELETE', `/fund-set-asides/${btn.dataset.delSa}`);
     toast('Set-aside removed');
     await setDate(current.date);
@@ -181,7 +242,7 @@ function renderMath() {
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
     + (s.payrollCash ? line('− Payroll paid out', peso(s.payrollCash)) : '')
-    + (s.setAsideCash ? line('− Set aside to funds', peso(s.setAsideCash)) : '')
+    + (s.setAsideCash ? line('− Put aside for bills (envelopes)', peso(s.setAsideCash)) : '')
     + (s.billTopUpCash ? line('− Bill shortfall from drawer', peso(s.billTopUpCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
@@ -191,7 +252,7 @@ function renderMath() {
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
     + (s.payrollGcash ? line('− Payroll paid out', peso(s.payrollGcash)) : '')
-    + (s.setAsideGcash ? line('− Set aside to funds', peso(s.setAsideGcash)) : '')
+    + (s.setAsideGcash ? line('− Put aside for bills (envelopes)', peso(s.setAsideGcash)) : '')
     + (s.billTopUpGcash ? line('− Bill shortfall from GCash', peso(s.billTopUpGcash)) : '')
     + line('Expected GCash', peso(expectedGcash), 'total');
   const notes = [];
@@ -248,6 +309,7 @@ async function addExpense() {
   if (!body.description) return toast('Describe the expense', 'error');
   if (!(body.amount > 0)) return toast('Enter an amount greater than zero', 'error');
   current.day = await api('POST', `/days/${current.date}/expenses`, body);
+  if (body.side === 'fund') current.cashFund = await api('GET', '/cash-fund');
   get('description').value = '';
   get('amount').value = '';
   toast('Expense added');

@@ -633,3 +633,23 @@ body:not([data-role="owner"]) .owner-only{display:none !important;}
 .guide-steps p{margin:4px 0 0;color:var(--muted);}
 .guide-steps ul{margin:6px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:4px;}
 .guide-steps b{color:var(--text);}
+
+/* Visually hidden, still read by screen readers. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+.mt-s{margin-top:8px;}
+
+/* EOD bill envelopes: plain numbered steps, then one row per bill with a single main button. */
+.plain-steps{margin:4px 0 14px;padding-left:22px;display:grid;gap:4px;color:var(--muted);line-height:1.5;}
+.plain-steps b{color:var(--text);}
+.plain-steps li::marker{color:var(--accent-text);font-weight:600;}
+.envelope{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-top:1px solid var(--border);}
+.envelope-main{display:grid;gap:3px;min-width:0;}
+.envelope-status{font-size:14px;}
+.envelope-today .item-chip{max-width:none;}
+.envelope-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
+.envelope-other{grid-column:1 / -1;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.envelope-other input{width:140px;}
+@media (max-width:600px){
+  .envelope{grid-template-columns:1fr;}
+  .envelope-actions{justify-content:flex-start;}
+}

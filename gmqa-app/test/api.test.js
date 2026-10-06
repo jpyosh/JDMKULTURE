@@ -666,6 +666,86 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   assert.equal(undone.cashflow.billTopUps, 2000);
 });
 
+test('cash fund: abonos are costs that never touch the drawer; replenishment closes out an itemized list', async () => {
+  const D = '2027-06-07';
+  const empty = await ok(api(STAFF, 'GET', '/cash-fund'));
+  assert.deepEqual([empty.target, empty.balance, empty.pending, empty.pendingTotal, empty.toReplenish], [0, 0, [], 0, 0]);
+
+  // Nothing can be spent from an empty fund.
+  const noMoney = await api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'Chemicals', amount: 100 });
+  assert.equal(noMoney.status, 400);
+  assert.match(noMoney.data.error, /cash fund/i);
+
+  // Owner sets the fund size and records the money the boss handed over.
+  assert.equal((await api(STAFF, 'PUT', '/cash-fund', { target: 50000 })).status, 403);
+  await ok(api(OWNER, 'PUT', '/cash-fund', { target: 50000 }));
+  assert.equal((await api(STAFF, 'POST', '/cash-fund/topups', { date: D, amount: 50000 })).status, 403);
+  assert.equal((await api(OWNER, 'POST', '/cash-fund/topups', { date: D, amount: 0 })).status, 400);
+  const start = await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: D, amount: 50000, note: 'Starting fund' }));
+  assert.deepEqual([start.amount, start.items.length], [50000, 0]);
+
+  // Staff record abonos at EOD as "paid from the cash fund".
+  await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'Chemicals: Soft99 5L', amount: 1500 }));
+  await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Ice', amount: 50 }));
+  const day = await ok(api(STAFF, 'POST', '/days/2027-06-08/expenses', { side: 'fund', description: 'Crew lunch', amount: 300 }));
+  assert.equal(day.summary.fundExpenses, 300);
+  assert.equal(day.summary.cashExpenses, 0);
+  assert.equal(day.summary.expectedCash, 0, 'the drawer is not touched by a cash-fund purchase');
+  assert.equal(day.summary.expenses, 300, 'but it is still a cost of the day');
+  const d1 = (await ok(api(STAFF, 'GET', `/days/${D}`))).summary;
+  assert.deepEqual([d1.cashExpenses, d1.fundExpenses, d1.drawerExpenses, d1.expenses, d1.expectedCash], [50, 1500, 50, 1550, -50]);
+
+  // More than the fund holds is refused.
+  const tooMuch = await api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'Pressure washer', amount: 48201 });
+  assert.equal(tooMuch.status, 400);
+  assert.match(tooMuch.data.error, /48,200|48200/);
+
+  let fund = await ok(api(STAFF, 'GET', '/cash-fund'));
+  assert.deepEqual([fund.target, fund.balance, fund.pendingTotal, fund.toReplenish], [50000, 48200, 1800, 1800]);
+  assert.deepEqual(fund.pending.map(e => [e.expense_date, e.description, e.amount]),
+    [[D, 'Chemicals: Soft99 5L', 1500], ['2027-06-08', 'Crew lunch', 300]]);
+
+  // Finance: the abonos are operating costs, but not money out of the drawer.
+  const f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=2027-06-13`));
+  assert.deepEqual([f.opex.drawerExpenses, f.opex.fundExpenses, f.opex.total], [50, 1800, 1850]);
+  assert.equal(f.cashflow.drawerExpenses, 50);
+  assert.equal((await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=2027-06-08`))).totals.expenses, 1850);
+
+  // The itemized list for the boss, before replenishing.
+  const pendingPdf = await download(OWNER, '/cash-fund/sheet.pdf');
+  assert.equal(pendingPdf.res.status, 200);
+  assert.match(pendingPdf.res.headers.get('content-type'), /pdf/);
+  const pendingText = (await pdfLines(pendingPdf.body)).flat().join('\n');
+  for (const words of [/Cash fund/i, /Chemicals: Soft99 5L/, /1,500\.00/, /Crew lunch/, /1,800\.00/, /Received by/]) assert.match(pendingText, words);
+  assert.equal((await download(STAFF, '/cash-fund/sheet.pdf')).res.status, 403);
+
+  // The boss replenishes: every pending item is closed out by that replenishment.
+  const top = await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: '2027-06-13', amount: 1800, note: 'Week of Jun 7' }));
+  assert.deepEqual(top.items.map(e => e.description), ['Chemicals: Soft99 5L', 'Crew lunch']);
+  fund = await ok(api(STAFF, 'GET', '/cash-fund'));
+  assert.deepEqual([fund.balance, fund.pendingTotal, fund.toReplenish, fund.pending.length], [50000, 0, 0, 0]);
+  assert.deepEqual(fund.topups.map(t => [t.entry_date, t.amount, t.itemsTotal]), [['2027-06-13', 1800, 1800], [D, 50000, 0]]);
+  const sheet = (await pdfLines((await download(OWNER, `/cash-fund/sheet.pdf?topup=${top.id}`)).body)).flat().join('\n');
+  assert.match(sheet, /Crew lunch/);
+  assert.match(sheet, /Week of Jun 7/);
+
+  // A replenished purchase cannot be deleted until its replenishment is undone.
+  const lunch = top.items.find(e => e.description === 'Crew lunch');
+  const blocked = await api(OWNER, 'DELETE', `/expenses/${lunch.id}`);
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.data.error, /replenish/i);
+  assert.equal((await api(STAFF, 'DELETE', `/cash-fund/topups/${top.id}`)).status, 403);
+  await ok(api(OWNER, 'DELETE', `/cash-fund/topups/${top.id}`));
+  fund = await ok(api(STAFF, 'GET', '/cash-fund'));
+  assert.deepEqual([fund.balance, fund.pendingTotal], [48200, 1800], 'undoing a replenishment puts its items back on the list');
+  await ok(api(STAFF, 'DELETE', `/expenses/${lunch.id}`));
+  assert.equal((await ok(api(STAFF, 'GET', '/cash-fund'))).balance, 48500);
+
+  // Closed days stay locked for staff.
+  await ok(api(STAFF, 'POST', `/days/${D}/close`));
+  assert.equal((await api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'x', amount: 1 })).status, 403);
+});
+
 test('parts: inventory, average cost, selling on jobs and over the counter, stock never negative', async () => {
   // Owner sets up a part; staff can see it but not change it.
   assert.equal((await api(STAFF, 'POST', '/parts', { name: 'Nope', price: 1 })).status, 403);
