@@ -153,8 +153,11 @@ router.get('/jobs/active', async (req, res) => {
   res.json(await loadJobs(`department = $1 and sale_date is null ${voided}`, [dept]));
 });
 
+// ?date= one day's sales; ?since= every sale from that day on (later-dated ones included, so none drop out of sight).
 router.get('/jobs/completed', async (req, res) => {
-  res.json(await loadJobs('department = $1 and sale_date = $2', [runningDepartment(req.query.department), date(req.query.date)]));
+  const dept = runningDepartment(req.query.department);
+  if (req.query.since) res.json(await loadJobs('department = $1 and sale_date >= $2', [dept, date(req.query.since)]));
+  else res.json(await loadJobs('department = $1 and sale_date = $2', [dept, date(req.query.date)]));
 });
 
 // ---------------------------------------------------------------- create / edit

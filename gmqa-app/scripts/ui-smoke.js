@@ -197,10 +197,22 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/done/i);
       await page.waitForFunction(() => !/DT-091426-001/.test(document.querySelector('#view-detailing [data-active]').textContent));
-      await detailing.locator('[data-completed-date]').fill('2026-09-15');
+      // The completed list shows every sale since the chosen day (here: days before the sale).
+      await detailing.locator('[data-completed-date]').fill('2026-09-10');
       await detailing.locator('[data-completed-date]').dispatchEvent('change');
-      await detailing.locator('[data-completed] tr', { hasText: 'DT-091426-001' }).waitFor();
+      const doneRow = detailing.locator('[data-completed] tr', { hasText: 'DT-091426-001' });
+      await doneRow.waitFor();
       await shot('05c-detailing-completed');
+      // A completed job can still be corrected: edit, undo payment, not done, and (owner) void + restore.
+      for (const act of ['edit', 'unpay', 'reopen', 'void']) {
+        assert.equal(await doneRow.locator(`[data-act="${act}"]`).count(), 1, `completed row has ${act}`);
+      }
+      await doneRow.locator('[data-act="void"]').click();
+      await expectToast(/voided/);
+      await page.waitForFunction(() => /VOID/.test(document.querySelector('#view-detailing [data-completed]').textContent));
+      await doneRow.locator('[data-act="restore"]').click();
+      await expectToast(/restored/);
+      await page.waitForFunction(() => !/VOID/.test(document.querySelector('#view-detailing [data-completed]').textContent));
     });
 
     const eod = page.locator('#view-eod');

@@ -1,6 +1,6 @@
 // Running job boards (Detailing, Tint & PPF). A job stays on the board, carried over day after day,
 // until it is both marked done and paid; it then counts in sales on the later of those two dates.
-import { $, $$, api, esc, peso, toast, busy, todayLocal, prettyDate, loadCatalog, classLabel, isOwner,
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, loadCatalog, classLabel, isOwner,
   openModal, closeModal, modalHeader, departmentOf } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
 import { itemsSummary, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
@@ -47,7 +47,7 @@ export function createRunningView(department) {
       </div>
       <div class="card">
         <div class="section-header"><h2>Completed (counted as sales)</h2>
-          <label class="inline-label">On <input type="date" data-completed-date></label></div>
+          <label class="inline-label">Since <input type="date" data-completed-date></label></div>
         <div class="table-wrap"><table class="jobs-table running-table">
           <thead><tr><th>JO#</th><th>Opened</th><th>Done</th><th>Paid</th><th>Plate</th><th>Items</th>
             <th class="num">Total</th><th class="num">Comm.</th><th class="num">Net</th><th></th></tr></thead>
@@ -56,7 +56,7 @@ export function createRunningView(department) {
       </div>`;
 
     $('[data-open-date]', root).value = todayLocal();
-    $('[data-completed-date]', root).value = todayLocal();
+    $('[data-completed-date]', root).value = addDays(todayLocal(), -6);
     $('[data-completed-date]', root).addEventListener('change', loadCompleted);
     $('[data-show-voided]', root).addEventListener('change', loadActive);
     $('[data-clear]', root).addEventListener('click', resetEditor);
@@ -88,7 +88,7 @@ export function createRunningView(department) {
   async function loadCompleted() {
     const day = $('[data-completed-date]', root).value;
     if (!day) return;
-    completed = await api('GET', `/jobs/completed?department=${department}&date=${day}`);
+    completed = await api('GET', `/jobs/completed?department=${department}&since=${day}`);
     renderCompleted();
   }
 
@@ -101,7 +101,7 @@ export function createRunningView(department) {
       <div class="metric"><div class="label">In progress</div><div class="value">${inProgress.length}</div></div>
       <div class="metric"><div class="label">Done, awaiting payment</div><div class="value amber">${awaiting.length} · ${peso(awaiting.reduce((s, j) => s + j.totals.total, 0))}</div></div>
       <div class="metric"><div class="label">Paid in advance</div><div class="value">${peso(inProgress.filter(j => j.paid_on).reduce((s, j) => s + j.totals.total, 0))}</div></div>
-      <div class="metric"><div class="label">Sales on ${esc(($('[data-completed-date]', root).value || '').slice(5))}</div><div class="value teal">${peso(doneSales.reduce((s, j) => s + j.totals.total, 0))}</div></div>`;
+      <div class="metric"><div class="label">Sales since ${esc(($('[data-completed-date]', root).value || '').slice(5))}</div><div class="value teal">${peso(doneSales.reduce((s, j) => s + j.totals.total, 0))}</div></div>`;
   }
 
   function renderActive() {
@@ -139,16 +139,22 @@ export function createRunningView(department) {
       <tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''}">
         <td class="jo-number">${esc(j.jo_number)}${j.voided_at ? `<div class="void-note">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
         <td class="mono">${esc(j.job_date)}</td><td class="mono">${esc(j.closed_on)}</td>
-        <td class="mono">${esc(j.paid_on)} <span class="muted small">${esc(j.payment_method)}</span></td>
+        <td class="mono">${esc(j.paid_on)} <span class="muted small">${esc(j.payment_method)}</span>${
+          j.sale_date > todayLocal() ? '<div class="status-pill waiting">Dated after today</div>' : ''}</td>
         <td>${esc(j.plate || '—')}</td>
         <td class="items-cell">${itemsSummary(j)}</td>
         <td class="num money">${peso(j.totals.total)}</td>
         <td class="num money amber-text">${peso(j.totals.commission)}</td>
         <td class="num money pos">${peso(j.totals.net)}</td>
-        <td class="row-actions"><div class="actions">${j.voided_at ? '' : '<button class="btn ghost small" type="button" data-act="reopen">Not done</button>'}
+        <td class="row-actions"><div class="actions">${j.voided_at
+          ? (isOwner() ? '<button class="btn ghost small" type="button" data-act="restore">Restore</button>' : '')
+          : `<button class="btn ghost small" type="button" data-act="edit">Edit</button>
+             <button class="btn ghost small" type="button" data-act="unpay">Undo payment</button>
+             <button class="btn ghost small" type="button" data-act="reopen">Not done</button>
+             ${isOwner() ? '<button class="icon-btn" type="button" data-act="void" title="Void job">✕</button>' : ''}`}
           <button class="icon-btn" type="button" data-act="history" title="Change history">⟲</button></div></td>
       </tr>`).join('')
-      : '<tr><td colspan="10"><div class="empty-state">Nothing completed on this day.</div></td></tr>';
+      : '<tr><td colspan="10"><div class="empty-state">Nothing completed since this day.</div></td></tr>';
     bindActions(tbody, completed);
     renderMetrics();
   }
@@ -160,7 +166,8 @@ export function createRunningView(department) {
         edit: () => editJobModal(job, reload),
         pay: () => payModal(job),
         complete: () => completeModal(job),
-        unpay: () => simpleAction(job, 'unpay', `Undo the payment for ${job.jo_number}?`, 'Payment removed'),
+        unpay: () => simpleAction(job, 'unpay', `Undo the payment for ${job.jo_number}?${
+          job.closed_on ? ' It goes back on the board as awaiting payment and stops counting as a sale.' : ''}`, 'Payment removed'),
         reopen: () => simpleAction(job, 'reopen', `Mark ${job.jo_number} as not done? It goes back to in progress${
           job.paid_on ? ' and stops counting as a sale until it is marked done again' : ''}.`, 'Back in progress'),
         void: () => voidJob(job, reload),
