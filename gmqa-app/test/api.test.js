@@ -528,6 +528,9 @@ test('running job (detailing): carried over until done and paid, counted on the 
   assert.deepEqual([done.closed_on, done.sale_date], ['2026-10-12', '2026-10-12']);
   assert.ok(!(await ok(api(STAFF, 'GET', '/jobs/active?department=detailing'))).some(j => j.id === job.id), 'off the board');
   assert.ok((await ok(api(STAFF, 'GET', '/jobs/completed?department=detailing&date=2026-10-12'))).some(j => j.id === job.id));
+  // "Since" lists every sale from that day on, including ones dated after it, so none can drop out of sight.
+  assert.ok((await ok(api(STAFF, 'GET', '/jobs/completed?department=detailing&since=2026-10-06'))).some(j => j.id === job.id));
+  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs/completed?department=detailing&since=2026-10-13'))).some(j => j.id === job.id));
 
   const doneDay = (await ok(api(STAFF, 'GET', '/days/2026-10-12'))).summary;
   assert.deepEqual(doneDay.departments.detailing, { jobs: 1, collected: 5000, receivables: 0, commission: 1000, net: 4000 });

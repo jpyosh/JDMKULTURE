@@ -30,6 +30,9 @@ Auth, deployed on Vercel.
 - Money is counted the day it is received: a running job paid before it is finished is in that day's
   drawer, while its sale and commission are booked on the day it is done.
 - Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
+- The board's **Completed** list shows every sale since a chosen day (default: the last 7 days), including
+  any dated after today, so a finished job never drops out of sight. Completed jobs can still be edited,
+  have their payment undone, be marked not done, or be voided by the owner.
 - Older `JO-` numbers from before departments existed are kept as they were.
 
 ## Business rules (all in `lib/calc.js`)
