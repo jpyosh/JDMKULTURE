@@ -724,3 +724,103 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   assert.equal('partsCost' in staffDay, false);
   assert.equal((await ok(api(OWNER, 'GET', '/jobs?date=2026-12-03&department=parts')))[0].totals.cost, 690);
 });
+
+test('finance summary: running jobs across the period edge, voids, receivables and agreement with the range report', async () => {
+  const may = 'start=2027-05-01&end=2027-05-31';
+  const june = 'start=2027-06-01&end=2027-06-30';
+  const both = 'start=2027-05-01&end=2027-06-30';
+  const line = (name, price, commission) => ({ name, price, commission });
+
+  // Detailing job opened and paid in advance (cash) in May, finished in June.
+  const dtl = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2027-05-30', department: 'detailing', vehicle_class: 'M', items: [line('Ceramic coat', 5000, 1000)],
+  }));
+  await ok(api(STAFF, 'POST', `/jobs/${dtl.id}/pay`, { date: '2027-05-31', payment_method: 'Cash' }));
+  await ok(api(STAFF, 'POST', `/jobs/${dtl.id}/complete`, { date: '2027-06-02' }));
+
+  // June carwash: one paid in GCash, one unpaid (a receivable), one paid then voided (counts nowhere).
+  await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2027-06-03', vehicle_class: 'S', payment_received: true, payment_method: 'GCash', items: [line('Wash', 600, 100)],
+  }));
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2027-06-04', vehicle_class: 'S', items: [line('Wash', 400, 50)] }));
+  const voided = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2027-06-04', vehicle_class: 'S', payment_received: true, items: [line('Wash', 999, 99)],
+  }));
+  await ok(api(OWNER, 'POST', `/jobs/${voided.id}/void`, { reason: 'Duplicate entry' }));
+
+  // May: the cash came in, but no sale was booked yet.
+  const m = await ok(api(OWNER, 'GET', `/finance/summary?${may}`));
+  assert.deepEqual([m.income.gross, m.income.commission, m.income.receivables], [0, 0, 0]);
+  assert.deepEqual([m.cashflow.cashIn, m.cashflow.gcashIn, m.cashflow.commissionPaid, m.cashflow.net], [5000, 0, 0, 5000]);
+
+  // June: the detailing sale (and its commission) is booked on its done date, with no cash in June.
+  const j = await ok(api(OWNER, 'GET', `/finance/summary?${june}`));
+  assert.deepEqual(j.income.departments, { carwash: 600, detailing: 5000, tint_ppf: 0, parts: 0 });
+  assert.deepEqual([j.income.gross, j.income.commission, j.income.net, j.income.receivables], [5600, 1150, 4450, 400]);
+  assert.deepEqual([j.cashflow.cashIn, j.cashflow.gcashIn, j.cashflow.commissionPaid], [0, 600, 1150]);
+
+  // Both months together: the job is loaded by both its payment and its sale date but counted once.
+  const b = await ok(api(OWNER, 'GET', `/finance/summary?${both}`));
+  assert.deepEqual([b.income.gross, b.income.commission, b.income.receivables], [5600, 1150, 400]);
+  assert.deepEqual([b.cashflow.cashIn, b.cashflow.gcashIn], [5000, 600]);
+
+  // Same per-day rule as Sales Reports, so the two screens never disagree.
+  for (const range of [may, june, both]) {
+    const f = await ok(api(OWNER, 'GET', `/finance/summary?${range}`));
+    const { totals } = await ok(api(OWNER, 'GET', `/reports/range?${range}`));
+    assert.deepEqual(
+      [f.income.gross, f.income.commission, f.income.receivables, f.cashflow.cashIn, f.cashflow.gcashIn, f.income.departments],
+      [totals.collected, totals.commission, totals.receivables, totals.cashReceived, totals.gcashReceived, totals.departments], range);
+  }
+
+  // Undoing the June finish moves nothing into May and takes the sale out of June.
+  await ok(api(STAFF, 'POST', `/jobs/${dtl.id}/reopen`));
+  const reopened = await ok(api(OWNER, 'GET', `/finance/summary?${june}`));
+  assert.equal(reopened.income.departments.detailing, 0);
+  assert.equal(reopened.income.commission, 150);
+  assert.equal((await ok(api(OWNER, 'GET', `/finance/summary?${may}`))).cashflow.cashIn, 5000, 'the advance payment stays in May');
+});
+
+test('finance summary: bills from one fund add up, deleting a bill restores the fund, and the period is validated', async () => {
+  const fund = await ok(api(OWNER, 'POST', '/funds', { name: 'Water (test)', amount: 1000, frequency: 'monthly', due_day: 20 }));
+  assert.equal((await api(OWNER, 'POST', '/funds', { name: 'Permit (test)', amount: 1, frequency: 'yearly', due_day: 1 })).status, 400,
+    'a yearly bill needs a due month');
+  await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: '2027-07-05', side: 'cash', amount: 400 }));
+
+  // A bill bigger than the fund: the rest comes from the drawer.
+  const big = await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: '2027-07-20', amount: 1000, drawer_side: 'gcash' }));
+  assert.deepEqual([big.from_fund, big.from_drawer, big.drawer_side], [400, 600, 'gcash']);
+  assert.equal((await ok(api(OWNER, 'GET', '/days/2027-07-20'))).summary.billTopUpGcash, 600);
+  let s = await ok(api(OWNER, 'GET', '/finance/summary?start=2027-07-01&end=2027-07-31'));
+  assert.deepEqual(s.opex.bills.filter(x => x.fund_id === fund.id), [{ fund_id: fund.id, name: 'Water (test)', amount: 1000 }]);
+  assert.deepEqual([s.cashflow.setAsides, s.cashflow.billTopUps], [400, 600]);
+
+  // Deleting the payment (owner only) puts the money back in the fund and out of the summary and EOD.
+  assert.equal((await api(STAFF, 'DELETE', `/bill-payments/${big.id}`)).status, 403);
+  await ok(api(OWNER, 'DELETE', `/bill-payments/${big.id}`));
+  assert.equal((await api(OWNER, 'DELETE', `/bill-payments/${big.id}`)).status, 404);
+  assert.equal((await ok(api(OWNER, 'GET', '/days/2027-07-20'))).summary.billTopUpGcash, 0);
+  s = await ok(api(OWNER, 'GET', '/finance/summary?start=2027-07-01&end=2027-07-31'));
+  assert.deepEqual([s.opex.billsTotal, s.cashflow.billTopUps], [0, 0]);
+  assert.equal(s.funds.find(x => x.id === fund.id).balance, 400);
+
+  // Two smaller bills the fund can cover: one row per fund, nothing from the drawer.
+  const first = await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: '2027-07-20', amount: 300 }));
+  const second = await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: '2027-07-21', amount: 100 }));
+  assert.deepEqual([first.from_drawer, second.from_drawer], [0, 0]);
+  s = await ok(api(OWNER, 'GET', '/finance/summary?start=2027-07-01&end=2027-07-31'));
+  assert.deepEqual(s.opex.bills.filter(x => x.fund_id === fund.id), [{ fund_id: fund.id, name: 'Water (test)', amount: 400 }]);
+  assert.deepEqual(s.funds.find(x => x.id === fund.id), { id: fund.id, name: 'Water (test)', amount: 1000, balance: 0, active: true, setAside: 400, paid: 400 });
+  // A bill outside the period is not in it, but the fund balance is always all-time.
+  const june = await ok(api(OWNER, 'GET', '/finance/summary?start=2027-06-01&end=2027-06-30'));
+  assert.deepEqual(june.funds.find(x => x.id === fund.id), { id: fund.id, name: 'Water (test)', amount: 1000, balance: 0, active: true, setAside: 0, paid: 0 });
+
+  // The period itself.
+  const status = async query => (await api(OWNER, 'GET', `/finance/summary?${query}`)).status;
+  assert.equal(await status('start=2027-07-31&end=2027-07-01'), 400, 'start after end');
+  assert.equal(await status('start=2027-07-01'), 400, 'end missing');
+  assert.equal(await status('start=2027-02-30&end=2027-03-01'), 400, 'not a real date');
+  assert.equal(await status('start=2027-01-01&end=2028-02-04'), 200, '400 days is allowed');
+  assert.equal(await status('start=2027-01-01&end=2028-02-05'), 400, '401 days is too long');
+  assert.equal(await status('start=2027-07-01&end=2027-07-01'), 200, 'a single day');
+});
