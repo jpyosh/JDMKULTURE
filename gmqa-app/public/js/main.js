@@ -6,6 +6,7 @@ import eod from './views/eod.js';
 import pricing from './views/pricing.js';
 import reports from './views/reports.js';
 import finance from './views/finance.js';
+import cashFund from './views/cash-fund.js';
 import payroll from './views/payroll.js';
 import settings from './views/settings.js';
 
@@ -18,6 +19,7 @@ const VIEWS = [
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
   { key: 'finance', label: 'Finance', module: finance, roles: ['owner'] },
+  { key: 'cash_fund', label: 'Cash fund', module: cashFund, roles: ['owner'] },
   { key: 'payroll', label: 'Payroll', module: payroll, roles: ['owner'] },
   { key: 'settings', label: 'Settings', module: settings, roles: ['owner'] },
 ];
@@ -48,6 +50,7 @@ const ICONS = {
   pricing: '<path d="M20.3 13.3l-7 7a1.8 1.8 0 0 1-2.6 0L3.5 13V3.5H13l7.3 7.2a1.8 1.8 0 0 1 0 2.6z"/><circle cx="8" cy="8" r="1.4"/>',
   reports: '<path d="M3.5 20.5h17M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',
   finance: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 10h17M15.5 15h2"/>',
+  cash_fund: '<path d="M4.5 8.5h15v11h-15z"/><path d="M7.5 8.5V6.5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v2"/><circle cx="12" cy="14" r="2.2"/>',
   payroll: '<circle cx="9" cy="8.5" r="3.3"/><path d="M3 19.5a6 6 0 0 1 12 0M15.5 5.3a3.3 3.3 0 0 1 0 6.4M17.5 14a5.6 5.6 0 0 1 3.5 5.5"/>',
   settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
 };

@@ -164,7 +164,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
 
   // Same per-day rules as EOD, added up over the period.
   const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
-    cashIn: 0, gcashIn: 0, drawerExpenses: 0 };
+    cashIn: 0, gcashIn: 0, drawerExpenses: 0, fundExpenses: 0 };
   for (const day of dates) {
     const s = daySummary({
       date: day, jobs,
@@ -179,7 +179,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     t.partsCost += s.partsCost;
     t.cashIn += s.cashReceived;
     t.gcashIn += s.gcashReceived;
-    t.drawerExpenses += s.expenses;
+    t.drawerExpenses += s.drawerExpenses;
+    t.fundExpenses += s.fundExpenses;
   }
   const r = n => round2(n);
   const income = {
@@ -201,8 +202,10 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     bills: billsByFund,
     billsTotal: r(bills.reduce((s, b) => s + b.amount, 0)),
     drawerExpenses: r(t.drawerExpenses),
+    // Abonos bought with the cash fund: costs, but not money out of the drawer.
+    fundExpenses: r(t.fundExpenses),
   };
-  opex.total = r(opex.payroll + opex.billsTotal + opex.drawerExpenses);
+  opex.total = r(opex.payroll + opex.billsTotal + opex.drawerExpenses + opex.fundExpenses);
 
   const sumOf = list => r(list.reduce((s, x) => s + x.amount, 0));
   const cashflow = {

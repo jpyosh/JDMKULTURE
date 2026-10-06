@@ -17,7 +17,7 @@ const GUIDE = `
         Every number on this page is for those days only.</li>
       <li><b>Profit &amp; loss: is the shop making money?</b>
         <p>Sales from every department, minus commission, minus the costs of the period: payroll for the days worked,
-          bills paid and drawer expenses from EOD. <b>Net profit</b> is what is left. Red means the costs were bigger than the sales.</p></li>
+          bills paid, drawer expenses from EOD and anything bought with the cash fund. <b>Net profit</b> is what is left. Red means the costs were bigger than the sales.</p></li>
       <li><b>Money in &amp; out of the drawer: where the cash and GCash went.</b>
         <p>Money actually received, minus everything taken out. <b>Payroll paid out</b> is the wages handed out on days in this period
           (it can include last week's work), so it can differ from the payroll cost in Profit &amp; loss.
@@ -26,7 +26,7 @@ const GUIDE = `
         <ul>
           <li>Press <b>Edit</b> on a bill to set its usual amount and due day (or <b>+ Add fund</b> for a new bill).
             The <b>weekly target</b> is worked out for you.</li>
-          <li>Every week, in <b>EOD Closing → Set aside for bills</b>, put the weekly target aside. It leaves the drawer and waits in the fund.</li>
+          <li>Every week, in <b>EOD Closing → Bill envelopes</b>, set aside the weekly target with one press. The money goes in a labelled envelope for the owner and waits in the fund.</li>
           <li>When the bill arrives, press <b>Pay bill</b> here. It is paid from the fund first; anything missing comes out of that
             day's Cash or GCash drawer.</li>
         </ul></li>
@@ -74,7 +74,7 @@ function mount(el) {
     </div>
     <div class="card">
       <div class="section-header"><h2>Bill funds</h2><button class="btn ghost" type="button" data-add-fund>+ Add fund</button></div>
-      <p class="hint">Each week, set aside the <b>weekly target</b> for each bill at EOD (EOD Closing → Set aside for bills). When the bill comes,
+      <p class="hint">Each week, set aside the <b>weekly target</b> for each bill at EOD (EOD Closing → Bill envelopes). When the bill comes,
         pay it here: it is taken from its fund, and any shortfall is taken from that day's drawer.</p>
       <div class="table-wrap"><table class="simple-table funds-table" data-funds-table></table></div>
     </div>
@@ -133,6 +133,7 @@ function render(s, fundStatus) {
     ${line('Payroll (net pay for work in this period)', peso(o.payroll))}
     ${o.bills.map(b => line(`Bill: ${esc(b.name)}`, peso(b.amount))).join('')}
     ${line('Drawer expenses (EOD)', peso(o.drawerExpenses))}
+    ${o.fundExpenses ? line('Bought with the cash fund (abonos)', peso(o.fundExpenses)) : ''}
     ${line('<b>Total operating expenses</b>', `<b>${peso(o.total)}</b>`)}
     ${line('Net profit', peso(s.netProfit), `total ${s.netProfit < 0 ? 'neg-total' : ''}`)}
     ${i.receivables ? `<p class="hint mt">${peso(i.receivables)} of carwash jobs in this period are still unpaid and not counted above.</p>` : ''}`;

@@ -48,7 +48,7 @@ async function launch() {
       await signIn('owner@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
-          'Finance', 'Payroll', 'Settings']);
+          'Finance', 'Cash fund', 'Payroll', 'Settings']);
     });
 
     await step('design: system type, readable contrast, keyboard focus, reduced motion', async () => {
@@ -225,15 +225,35 @@ async function launch() {
       await eod.locator('[data-e="amount"]').fill('120');
       await eod.locator('[data-add-expense]').click();
       await expectToast(/Expense added/);
-      // Weekly set-aside for a bill fund, taken out of the drawer at EOD.
-      const meralcoRow = eod.locator('[data-funds] tr', { hasText: 'Meralco' });
+      // Bill envelopes: plain steps, one button per bill with this week's amount filled in.
+      const envelopes = eod.locator('[data-envelopes]');
+      assert.match(await envelopes.textContent(), /no amount yet/i, 'bills without an amount are explained, not shown as rows');
+      assert.equal(await envelopes.locator('[data-envelope]').count(), 0);
+      await page.evaluate(() => fetch('/api/funds/1', { method: 'PATCH', headers: { Authorization: 'Bearer owner@sandbox', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: 2000, due_day: 25 }) }));
+      await eod.locator('[data-date]').dispatchEvent('change');
+      const meralcoRow = envelopes.locator('[data-envelope]', { hasText: 'Meralco' });
+      await meralcoRow.waitFor();
+      const guideText = await envelopes.textContent();
+      for (const words of [/envelope/i, /owner/i, /this week/i]) assert.match(guideText, words);
+      const oneTap = meralcoRow.locator('[data-put-aside]');
+      const target = (await oneTap.textContent()).match(/₱[\d,.]+/)[0];
+      await oneTap.click();
+      await expectToast(/aside/i);
+      await page.waitForFunction(() => /Done for this week/i.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
+      const cashBox = await eod.locator('[data-cash]').textContent();
+      assert.ok(/Put aside for bills/.test(cashBox) && cashBox.includes(target), `drawer shows the ${target} put aside`);
+      // Undo, then put a different amount aside (the "Other amount" path).
+      await meralcoRow.locator('[data-del-sa]').click();
+      await expectToast(/removed|undone/i);
+      await meralcoRow.locator('[data-other]').click();
       await meralcoRow.locator('[data-sa-amount]').fill('500');
       await meralcoRow.locator('[data-sa-side]').selectOption('cash');
       await meralcoRow.locator('[data-sa-add]').click();
-      await expectToast(/Set aside/);
-      await page.waitForFunction(() => /Set aside to funds/.test(document.querySelector('#view-eod [data-cash]').textContent));
-      const rowHeight = (await eod.locator('[data-funds] tr', { hasText: 'Meralco' }).boundingBox()).height;
-      assert.ok(rowHeight < 80, `set-aside rows are cramped (${Math.round(rowHeight)}px tall)`);
+      await expectToast(/aside/i);
+      await page.waitForFunction(() => /₱500\.00/.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
+      const rowHeight = (await meralcoRow.boundingBox()).height;
+      assert.ok(rowHeight < 160, `envelope rows are too tall (${Math.round(rowHeight)}px)`);
       await eod.locator('[data-m="cash_float"]').fill('1000');
       const expected = (await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, '');
       await eod.locator('[data-m="actual_cash"]').fill(expected);
@@ -398,6 +418,76 @@ async function launch() {
       await page.waitForFunction(() => !/Bill: Meralco/.test(document.querySelector('#view-finance [data-pl]').textContent));
       assert.equal(await fin.locator('[data-bills-paid] tr', { hasText: 'Meralco' }).count(), 0);
       await shot('08d-finance-undone');
+    });
+
+    await step('cash fund: start it, abono at EOD (drawer untouched), itemized list, replenish, undo', async () => {
+      // Empty fund: an abono is refused with a clear message.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-16');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-eod [data-date]').value === '2026-09-16');
+      assert.ok((await eod.locator('[data-e="side"] option').allTextContents()).some(t => /cash fund/i.test(t)), 'expenses can be paid from the cash fund');
+      await eod.locator('[data-e="side"]').selectOption('fund');
+      await eod.locator('[data-e="description"]').fill('Chemicals: Soft99 5L');
+      await eod.locator('[data-e="amount"]').fill('1200');
+      const problemsBefore = problems.length;
+      await eod.locator('[data-add-expense]').click();
+      await expectToast(/cash fund/i);
+      // The browser logs the refused request (400) as a console error; that one is expected here.
+      assert.ok(problems.slice(problemsBefore).some(p => /status of 400/.test(p)), 'the server refused spending from an empty fund');
+      problems.splice(problemsBefore, problems.length - problemsBefore, ...problems.slice(problemsBefore).filter(p => !/status of 400/.test(p)));
+
+      // Owner starts the fund.
+      await page.click('#nav [data-view="cash_fund"]');
+      const cf = page.locator('#view-cash_fund');
+      await cf.locator('[data-guide]').waitFor();
+      for (const words of [/abono/i, /EOD/, /replenish/i]) assert.match(await cf.locator('[data-guide]').textContent(), words);
+      await cf.locator('[data-set-target]').click();
+      await page.fill('#modal [data-target]', '20000');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/saved/i);
+      await cf.locator('[data-add-money]').click();
+      await page.fill('#modal [data-topup-amount]', '20000');
+      await page.fill('#modal [data-topup-note]', 'Starting fund');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/recorded/i);
+      await page.waitForFunction(() => /₱20,000\.00/.test(document.querySelector('#view-cash_fund [data-balance]')?.textContent || ''));
+
+      // Abono at EOD: a cost of the day, but the expected drawer does not change.
+      await page.click('#nav [data-view="eod"]');
+      await page.waitForFunction(() => document.querySelector('#view-eod [data-date]').value === '2026-09-16');
+      const drawerBefore = await eod.locator('[data-cash] .row-line.total .money').textContent();
+      await eod.locator('[data-e="side"]').selectOption('fund');
+      await eod.locator('[data-e="description"]').fill('Chemicals: Soft99 5L');
+      await eod.locator('[data-e="amount"]').fill('1200');
+      await eod.locator('[data-add-expense]').click();
+      await expectToast(/Expense added/);
+      await page.waitForFunction(() => /Cash fund[\s\S]*Chemicals: Soft99 5L/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      assert.equal(await eod.locator('[data-cash] .row-line.total .money').textContent(), drawerBefore, 'drawer untouched by a cash-fund purchase');
+
+      // The itemized list, then replenish.
+      await page.click('#nav [data-view="cash_fund"]');
+      await page.waitForFunction(() => /₱18,800\.00/.test(document.querySelector('#view-cash_fund [data-balance]')?.textContent || ''));
+      const pendingRow = cf.locator('[data-pending] tr', { hasText: 'Chemicals: Soft99 5L' });
+      assert.match(await pendingRow.textContent(), /2026-09-16[\s\S]*₱1,200\.00/);
+      assert.match(await cf.locator('[data-to-replenish]').textContent(), /₱1,200\.00/);
+      const [download] = await Promise.all([page.waitForEvent('download'), cf.locator('[data-sheet]').click()]);
+      assert.match(download.suggestedFilename(), /^Cash_Fund_.*\.pdf$/);
+      await shot('09-cash-fund');
+      await cf.locator('[data-replenish]').click();
+      assert.equal(await page.inputValue('#modal [data-topup-amount]'), '1200');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/recorded/i);
+      await page.waitForFunction(() => /₱20,000\.00/.test(document.querySelector('#view-cash_fund [data-balance]')?.textContent || ''));
+      assert.equal(await cf.locator('[data-pending] tr', { hasText: 'Chemicals' }).count(), 0);
+      const history = cf.locator('[data-topups] tr', { hasText: '₱1,200.00' });
+      assert.match(await history.textContent(), /1 item/);
+
+      // Undo the replenishment: the item is waiting again.
+      await history.locator('[data-act="undo-topup"]').click();
+      await expectToast(/undone/i);
+      await cf.locator('[data-pending] tr', { hasText: 'Chemicals: Soft99 5L' }).waitFor();
+      await shot('09b-cash-fund-undone');
     });
 
     await step('payroll: any date range, days line up with weekdays', async () => {
