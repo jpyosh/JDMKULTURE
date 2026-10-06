@@ -75,6 +75,9 @@ Auth, deployed on Vercel.
 - When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that
   day's drawer and shows on that day's EOD.
 - Set-asides are not costs. The cost is counted when the bill is paid.
+- **Bills paid** (Finance) lists every bill paid in the period; **Undo** removes one recorded by mistake
+  completely (fund, that day's drawer and profit go back). The audit log keeps a record of it.
+- Finance opens with a **How Finance works** guide for new users (it stays closed once someone closes it).
 
 ## Parts & inventory
 

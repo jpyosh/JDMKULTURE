@@ -649,6 +649,21 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   });
   const fundRow = f.funds.find(x => x.id === meralco.id);
   assert.deepEqual([fundRow.setAside, fundRow.paid, fundRow.balance], [6000, 8000, 0]);
+
+  // Every bill paid in the period is listed, so one recorded by mistake can be found and undone in full.
+  assert.deepEqual(f.billPayments.map(b => [b.fund_id, b.name, b.paid_on, b.amount, b.from_fund, b.from_drawer, b.drawer_side, b.note]),
+    [[meralco.id, 'Meralco', '2026-11-25', 8000, 6000, 2000, 'cash', 'Oct bill']]);
+  const oops = await ok(api(OWNER, 'POST', `/funds/${meralco.id}/bills`, { date: '2026-11-26', amount: 500, drawer_side: 'gcash' }));
+  assert.equal((await ok(api(STAFF, 'GET', '/days/2026-11-26'))).summary.billTopUpGcash, 500);
+  assert.equal((await api(STAFF, 'DELETE', `/bill-payments/${oops.id}`)).status, 403);
+  await ok(api(OWNER, 'DELETE', `/bill-payments/${oops.id}`));
+  assert.equal((await api(OWNER, 'DELETE', `/bill-payments/${oops.id}`)).status, 404);
+  assert.equal((await ok(api(STAFF, 'GET', '/days/2026-11-26'))).summary.billTopUpGcash, 0, 'drawer on that day is restored');
+  const undone = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30'));
+  assert.deepEqual(undone.opex.bills, f.opex.bills);
+  assert.deepEqual(undone.billPayments.map(b => b.id), [bill.id]);
+  assert.equal(undone.netProfit, f.netProfit);
+  assert.equal(undone.cashflow.billTopUps, 2000);
 });
 
 test('parts: inventory, average cost, selling on jobs and over the counter, stock never negative', async () => {
