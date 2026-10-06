@@ -156,8 +156,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     db.many('select * from daily_meta where job_date between $1 and $2', between),
     db.many('select payout_date, side, amount from payroll_payouts where payout_date between $1 and $2', between),
     db.many('select fund_id, entry_date, side, amount from fund_set_asides where entry_date between $1 and $2', between),
-    db.many(`select b.fund_id, f.name, b.paid_on, b.amount, b.from_fund, b.from_drawer, b.drawer_side
-      from bill_payments b join funds f on f.id = b.fund_id where b.paid_on between $1 and $2 order by f.sort_order, f.id`, between),
+    db.many(`select b.id, b.fund_id, f.name, b.paid_on, b.amount, b.from_fund, b.from_drawer, b.drawer_side, b.note
+      from bill_payments b join funds f on f.id = b.fund_id where b.paid_on between $1 and $2 order by f.sort_order, f.id, b.paid_on, b.id`, between),
     db.many(`${FUND_BALANCES} order by f.sort_order, f.id`),
     loadPayroll(start, end),
   ]);
@@ -214,6 +214,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
 
   res.json({
     start, end, income, opex, netProfit: r(income.net - income.partsCost - opex.total), cashflow,
+    // Each bill paid in the period, so one recorded by mistake can be found and undone.
+    billPayments: bills,
     funds: funds.map(f => ({
       id: f.id, name: f.name, amount: f.amount, balance: f.balance, active: f.active,
       setAside: sumOf(setAsides.filter(s => s.fund_id === f.id)),

@@ -383,6 +383,21 @@ async function launch() {
       await expectToast(/Bill recorded/);
       await page.waitForFunction(() => /Meralco[\s\S]*₱3,000\.00/.test(document.querySelector('#view-finance [data-pl]').textContent));
       await shot('08c-finance');
+
+      // New users get step-by-step directions on the page.
+      const guide = fin.locator('[data-guide]');
+      assert.equal(await guide.count(), 1, 'Finance has a how-to guide');
+      const guideText = await guide.textContent();
+      for (const words of [/Profit & loss/, /drawer/i, /Set aside/i, /Pay bill/, /Undo/]) assert.match(guideText, words);
+
+      // A bill recorded by mistake is listed for the period and can be undone in full.
+      const paidRow = fin.locator('[data-bills-paid] tr', { hasText: 'Meralco' });
+      assert.match(await paidRow.textContent(), /2026-09-25[\s\S]*₱3,000\.00/);
+      await paidRow.locator('[data-act="undo-bill"]').click();
+      await expectToast(/undone/i);
+      await page.waitForFunction(() => !/Bill: Meralco/.test(document.querySelector('#view-finance [data-pl]').textContent));
+      assert.equal(await fin.locator('[data-bills-paid] tr', { hasText: 'Meralco' }).count(), 0);
+      await shot('08d-finance-undone');
     });
 
     await step('payroll: any date range, days line up with weekdays', async () => {

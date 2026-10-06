@@ -6,6 +6,35 @@ let root;
 let range = null;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', yearly: 'Yearly' };
+const GUIDE_KEY = 'gmqa.finance.guide';
+
+// Step-by-step directions for someone opening Finance for the first time. Open until they close it.
+const GUIDE = `
+  <details class="card guide" data-guide>
+    <summary>How Finance works <span class="muted small">New here? Start with these steps.</span></summary>
+    <ol class="guide-steps">
+      <li><b>Pick the period.</b> Use From / To, or the <b>This week</b>, <b>This month</b> and <b>Last month</b> buttons.
+        Every number on this page is for those days only.</li>
+      <li><b>Profit &amp; loss: is the shop making money?</b>
+        <p>Sales from every department, minus commission, minus the costs of the period: payroll for the days worked,
+          bills paid and drawer expenses from EOD. <b>Net profit</b> is what is left. Red means the costs were bigger than the sales.</p></li>
+      <li><b>Money in &amp; out of the drawer: where the cash and GCash went.</b>
+        <p>Money actually received, minus everything taken out. <b>Payroll paid out</b> is the wages handed out on days in this period
+          (it can include last week's work), so it can differ from the payroll cost in Profit &amp; loss.
+          <b>Left over for the owner</b> is what should remain.</p></li>
+      <li><b>Bill funds: save for big bills a little each week.</b>
+        <ul>
+          <li>Press <b>Edit</b> on a bill to set its usual amount and due day (or <b>+ Add fund</b> for a new bill).
+            The <b>weekly target</b> is worked out for you.</li>
+          <li>Every week, in <b>EOD Closing → Set aside for bills</b>, put the weekly target aside. It leaves the drawer and waits in the fund.</li>
+          <li>When the bill arrives, press <b>Pay bill</b> here. It is paid from the fund first; anything missing comes out of that
+            day's Cash or GCash drawer.</li>
+        </ul></li>
+      <li><b>Made a mistake?</b>
+        <p>Every bill paid in the period is listed under <b>Bills paid</b> at the bottom. Press <b>Undo</b> to remove it completely:
+          the fund, that day's drawer and the profit go back to how they were. A set-aside is removed in EOD Closing on the day it was made.</p></li>
+    </ol>
+  </details>`;
 
 function lastDayOfMonth(date) {
   const [y, m] = date.split('-').map(Number);
@@ -38,6 +67,7 @@ function mount(el) {
       <button class="btn ghost small" type="button" data-preset="this-month">This month</button>
       <button class="btn ghost small" type="button" data-preset="last-month">Last month</button>
     </div>
+    ${GUIDE}
     <div class="two-col">
       <div class="card"><h2>Profit &amp; loss</h2><div data-pl></div></div>
       <div class="card"><h2>Money in &amp; out of the drawer</h2><div data-cashflow></div></div>
@@ -47,7 +77,17 @@ function mount(el) {
       <p class="hint">Each week, set aside the <b>weekly target</b> for each bill at EOD (EOD Closing → Set aside for bills). When the bill comes,
         pay it here: it is taken from its fund, and any shortfall is taken from that day's drawer.</p>
       <div class="table-wrap"><table class="simple-table funds-table" data-funds-table></table></div>
+    </div>
+    <div class="card">
+      <div class="section-header"><h2>Bills paid</h2></div>
+      <p class="hint">Every bill paid in this period. Recorded one by mistake? Press <b>Undo</b> to remove it completely.</p>
+      <div class="table-wrap"><table class="simple-table funds-table" data-bills-paid></table></div>
     </div>`;
+  const guide = $('[data-guide]', root);
+  try { guide.open = localStorage.getItem(GUIDE_KEY) !== 'closed'; } catch { guide.open = true; }
+  guide.addEventListener('toggle', () => {
+    try { localStorage.setItem(GUIDE_KEY, guide.open ? 'open' : 'closed'); } catch { /* storage blocked: the guide just opens again next time */ }
+  });
   $('[data-start]', root).addEventListener('change', onRangeInput);
   $('[data-end]', root).addEventListener('change', onRangeInput);
   $$('[data-preset]', root).forEach(b => b.addEventListener('click', () => setRange(...presets()[b.dataset.preset])));
@@ -123,10 +163,38 @@ function render(s, fundStatus) {
         <td class="row-actions"><button class="btn ghost small" type="button" data-act="edit-fund">Edit</button>
           <button class="btn small" type="button" data-act="pay-bill">Pay bill</button></td>
       </tr>`).join('')}</tbody>`;
-  $$('[data-act]', root).forEach(btn => btn.addEventListener('click', () => {
+  $$('[data-funds-table] [data-act]', root).forEach(btn => btn.addEventListener('click', () => {
     const fund = rows.find(f => f.id === Number(btn.closest('tr').dataset.fund));
     ({ 'edit-fund': fundModal, 'pay-bill': billModal })[btn.dataset.act](fund);
   }));
+
+  $('[data-bills-paid]', root).innerHTML = `
+    <thead><tr><th>Paid on</th><th>Bill</th><th class="num">Amount</th><th class="num">From fund</th><th class="num">From drawer</th><th>Note</th><th></th></tr></thead>
+    <tbody>${s.billPayments.length ? s.billPayments.map(b => `
+      <tr data-bill="${b.id}">
+        <td class="mono">${esc(b.paid_on)}</td>
+        <td><b>${esc(b.name)}</b></td>
+        <td class="num money">${peso(b.amount)}</td>
+        <td class="num money">${peso(b.from_fund)}</td>
+        <td class="num money">${peso(b.from_drawer)}${b.from_drawer ? `<div class="muted small">${sideLabel(b.drawer_side)}</div>` : ''}</td>
+        <td>${esc(b.note || '—')}</td>
+        <td class="row-actions"><button class="btn ghost small" type="button" data-act="undo-bill">Undo</button></td>
+      </tr>`).join('') : '<tr><td colspan="7"><div class="empty-state">No bills paid in this period.</div></td></tr>'}</tbody>`;
+  $$('[data-bills-paid] [data-act="undo-bill"]', root).forEach(btn => btn.addEventListener('click', () =>
+    undoBill(s.billPayments.find(b => b.id === Number(btn.closest('tr').dataset.bill)))));
+}
+
+const sideLabel = side => (side === 'gcash' ? 'GCash' : 'cash drawer');
+
+async function undoBill(bill) {
+  const back = [
+    bill.from_fund ? `${peso(bill.from_fund)} goes back into the ${bill.name} fund` : '',
+    bill.from_drawer ? `${peso(bill.from_drawer)} goes back to the ${sideLabel(bill.drawer_side)} on ${bill.paid_on}` : '',
+  ].filter(Boolean).join(' and ');
+  if (!window.confirm(`Undo the ${bill.name} bill of ${peso(bill.amount)} paid on ${bill.paid_on}?\n\nIt is removed completely: ${back}.`)) return;
+  await api('DELETE', `/bill-payments/${bill.id}`);
+  toast(`${bill.name} bill payment undone`);
+  await reload();
 }
 
 function fundModal(fund) {

@@ -620,3 +620,16 @@ body:not([data-role="owner"]) .owner-only{display:none !important;}
 @media (hover:none){
   tbody tr:hover td{background:none;}
 }
+
+/* How-to guide (Finance): a collapsible card of numbered steps for new users. */
+.guide{padding:0;}
+.guide>summary{cursor:pointer;list-style:none;padding:16px 20px;font-weight:600;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.guide>summary::-webkit-details-marker{display:none;}
+.guide>summary::before{content:'›';display:inline-block;color:var(--accent-text);font-size:1.2em;line-height:1;transition:transform .2s;}
+.guide[open]>summary::before{transform:rotate(90deg);}
+.guide>summary .muted{font-weight:400;}
+.guide-steps{margin:0;padding:0 20px 18px 44px;display:grid;gap:12px;color:var(--text);line-height:1.5;}
+.guide-steps li::marker{color:var(--accent-text);font-weight:600;}
+.guide-steps p{margin:4px 0 0;color:var(--muted);}
+.guide-steps ul{margin:6px 0 0;padding-left:18px;color:var(--muted);display:grid;gap:4px;}
+.guide-steps b{color:var(--text);}
