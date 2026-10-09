@@ -10,10 +10,32 @@ const iso = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
 const parse = value => (/^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : null);
 const longLabel = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
-let picker = null; // { el, input, year, month, focus }
+let picker = null; // { el, input, year, month, focus, role, partner, preview }
 
 const usable = input => input?.matches?.('input[type=date]') && !input.disabled && !input.readOnly;
 const inRange = (input, date) => (!input.min || date >= input.min) && (!input.max || date <= input.max);
+
+// From/To pairs (Payroll, Finance, Sales Reports: two date inputs in .date-range-picker) show their whole range.
+function rangeOf() {
+  const { role, partner, input, preview } = picker;
+  if (!role) return null;
+  const mine = preview || parse(input.value);
+  const other = parse(partner.value);
+  if (!mine || !other) return null;
+  const [lo, hi] = role === 'start' ? [mine, other] : [other, mine];
+  return lo <= hi ? { lo, hi } : { lo: hi, hi: lo };
+}
+function paintRange() {
+  const range = rangeOf();
+  picker.el.classList.toggle('dp-previewing', Boolean(picker.preview));
+  picker.el.querySelectorAll('.dp-day').forEach(day => {
+    const d = day.dataset.date;
+    const inside = Boolean(range && d >= range.lo && d <= range.hi);
+    day.classList.toggle('dp-in-range', inside);
+    day.classList.toggle('dp-range-start', inside && d === range.lo);
+    day.classList.toggle('dp-range-end', inside && d === range.hi);
+  });
+}
 
 function close({ refocus = false } = {}) {
   if (!picker) return;
@@ -62,6 +84,7 @@ function render() {
       <button type="button" class="dp-link" data-dp-today ${inRange(input, today) ? '' : 'disabled'}>Today</button>
       <button type="button" class="dp-link" data-dp-close>Close</button>
     </div>`;
+  paintRange();
 }
 
 function show(focusDate, { focusDay = false } = {}) {
@@ -98,11 +121,23 @@ function open(input) {
   const popover = typeof el.showPopover === 'function';
   if (popover) el.setAttribute('popover', 'manual');
   (popover ? document.body : input.closest('dialog') || document.body).append(el);
-  picker = { el, input };
+  const pair = [...(input.closest('.date-range-picker')?.querySelectorAll('input[type=date]') || [])];
+  const role = pair.length === 2 ? (pair[0] === input ? 'start' : 'end') : null;
+  picker = { el, input, role, partner: role ? pair.find(p => p !== input) : null, preview: null };
   show(parse(input.value) || todayLocal());
   if (popover) el.showPopover();
   position();
 
+  // Hovering (or moving the keyboard focus to) a day previews the range it would make.
+  const previewDay = e => {
+    const day = e.target.closest('.dp-day:not(:disabled)');
+    if (!picker?.role || !day || picker.preview === day.dataset.date) return;
+    picker.preview = day.dataset.date;
+    paintRange();
+  };
+  el.addEventListener('mouseover', previewDay);
+  el.addEventListener('focusin', previewDay);
+  el.addEventListener('mouseleave', () => { if (picker?.role) { picker.preview = null; paintRange(); } });
   el.addEventListener('mousedown', e => e.preventDefault()); // keep focus where it is while clicking around the calendar
   el.addEventListener('click', e => {
     const t = e.target.closest('button');

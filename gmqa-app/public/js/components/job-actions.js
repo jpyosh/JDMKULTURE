@@ -14,11 +14,15 @@ const detail = (label, value, full) =>
 export function reviewAndCreate({ editor, department, jobDate, onCreated }) {
   const error = editor.validate();
   if (error) return toast(error, 'error');
+  editor.syncTime?.(); // an untouched Time in shows the time Review was pressed
   const payload = editor.payload();
   const t = editor.totals();
   const lines = editor.lines();
   const dept = departmentOf(department);
   openModal(`${modalHeader(`Review ${dept.label} job order`, `${dept.running ? 'Opened' : 'Date'}: ${prettyDate(jobDate)}`)}
+    ${dept.catalog ? `<div class="review-time"><label for="review-time">Time in</label>
+      <input type="time" id="review-time" data-review-time value="${esc(payload.time_in || '')}">
+      <span class="hint">${payload.time_in ? 'Filled in for you. Change it if the car came in at another time.' : 'Optional: when the car came in.'}</span></div>` : ''}
     <div class="review-details">
       ${detail('Vehicle', `${esc(classLabel(payload.vehicle_class))}${payload.plate ? ` · ${esc(payload.plate.toUpperCase())}` : ''}`)}
       ${detail('Detailer', esc(payload.detailer || '—'))}
@@ -33,7 +37,8 @@ export function reviewAndCreate({ editor, department, jobDate, onCreated }) {
     ${dept.running ? '<p class="hint mt">This job stays on the board until it is marked done and paid, and counts in sales on the later of those two days.</p>' : ''}
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Back</button><button class="btn" type="button" data-confirm>Add job</button></div>`,
   card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
-    const job = await api('POST', '/jobs', { ...payload, department, job_date: jobDate });
+    const timeIn = $('[data-review-time]', card);
+    const job = await api('POST', '/jobs', { ...payload, ...(timeIn ? { time_in: timeIn.value } : {}), department, job_date: jobDate });
     closeModal();
     toast(`${job.jo_number} added`);
     await onCreated(job);

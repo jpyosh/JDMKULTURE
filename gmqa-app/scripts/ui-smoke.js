@@ -122,6 +122,61 @@ async function launch() {
       await page.click('#nav [data-view="carwash"]');
     });
 
+    await step('time picker: our own, 12-hour, Now, Escape', async () => {
+      const timeIn = daily.locator('[data-editor] [data-f="time_in"]');
+      await timeIn.click();
+      const tp = page.locator('.timepicker');
+      await tp.waitFor();
+      assert.notEqual(await tp.evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)', 'dark theme');
+      assert.equal(await tp.locator('[data-tp-hour]').count(), 12);
+      assert.equal(await tp.locator('[data-tp-minute]').count(), 60);
+      await tp.locator('[data-tp-hour="7"]').click();
+      await tp.locator('[data-tp-minute="05"]').click();
+      await tp.locator('[data-tp-ampm="AM"]').click();
+      await tp.locator('[data-tp-done]').click();
+      await page.waitForFunction(() => !document.querySelector('.timepicker'));
+      assert.equal(await timeIn.inputValue(), '07:05');
+      await timeIn.click();
+      await tp.waitFor();
+      await tp.locator('[data-tp-ampm="PM"]').click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.timepicker'));
+      assert.equal(await timeIn.inputValue(), '07:05', 'Escape leaves the time as it was');
+      await timeIn.click();
+      await tp.locator('[data-tp-now]').click();
+      assert.ok(minutesApart(await timeIn.inputValue(), await shopHHMM()) <= 1, 'Now sets the current time');
+    });
+
+    await step('review job: Time in is filled and editable; what it shows is saved', async () => {
+      const editor = daily.locator('[data-editor]');
+      const addPremium = async () => {
+        await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+        await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+      };
+      // A time typed in the form is what Review shows.
+      await addPremium();
+      await editor.locator('[data-f="time_in"]').fill('08:15');
+      await editor.locator('[data-f="time_in"]').dispatchEvent('input');
+      await daily.locator('[data-review]').click();
+      const reviewTime = page.locator('#modal [data-review-time]');
+      await reviewTime.waitFor();
+      assert.equal(await reviewTime.inputValue(), '08:15');
+      // Changed in Review: that is the time saved, shown as 12-hour with In / Out labels.
+      await reviewTime.fill('10:05');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/added/);
+      const row = daily.locator('[data-jobs] tr', { hasText: '10:05 AM' });
+      await row.waitFor();
+      assert.match(await row.locator('.time-cell').textContent(), /In\s*10:05 AM[\s\S]*Out/);
+      // An untouched form: Review shows the current time.
+      await addPremium();
+      await daily.locator('[data-review]').click();
+      await reviewTime.waitFor();
+      assert.ok(minutesApart(await reviewTime.inputValue(), await shopHHMM()) <= 1, 'Review fills in the current time');
+      await page.click('#modal [data-close]');
+      await daily.locator('[data-clear]').click();
+    });
+
     await step('carwash tab shows migrated jobs', async () => {
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
@@ -580,6 +635,27 @@ async function launch() {
       await payroll.locator('[data-preset="next-week"]').click();
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-11');
       assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-17');
+
+      // The calendar highlights the whole range From → To, and previews a new range on hover.
+      const dp = page.locator('.datepicker');
+      const rangeDays = async () => ({
+        start: (await dp.locator('.dp-range-start').allTextContents()).join(),
+        end: (await dp.locator('.dp-range-end').allTextContents()).join(),
+        inRange: await dp.locator('.dp-in-range').count(),
+      });
+      await payroll.locator('[data-end]').click();
+      await dp.waitFor();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 });
+      await dp.locator('.dp-day:not(.dp-outside)', { hasText: /^20$/ }).hover();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '20', inRange: 10 }, 'hovering a day previews the new range');
+      await page.keyboard.press('Escape');
+      await payroll.locator('[data-start]').click();
+      await dp.waitFor();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 }, 'the From calendar shows the same range');
+      await page.waitForTimeout(300); // let the calendar finish fading in before the screenshot
+      await shot('09c-payroll-range-calendar');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.datepicker'));
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);

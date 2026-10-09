@@ -1,6 +1,6 @@
 // Running job boards (Detailing, Tint & PPF). A job stays on the board, carried over day after day,
 // until it is both marked done and paid; it then counts in sales on the later of those two dates.
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, loadCatalog, classLabel, isOwner,
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, formatTime, prettyDate, loadCatalog, classLabel, isOwner,
   openModal, closeModal, modalHeader, departmentOf } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
 import { itemsSummary, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
@@ -111,7 +111,7 @@ export function createRunningView(department) {
     tbody.innerHTML = active.length ? active.map(j => `
       <tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''}">
         <td class="jo-number">${esc(j.jo_number)}${j.voided_at ? `<div class="void-note">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
-        <td><div class="mono">${esc(j.job_date)}</div><div class="muted small">${daysBetween(j.job_date, today) === 0 ? 'today' : `${daysBetween(j.job_date, today)} day(s) ago`}</div></td>
+        <td><div class="mono">${esc(j.job_date)}</div><div class="muted small">${j.time_in ? `${esc(formatTime(j.time_in))} · ` : ''}${daysBetween(j.job_date, today) === 0 ? 'today' : `${daysBetween(j.job_date, today)} day(s) ago`}</div></td>
         <td>${esc(classLabel(j.vehicle_class))}</td>
         <td>${esc(j.plate || '—')}</td>
         <td class="items-cell">${itemsSummary(j)}</td>
