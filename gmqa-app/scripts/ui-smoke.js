@@ -492,6 +492,17 @@ async function launch() {
 
     await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');
+      // The shop's pay week runs Sunday to Saturday: Payroll opens on it, and "This week" / "Last week" follow it.
+      await payroll.locator('thead .attendance-day').first().waitFor();
+      const isSunToSat = heads => heads.length === 7 && heads[0].startsWith('Sun') && heads[6].startsWith('Sat');
+      const opened = await dayHeads();
+      assert.ok(isSunToSat(opened), `payroll opens on a Sunday–Saturday week (got ${opened[0]} … ${opened.at(-1)})`);
+      await payroll.locator('[data-preset="last-week"]').click();
+      await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') !== first, opened[0]);
+      assert.ok(isSunToSat(await dayHeads()), 'Last week is Sunday–Saturday');
+      await payroll.locator('[data-preset="this-week"]').click();
+      await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') === first, opened[0]);
+      assert.deepEqual(await dayHeads(), opened, 'This week is the week Payroll opened on');
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
@@ -572,12 +583,14 @@ async function launch() {
 
     await step('payroll: the overtime note follows the rule of the days shown', async () => {
       const note = () => payroll.locator('[data-ot-rule]').textContent();
-      await setPayrollRange('2026-09-28', '2026-10-04');
+      await setPayrollRange('2026-09-21', '2026-09-27');
       assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026, and the day's rate ÷ 8 × 1 from Oct 4, 2026.");
       await setPayrollRange('2026-10-05', '2026-10-11');
       assert.equal(await note(), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
       await setPayrollRange('2026-10-01', '2026-10-07');
-      assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 from Oct 5, 2026/);
+      assert.match(await note(), /× 1\.25 per hour up to Oct 3, 2026; the day's rate ÷ 8 × 1 on Oct 4, 2026; and the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 from Oct 5, 2026/);
     });
 
     await step('payroll: OT pay is shown next to OT hours', async () => {
