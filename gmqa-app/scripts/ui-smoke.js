@@ -492,6 +492,17 @@ async function launch() {
 
     await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');
+      // The shop's pay week runs Sunday to Saturday: Payroll opens on it, and "This week" / "Last week" follow it.
+      await payroll.locator('thead .attendance-day').first().waitFor();
+      const isSunToSat = heads => heads.length === 7 && heads[0].startsWith('Sun') && heads[6].startsWith('Sat');
+      const opened = await dayHeads();
+      assert.ok(isSunToSat(opened), `payroll opens on a Sunday–Saturday week (got ${opened[0]} … ${opened.at(-1)})`);
+      await payroll.locator('[data-preset="last-week"]').click();
+      await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') !== first, opened[0]);
+      assert.ok(isSunToSat(await dayHeads()), 'Last week is Sunday–Saturday');
+      await payroll.locator('[data-preset="this-week"]').click();
+      await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') === first, opened[0]);
+      assert.deepEqual(await dayHeads(), opened, 'This week is the week Payroll opened on');
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);

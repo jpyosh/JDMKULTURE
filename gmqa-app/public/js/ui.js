@@ -21,6 +21,10 @@ export function mondayOf(date) {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return addDays(date, day === 0 ? -6 : 1 - day);
 }
+// The shop's pay week runs Sunday to Saturday.
+export function sundayOf(date) {
+  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
+}
 export const weekday = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'short', timeZone: 'UTC' });
 export const prettyDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 export const prettyTime = ts => new Date(ts).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

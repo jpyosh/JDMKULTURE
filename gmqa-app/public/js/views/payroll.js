@@ -1,9 +1,10 @@
 // Payroll for any date range: attendance per day, overtime per day, dated adjustments, and the
 // payout that leaves the drawer (shown in that day's EOD).
-import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, mondayOf, weekday, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
-let range = { start: mondayOf(todayLocal()), end: addDays(mondayOf(todayLocal()), 6) };
+// Pay weeks run Sunday to Saturday.
+let range = { start: sundayOf(todayLocal()), end: addDays(sundayOf(todayLocal()), 6) };
 let data = null;
 const CODES = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 
@@ -14,11 +15,11 @@ function lastDayOfMonth(date) {
 
 function presets() {
   const today = todayLocal();
-  const monday = mondayOf(today);
+  const sunday = sundayOf(today);
   const month = today.slice(0, 8);
   return {
-    'this-week': [monday, addDays(monday, 6)],
-    'last-week': [addDays(monday, -7), addDays(monday, -1)],
+    'this-week': [sunday, addDays(sunday, 6)],
+    'last-week': [addDays(sunday, -7), addDays(sunday, -1)],
     'first-half': [`${month}01`, `${month}15`],
     'second-half': [`${month}16`, lastDayOfMonth(today)],
   };
