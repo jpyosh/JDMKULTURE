@@ -580,6 +580,27 @@ async function launch() {
       await payroll.locator('[data-preset="next-week"]').click();
       await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-11');
       assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-17');
+
+      // The calendar highlights the whole range From → To, and previews a new range on hover.
+      const dp = page.locator('.datepicker');
+      const rangeDays = async () => ({
+        start: (await dp.locator('.dp-range-start').allTextContents()).join(),
+        end: (await dp.locator('.dp-range-end').allTextContents()).join(),
+        inRange: await dp.locator('.dp-in-range').count(),
+      });
+      await payroll.locator('[data-end]').click();
+      await dp.waitFor();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 });
+      await dp.locator('.dp-day:not(.dp-outside)', { hasText: /^20$/ }).hover();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '20', inRange: 10 }, 'hovering a day previews the new range');
+      await page.keyboard.press('Escape');
+      await payroll.locator('[data-start]').click();
+      await dp.waitFor();
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 }, 'the From calendar shows the same range');
+      await page.waitForTimeout(300); // let the calendar finish fading in before the screenshot
+      await shot('09c-payroll-range-calendar');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.datepicker'));
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
