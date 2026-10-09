@@ -572,12 +572,14 @@ async function launch() {
 
     await step('payroll: the overtime note follows the rule of the days shown', async () => {
       const note = () => payroll.locator('[data-ot-rule]').textContent();
-      await setPayrollRange('2026-09-28', '2026-10-04');
+      await setPayrollRange('2026-09-21', '2026-09-27');
       assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
+      await setPayrollRange('2026-09-28', '2026-10-04');
+      assert.equal(await note(), "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026, and the day's rate ÷ 8 × 1 from Oct 4, 2026.");
       await setPayrollRange('2026-10-05', '2026-10-11');
       assert.equal(await note(), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
       await setPayrollRange('2026-10-01', '2026-10-07');
-      assert.match(await note(), /× 1\.25 per hour up to Oct 4, 2026, and the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 from Oct 5, 2026/);
+      assert.match(await note(), /× 1\.25 per hour up to Oct 3, 2026; the day's rate ÷ 8 × 1 on Oct 4, 2026; and the carwash rate ÷ 11 \(construction rate ÷ 8\) × 1 from Oct 5, 2026/);
     });
 
     await step('payroll: OT pay is shown next to OT hours', async () => {

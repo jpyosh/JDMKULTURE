@@ -49,9 +49,10 @@ test('payrollForRange pays each day at that day\'s rate, plus dated adjustments'
   assert.equal(pay.net, pay.gross - 250);
 });
 
-test('overtime pays ×1.25 for days up to Sun 2026-10-04 and ×1 from Mon 2026-10-05', () => {
+test('overtime pays ×1.25 for days up to Sat 2026-10-03 and ×1 from Sun 2026-10-04', () => {
   assert.equal(otMultiplierOn('2026-01-01'), 1.25);
-  assert.equal(otMultiplierOn('2026-10-04'), 1.25);
+  assert.equal(otMultiplierOn('2026-10-03'), 1.25);
+  assert.equal(otMultiplierOn('2026-10-04'), 1);
   assert.equal(otMultiplierOn('2026-10-05'), 1);
   assert.equal(otMultiplierOn('2027-06-30'), 1);
 
@@ -61,8 +62,8 @@ test('overtime pays ×1.25 for days up to Sun 2026-10-04 and ×1 from Mon 2026-1
     rates: [{ effective_from: '2000-01-01', rate_per_day: 400, construction_rate: 800 }],
     days: { '2026-10-04': { code: 'CN', cn_ot_hours: 2 }, '2026-10-05': { code: 'CN', cn_ot_hours: 2 }, '2026-10-06': { code: 'P', cw_ot_hours: 4 } },
   });
-  // 10-04: 800/8 × 1.25 × 2 = 250 · 10-05 construction: 800/8 × 2 = 200 · 10-06 carwash: 400/11 × 4 = 145.45
-  assert.equal(pay.otPay, 595.45);
+  // 10-04: 800/8 × 1 × 2 = 200 · 10-05 construction: 800/8 × 2 = 200 · 10-06 carwash: 400/11 × 4 = 145.45
+  assert.equal(pay.otPay, 545.45);
   assert.equal(pay.otHours, 8);
 });
 
@@ -71,8 +72,10 @@ test('carwash overtime uses an 11-hour day from 2026-10-05; construction stays 8
   const ot = (date, day) => payrollForRange({ dates: [date], rates, days: { [date]: day } }).otPay;
   assert.equal(ot('2026-10-05', { code: 'P', cw_ot_hours: 2 }), 100);      // 550 / 11 × 1 × 2
   assert.equal(ot('2026-10-05', { code: 'CN', cn_ot_hours: 2 }), 200);     // 800 / 8 × 1 × 2
-  assert.equal(ot('2026-10-04', { code: 'P', cw_ot_hours: 2 }), 171.88);   // 550 / 8 × 1.25 × 2 (before the change)
-  assert.equal(ot('2026-10-04', { code: 'CN', cn_ot_hours: 2 }), 250);     // 800 / 8 × 1.25 × 2
+  assert.equal(ot('2026-10-04', { code: 'P', cw_ot_hours: 2 }), 137.5);    // Sun Oct 4: already × 1, still an 8-hour carwash day
+  assert.equal(ot('2026-10-04', { code: 'CN', cn_ot_hours: 2 }), 200);     // 800 / 8 × 1 × 2
+  assert.equal(ot('2026-10-03', { code: 'P', cw_ot_hours: 2 }), 171.88);   // 550 / 8 × 1.25 × 2 (before the change)
+  assert.equal(ot('2026-10-03', { code: 'CN', cn_ot_hours: 2 }), 250);     // 800 / 8 × 1.25 × 2
   // Both kinds on one day after the change.
   assert.equal(ot('2026-11-02', { code: 'P', cw_ot_hours: 1, cn_ot_hours: 1 }), 150); // 550/11 + 800/8
 });
@@ -91,10 +94,12 @@ test('historical payroll is unchanged by the new overtime rule (owner\'s week of
 });
 
 test('the overtime note states the rule for the days shown', () => {
-  assert.equal(otRuleNote('2026-09-27', '2026-10-04'), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
+  assert.equal(otRuleNote('2026-09-20', '2026-09-26'), "OT pays the day's rate ÷ 8 × 1.25 per hour.");
+  assert.equal(otRuleNote('2026-09-28', '2026-10-04'),
+    "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026, and the day's rate ÷ 8 × 1 from Oct 4, 2026.");
   assert.equal(otRuleNote('2026-10-05', '2026-10-11'), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
   assert.equal(otRuleNote('2026-10-01', '2026-10-15'),
-    "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 4, 2026, and the carwash rate ÷ 11 (construction rate ÷ 8) × 1 from Oct 5, 2026.");
+    "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026; the day's rate ÷ 8 × 1 on Oct 4, 2026; and the carwash rate ÷ 11 (construction rate ÷ 8) × 1 from Oct 5, 2026.");
 });
 
 test('payroll paid out of the drawer reduces expected cash/GCash that day', () => {

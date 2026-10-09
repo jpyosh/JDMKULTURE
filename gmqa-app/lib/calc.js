@@ -143,7 +143,8 @@ const ATTENDANCE_CODES = ['P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 // never alters days before it. Newest last.
 const OT_RULES = [
   { from: '2000-01-01', multiplier: 1.25, carwashHours: 8, constructionHours: 8 },
-  // Owner's decisions from Mon Oct 5, 2026: OT at the plain hourly rate, and a carwash day is 11 hours.
+  // Owner's decisions: OT at the plain hourly rate from Sun Oct 4, 2026; a carwash day is 11 hours from Mon Oct 5, 2026.
+  { from: '2026-10-04', multiplier: 1, carwashHours: 8, constructionHours: 8 },
   { from: '2026-10-05', multiplier: 1, carwashHours: 11, constructionHours: 8 },
 ];
 function otRuleOn(date) {
@@ -167,9 +168,16 @@ function otRuleNote(start, end) {
     ? `the day's rate ÷ ${r.carwashHours}`
     : `the carwash rate ÷ ${r.carwashHours} (construction rate ÷ ${r.constructionHours})`);
   if (parts.length === 1) return `OT pays ${hourly(parts[0].rule)} × ${parts[0].rule.multiplier} per hour.`;
-  return `OT pays ${parts.map((p, i) => i === 0
-    ? `${hourly(p.rule)} × ${p.rule.multiplier} per hour up to ${longDate(p.until)}`
-    : `${hourly(p.rule)} × ${p.rule.multiplier} from ${longDate(p.from)}`).join(', and ')}.`;
+  const last = parts.length - 1;
+  const clauses = parts.map((p, i) => {
+    const pay = `${hourly(p.rule)} × ${p.rule.multiplier}${i === 0 ? ' per hour' : ''}`;
+    if (i === 0) return `${pay} up to ${longDate(p.until)}`;
+    if (i === last) return `${pay} from ${longDate(p.from)}`;
+    return p.from === p.until ? `${pay} on ${longDate(p.from)}` : `${pay} from ${longDate(p.from)} to ${longDate(p.until)}`;
+  });
+  return parts.length === 2
+    ? `OT pays ${clauses[0]}, and ${clauses[1]}.`
+    : `OT pays ${clauses.slice(0, last).join('; ')}; and ${clauses[last]}.`;
 }
 
 // rates: [{ effective_from, rate_per_day, construction_rate }]; the latest one on or before date applies.
