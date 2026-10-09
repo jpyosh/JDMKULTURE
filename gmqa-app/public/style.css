@@ -653,3 +653,54 @@ body:not([data-role="owner"]) .owner-only{display:none !important;}
   .envelope{grid-template-columns:1fr;}
   .envelope-actions{justify-content:flex-start;}
 }
+
+/* ---------- Live shop clock (sidebar) ---------- */
+.shop-clock{margin-top:12px;display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+.shop-clock .clock-time{font-size:15px;font-weight:600;color:var(--text);letter-spacing:.01em;}
+@media (max-width:700px){
+  .shop-clock{margin-top:3px;gap:6px;font-size:11px;}
+  .shop-clock .clock-time{font-size:12px;}
+}
+
+/* ---------- Date fields + our own calendar ---------- */
+/* The browser's calendar button is replaced by our icon; clicking anywhere in the field opens the calendar. */
+input[type=date]{
+  padding-right:36px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a6' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15.5' rx='2.5'/%3E%3Cpath d='M3.5 10h17M8 3v4M16 3v4'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;background-size:17px;
+}
+input[type=date]::-webkit-calendar-picker-indicator{display:none;}
+
+.datepicker{
+  position:fixed;inset:auto;margin:0;z-index:30;width:300px;padding:14px 14px 10px;
+  background:var(--surface);color:var(--text);border:0;border-radius:var(--r-lg);box-shadow:var(--shadow-pop);
+  font-size:14px;overflow:visible;animation:dp-in .16s var(--spring);
+}
+@keyframes dp-in{from{opacity:0;transform:translateY(-4px) scale(.98);}to{opacity:1;transform:none;}}
+.dp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
+.dp-title{font-weight:600;font-size:15px;letter-spacing:-.01em;}
+.dp-nav{all:unset;box-sizing:border-box;width:32px;height:32px;display:grid;place-items:center;border-radius:50%;cursor:pointer;
+  font-size:20px;line-height:1;color:var(--text);transition:background-color .15s var(--ease);}
+.dp-nav:hover{background:var(--surface-alt);}
+.dp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+.dp-weekday{text-align:center;font-size:11px;font-weight:600;color:var(--muted);padding:4px 0 6px;letter-spacing:.02em;}
+.dp-day{all:unset;box-sizing:border-box;height:36px;display:grid;place-items:center;border-radius:50%;cursor:pointer;
+  font-variant-numeric:tabular-nums;color:var(--text);transition:background-color .12s var(--ease),color .12s var(--ease);}
+.dp-day:hover{background:var(--surface-alt);}
+.dp-day.dp-outside{color:var(--muted);opacity:.55;}
+.dp-day.dp-today{box-shadow:inset 0 0 0 1.5px var(--accent-text);color:var(--accent-text);font-weight:600;}
+.dp-day[aria-selected="true"]{background:var(--accent);color:#fff;font-weight:600;box-shadow:none;opacity:1;}
+.dp-day:disabled{opacity:.25;cursor:default;background:none;}
+.dp-day:focus-visible,.dp-nav:focus-visible,.dp-link:focus-visible{outline:2px solid var(--accent-text);outline-offset:1px;}
+.dp-foot{display:flex;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:.5px solid var(--border);}
+.dp-link{all:unset;cursor:pointer;padding:6px 8px;border-radius:var(--r-sm);font-weight:600;font-size:13px;color:var(--accent-text);}
+.dp-link:hover{background:var(--surface-alt);}
+.dp-link:disabled{opacity:.4;cursor:default;}
+/* Phones: a bottom sheet with bigger targets. */
+.datepicker.dp-sheet{left:0;right:0;bottom:0;top:auto;width:100%;border-radius:var(--r-xl) var(--r-xl) 0 0;
+  padding:18px 16px calc(14px + env(safe-area-inset-bottom));animation:dp-sheet-in .24s var(--spring);}
+.datepicker.dp-sheet .dp-day{height:44px;font-size:16px;}
+.datepicker.dp-sheet .dp-nav{width:44px;height:44px;}
+.datepicker.dp-sheet .dp-link{padding:12px 14px;font-size:15px;}
+@keyframes dp-sheet-in{from{transform:translateY(100%);}to{transform:none;}}
+@media (prefers-reduced-motion:reduce){.datepicker,.datepicker.dp-sheet{animation:none;}}

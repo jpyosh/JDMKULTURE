@@ -1,4 +1,5 @@
-import { $, api, esc, state, setTokenProvider, toast, ApiError } from './ui.js';
+import { $, api, esc, state, setTokenProvider, toast, ApiError, startClock } from './ui.js';
+import { installDatePicker } from './components/datepicker.js';
 import carwash from './views/carwash.js';
 import { detailing, tintPpf } from './views/running.js';
 import parts from './views/parts.js';
@@ -171,4 +172,6 @@ window.addEventListener('unhandledrejection', event => {
   else toast(event.reason?.message || 'Something went wrong', 'error');
 });
 
+installDatePicker();
+startClock($('[data-clock]'));
 init();
