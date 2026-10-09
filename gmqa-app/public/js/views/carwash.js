@@ -1,5 +1,5 @@
 // Carwash tab: same-day job orders for one date.
-import { $, $$, api, esc, peso, toast, todayLocal, addDays, prettyDate, loadCatalog, classLabel, isOwner } from '../ui.js';
+import { $, $$, api, esc, peso, toast, todayLocal, addDays, prettyDate, formatTime, loadCatalog, classLabel, isOwner } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
 import { itemsSummary, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
 
@@ -125,7 +125,8 @@ function renderJobs() {
     const off = locked || j.voided_at ? 'disabled' : '';
     return `<tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''} ${j.payment_method === 'GCash' ? 'gcash-row' : 'cash-row'}">
       <td class="jo-number">${esc(j.jo_number || '—')}${j.voided_at ? `<div class="void-note" title="${esc(j.void_reason)}">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
-      <td class="time-cell"><span><small>in</small> ${esc(j.time_in || '—')}</span><input type="time" data-inline="time_out" value="${esc(j.time_out)}" ${off} title="Time out"></td>
+      <td class="time-cell"><div class="time-in"><span class="time-label">In</span> <b>${esc(formatTime(j.time_in) || '—')}</b></div>
+        <label class="time-out"><span class="time-label">Out</span><input type="time" data-inline="time_out" value="${esc(j.time_out)}" ${off} aria-label="Time out for ${esc(j.jo_number)}"></label></td>
       <td>${esc(classLabel(j.vehicle_class))}</td>
       <td>${esc(j.plate || '—')}</td>
       <td class="items-cell">${itemsSummary(j)}</td>

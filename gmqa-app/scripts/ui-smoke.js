@@ -122,6 +122,61 @@ async function launch() {
       await page.click('#nav [data-view="carwash"]');
     });
 
+    await step('time picker: our own, 12-hour, Now, Escape', async () => {
+      const timeIn = daily.locator('[data-editor] [data-f="time_in"]');
+      await timeIn.click();
+      const tp = page.locator('.timepicker');
+      await tp.waitFor();
+      assert.notEqual(await tp.evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)', 'dark theme');
+      assert.equal(await tp.locator('[data-tp-hour]').count(), 12);
+      assert.equal(await tp.locator('[data-tp-minute]').count(), 60);
+      await tp.locator('[data-tp-hour="7"]').click();
+      await tp.locator('[data-tp-minute="05"]').click();
+      await tp.locator('[data-tp-ampm="AM"]').click();
+      await tp.locator('[data-tp-done]').click();
+      await page.waitForFunction(() => !document.querySelector('.timepicker'));
+      assert.equal(await timeIn.inputValue(), '07:05');
+      await timeIn.click();
+      await tp.waitFor();
+      await tp.locator('[data-tp-ampm="PM"]').click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.timepicker'));
+      assert.equal(await timeIn.inputValue(), '07:05', 'Escape leaves the time as it was');
+      await timeIn.click();
+      await tp.locator('[data-tp-now]').click();
+      assert.ok(minutesApart(await timeIn.inputValue(), await shopHHMM()) <= 1, 'Now sets the current time');
+    });
+
+    await step('review job: Time in is filled and editable; what it shows is saved', async () => {
+      const editor = daily.locator('[data-editor]');
+      const addPremium = async () => {
+        await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+        await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+      };
+      // A time typed in the form is what Review shows.
+      await addPremium();
+      await editor.locator('[data-f="time_in"]').fill('08:15');
+      await editor.locator('[data-f="time_in"]').dispatchEvent('input');
+      await daily.locator('[data-review]').click();
+      const reviewTime = page.locator('#modal [data-review-time]');
+      await reviewTime.waitFor();
+      assert.equal(await reviewTime.inputValue(), '08:15');
+      // Changed in Review: that is the time saved, shown as 12-hour with In / Out labels.
+      await reviewTime.fill('10:05');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/added/);
+      const row = daily.locator('[data-jobs] tr', { hasText: '10:05 AM' });
+      await row.waitFor();
+      assert.match(await row.locator('.time-cell').textContent(), /In\s*10:05 AM[\s\S]*Out/);
+      // An untouched form: Review shows the current time.
+      await addPremium();
+      await daily.locator('[data-review]').click();
+      await reviewTime.waitFor();
+      assert.ok(minutesApart(await reviewTime.inputValue(), await shopHHMM()) <= 1, 'Review fills in the current time');
+      await page.click('#modal [data-close]');
+      await daily.locator('[data-clear]').click();
+    });
+
     await step('carwash tab shows migrated jobs', async () => {
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');

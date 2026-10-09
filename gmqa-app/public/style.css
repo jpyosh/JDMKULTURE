@@ -721,3 +721,48 @@ input[type=date]::-webkit-calendar-picker-indicator{display:none;}
 .datepicker.dp-sheet .dp-link{padding:12px 14px;font-size:15px;}
 @keyframes dp-sheet-in{from{transform:translateY(100%);}to{transform:none;}}
 @media (prefers-reduced-motion:reduce){.datepicker,.datepicker.dp-sheet{animation:none;}}
+
+/* ---------- Time fields + our own time picker (matches the calendar) ---------- */
+input[type=time]{
+  padding-right:36px;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a6' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;background-size:17px;
+}
+input[type=time]::-webkit-calendar-picker-indicator{display:none;}
+
+.timepicker{
+  position:fixed;inset:auto;margin:0;z-index:30;width:264px;padding:14px 14px 10px;
+  background:var(--surface);color:var(--text);border:0;border-radius:var(--r-lg);box-shadow:var(--shadow-pop);
+  font-size:14px;overflow:visible;animation:dp-in .16s var(--spring);
+}
+.tp-head{text-align:center;margin-bottom:10px;}
+.tp-value{font-size:22px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
+.tp-cols{display:grid;grid-template-columns:1fr 1fr .9fr;gap:6px;}
+.tp-col{display:flex;flex-direction:column;gap:2px;height:200px;overflow-y:auto;scrollbar-width:none;padding:2px;
+  border-radius:var(--r);background:rgba(255,255,255,.03);scroll-behavior:smooth;}
+.tp-col::-webkit-scrollbar{display:none;}
+.tp-opt{all:unset;box-sizing:border-box;flex:0 0 auto;height:34px;display:grid;place-items:center;border-radius:var(--r-sm);cursor:pointer;
+  font-variant-numeric:tabular-nums;transition:background-color .12s var(--ease);}
+.tp-opt:hover{background:var(--surface-alt);}
+.tp-opt[aria-selected="true"]{background:var(--accent);color:#fff;font-weight:600;}
+.tp-opt:focus-visible{outline:2px solid var(--accent-text);outline-offset:-2px;}
+.tp-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:.5px solid var(--border);}
+.tp-foot .tp-muted{color:var(--muted);}
+.timepicker.dp-sheet{left:0;right:0;bottom:0;top:auto;width:100%;border-radius:var(--r-xl) var(--r-xl) 0 0;
+  padding:18px 16px calc(14px + env(safe-area-inset-bottom));animation:dp-sheet-in .24s var(--spring);}
+.timepicker.dp-sheet .tp-opt{height:44px;font-size:16px;}
+.timepicker.dp-sheet .tp-col{height:240px;}
+@media (prefers-reduced-motion:reduce){.timepicker,.timepicker.dp-sheet{animation:none;}.tp-col{scroll-behavior:auto;}}
+
+/* Carwash table: In / Out, both 12-hour and labelled. */
+.time-cell{min-width:150px;}
+.time-cell .time-in{white-space:nowrap;margin-bottom:6px;}
+.time-cell .time-out{display:flex;align-items:center;gap:8px;}
+.time-cell .time-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;min-width:26px;}
+.time-cell input[type=time]{min-height:32px;padding-top:4px;padding-bottom:4px;width:126px;}
+
+/* Review job: the Time in that will be saved. */
+.review-time{display:grid;grid-template-columns:auto 160px 1fr;align-items:center;gap:6px 12px;margin-bottom:16px;}
+.review-time label{margin:0;font-weight:600;}
+.review-time .hint{margin:0;}
+@media (max-width:600px){.review-time{grid-template-columns:1fr;}}

@@ -27,6 +27,13 @@ const clean = s => s.replace(/[  ]/g, ' ');
 // "14:05": the current shop time for a time input.
 export const shopTime = () => new Intl.DateTimeFormat('en-GB', { timeZone: SHOP_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
 
+// '20:24' → '8:24 PM' (every time shown in the app is 12-hour); '' stays ''.
+export function formatTime(value) {
+  if (!/^\d{2}:\d{2}/.test(value || '')) return '';
+  const [H, M] = value.split(':').map(Number);
+  return `${H % 12 || 12}:${String(M).padStart(2, '0')} ${H >= 12 ? 'PM' : 'AM'}`;
+}
+
 // Live clock: "Fri, Oct 9" and "3:42:15 PM", updated on every second.
 export function startClock(el) {
   const day = new Intl.DateTimeFormat('en-US', { timeZone: SHOP_TZ, weekday: 'short', month: 'short', day: 'numeric' });
