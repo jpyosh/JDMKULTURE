@@ -20,6 +20,8 @@ function presets() {
   return {
     'this-week': [sunday, addDays(sunday, 6)],
     'last-week': [addDays(sunday, -7), addDays(sunday, -1)],
+    // The Sunday–Saturday week after the range on screen (also after a half week).
+    'next-week': (() => { const next = addDays(range.end, 7 - new Date(`${range.end}T00:00:00Z`).getUTCDay()); return [next, addDays(next, 6)]; })(),
     'first-half': [`${month}01`, `${month}15`],
     'second-half': [`${month}16`, lastDayOfMonth(today)],
   };
@@ -39,6 +41,7 @@ function mount(el) {
     <div class="preset-row">
       <button class="btn ghost small" type="button" data-preset="this-week">This week</button>
       <button class="btn ghost small" type="button" data-preset="last-week">Last week</button>
+      <button class="btn ghost small" type="button" data-preset="next-week">Next week →</button>
       <button class="btn ghost small" type="button" data-preset="first-half">1st–15th</button>
       <button class="btn ghost small" type="button" data-preset="second-half">16th–end</button>
       <button class="btn small signoff-btn" type="button" data-signoff title="A printable PDF for each employee to sign when paid">

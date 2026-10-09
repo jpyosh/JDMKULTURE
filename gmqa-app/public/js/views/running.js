@@ -57,6 +57,7 @@ export function createRunningView(department) {
 
     $('[data-open-date]', root).value = todayLocal();
     $('[data-completed-date]', root).value = addDays(todayLocal(), -6);
+    $('[data-open-date]', root).addEventListener('change', () => editor?.syncTime());
     $('[data-completed-date]', root).addEventListener('change', loadCompleted);
     $('[data-show-voided]', root).addEventListener('change', loadActive);
     $('[data-clear]', root).addEventListener('click', resetEditor);
@@ -74,7 +75,7 @@ export function createRunningView(department) {
   }
 
   function resetEditor() {
-    editor = createJobEditor($('[data-editor]', root), { department });
+    editor = createJobEditor($('[data-editor]', root), { department, autoTimeWhen: () => $('[data-open-date]', root).value === todayLocal() });
   }
 
   const reload = () => Promise.all([loadActive(), loadCompleted()]);

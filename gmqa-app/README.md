@@ -45,6 +45,12 @@ Auth, deployed on Vercel.
 - Expected GCash = GCash collected + tips − tips passed on − commission via GCash − GCash expenses.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
+- Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
+  (the Sun–Sat week after the range shown, also after a half week) pick whole weeks.
+- New jobs dated today get **Time in** = the current shop time (it keeps up while the form is open) unless
+  the user types a time; jobs dated another day get no automatic time. The sidebar shows a live shop clock.
+- Every date field opens the app's own calendar (`public/js/components/datepicker.js`): Sunday first,
+  Today, month arrows, keyboard (arrows, PageUp/Down, Home/End, Esc), bottom sheet on phones. Typing a date still works.
 - Payroll works for any date range (a week, 1st–15th, 16th–end...). Attendance and overtime are
   recorded per day; cash advances, bonuses etc. are dated adjustments. Each day is paid at the rate in
   effect that day (rates change from an effective date), so earlier periods never change.

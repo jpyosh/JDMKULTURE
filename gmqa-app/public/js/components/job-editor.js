@@ -1,6 +1,6 @@
 // Job order form: vehicle class + any number of services, add-ons, parts and custom lines.
 // Used for new jobs (department tabs, parts counter) and for editing existing jobs (modal).
-import { $, $$, esc, peso, state, activeClasses, departmentOf } from '../ui.js';
+import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime } from '../ui.js';
 
 const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part' };
 const round2 = n => Math.round(n * 100) / 100;
@@ -8,7 +8,9 @@ const round2 = n => Math.round(n * 100) / 100;
 // department: which catalog items are offered. Running departments (detailing, tint/PPF) record
 // payment with Mark paid instead of the checkbox, and lock the amount once paid. The parts counter
 // (no catalog) sells parts and custom items only and needs no vehicle.
-export function createJobEditor(root, { job = null, department = job?.department || 'carwash' } = {}) {
+// autoTimeWhen: for a new job, () => true when its date is today; Time in then follows the shop clock
+// until the user types a time of their own.
+export function createJobEditor(root, { job = null, department = job?.department || 'carwash', autoTimeWhen = null } = {}) {
   const dept = departmentOf(department);
   const running = dept.running;
   const locked = Boolean(running && job?.paid_on);
@@ -173,7 +175,22 @@ export function createJobEditor(root, { job = null, department = job?.department
     $$('.line-adders select, .line-adders button, [data-lines] button, [data-lines] input', root).forEach(el => { el.disabled = true; });
   }
 
+  // New job on today's date: Time in shows the current shop time and keeps up while the form is filled in,
+  // until the user changes it. On another day it is left empty.
+  const timeIn = field('time_in');
+  let syncTime = () => {};
+  if (!job && timeIn && autoTimeWhen) {
+    let typed = false;
+    const markTyped = () => { typed = true; };
+    timeIn.addEventListener('input', markTyped);
+    timeIn.addEventListener('change', markTyped);
+    syncTime = () => { if (!typed) timeIn.value = autoTimeWhen() ? shopTime() : ''; };
+    syncTime();
+    const timer = setInterval(() => (timeIn.isConnected ? syncTime() : clearInterval(timer)), 5000);
+  }
+
   return {
+    syncTime: () => syncTime(),
     totals,
     lines: () => editor.lines.map(l => ({ ...l, ...linePrice(l) })),
     payload() {

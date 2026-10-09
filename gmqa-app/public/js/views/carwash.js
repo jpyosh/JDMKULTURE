@@ -62,13 +62,14 @@ async function show() {
 }
 
 function resetEditor() {
-  newJobEditor = createJobEditor($('[data-editor]', root), { department: DEPARTMENT });
+  newJobEditor = createJobEditor($('[data-editor]', root), { department: DEPARTMENT, autoTimeWhen: () => current.date === todayLocal() });
 }
 
 async function setDate(date) {
   current.date = date;
   $('[data-date]', root).value = date;
   $('[data-entry-date]', root).textContent = prettyDate(date);
+  newJobEditor?.syncTime();
   await reload();
 }
 

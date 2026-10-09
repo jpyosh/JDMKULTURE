@@ -21,6 +21,24 @@ export function mondayOf(date) {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return addDays(date, day === 0 ? -6 : 1 - day);
 }
+// Shop time is Philippine time, whatever time zone the device is set to.
+const SHOP_TZ = 'Asia/Manila';
+const clean = s => s.replace(/[  ]/g, ' ');
+// "14:05": the current shop time for a time input.
+export const shopTime = () => new Intl.DateTimeFormat('en-GB', { timeZone: SHOP_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
+
+// Live clock: "Fri, Oct 9" and "3:42:15 PM", updated on every second.
+export function startClock(el) {
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: SHOP_TZ, weekday: 'short', month: 'short', day: 'numeric' });
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: SHOP_TZ, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  const tick = () => {
+    const now = new Date();
+    el.innerHTML = `<span class="clock-day">${clean(day.format(now))}</span> <span class="clock-time">${clean(time.format(now))}</span>`;
+    setTimeout(tick, 1000 - (Date.now() % 1000) + 5);
+  };
+  tick();
+}
+
 // The shop's pay week runs Sunday to Saturday.
 export function sundayOf(date) {
   return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());

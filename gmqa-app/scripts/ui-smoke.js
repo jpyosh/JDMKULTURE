@@ -88,6 +88,40 @@ async function launch() {
     });
 
     const daily = page.locator('#view-carwash');
+    const shopHHMM = () => page.evaluate(() => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()));
+    const minutesApart = (a, b) => { const m = t => Number(t.slice(0, 2)) * 60 + Number(t.slice(3)); return Math.min(Math.abs(m(a) - m(b)), 1440 - Math.abs(m(a) - m(b))); };
+
+    await step('live shop clock in the sidebar', async () => {
+      const clock = page.locator('[data-clock]');
+      await clock.waitFor();
+      const first = await clock.textContent();
+      assert.match(first, /\d{1,2}:\d{2}:\d{2}\s?(AM|PM)/, `clock shows the time with seconds (got "${first}")`);
+      assert.match(first, /(Sun|Mon|Tue|Wed|Thu|Fri|Sat)/, 'clock shows the day');
+      await page.waitForFunction(prev => document.querySelector('[data-clock]').textContent !== prev, first, { timeout: 3000 });
+    });
+
+    await step('new jobs get the current time unless it is changed', async () => {
+      // The carwash tab opens on today: Time in is filled with the shop time.
+      const timeIn = daily.locator('[data-editor] [data-f="time_in"]');
+      await timeIn.waitFor();
+      assert.ok(minutesApart(await timeIn.inputValue(), await shopHHMM()) <= 1, `time in is now (got "${await timeIn.inputValue()}")`);
+      // A time typed by the user is kept (the auto time never overwrites it).
+      await timeIn.fill('08:15');
+      await timeIn.dispatchEvent('input');
+      await page.waitForTimeout(6000);
+      assert.equal(await timeIn.inputValue(), '08:15', 'a time the user typed is kept');
+      // Detailing: a new job opened today also gets the time.
+      await page.click('#nav [data-view="detailing"]');
+      const dtTime = page.locator('#view-detailing [data-editor] [data-f="time_in"]');
+      await dtTime.waitFor();
+      assert.ok(minutesApart(await dtTime.inputValue(), await shopHHMM()) <= 1, 'detailing time in is now');
+      // A job opened on an earlier day gets no automatic time.
+      await page.locator('#view-detailing [data-open-date]').fill('2026-09-14');
+      await page.locator('#view-detailing [data-open-date]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-detailing [data-editor] [data-f="time_in"]').value === '');
+      await page.click('#nav [data-view="carwash"]');
+    });
+
     await step('carwash tab shows migrated jobs', async () => {
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
@@ -265,6 +299,40 @@ async function launch() {
       await eod.locator('[data-close-day]').click();
       await expectToast(/Day closed/);
       await page.waitForSelector('#view-eod .banner.ok');
+    });
+
+    await step('calendar: our own sleek date picker (Sunday first, Today, keyboard, Escape)', async () => {
+      const input = eod.locator('[data-date]');
+      await input.fill('2026-09-14');
+      await input.dispatchEvent('change');
+      await input.click();
+      const picker = page.locator('.datepicker');
+      await picker.waitFor();
+      assert.deepEqual((await picker.locator('.dp-weekday').allTextContents()).map(t => t.trim()), ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']);
+      assert.match(await picker.locator('.dp-title').textContent(), /September 2026/);
+      assert.equal(await picker.locator('.dp-day[aria-selected="true"]').textContent(), '14');
+      const bg = await picker.evaluate(el => getComputedStyle(el).backgroundColor);
+      assert.notEqual(bg, 'rgb(255, 255, 255)', 'the picker follows the dark theme');
+      // Pick a day: the input and the page follow (change event).
+      await picker.locator('.dp-day:not(.dp-outside)', { hasText: /^15$/ }).click();
+      await page.waitForFunction(() => document.querySelector('#view-eod [data-date]').value === '2026-09-15' && !document.querySelector('.datepicker'));
+      await page.waitForFunction(() => /Sep 15, 2026/.test(document.querySelector('#view-eod [data-status]').textContent));
+      // Next month, keyboard, then Escape closes without changing anything.
+      await input.click();
+      await picker.waitFor();
+      await picker.locator('[data-dp-next]').click();
+      assert.match(await picker.locator('.dp-title').textContent(), /October 2026/);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.datepicker'));
+      assert.equal(await input.inputValue(), '2026-09-15');
+      // Today button.
+      await input.click();
+      await picker.locator('[data-dp-today]').click();
+      const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+      await page.waitForFunction(t => document.querySelector('#view-eod [data-date]').value === t, today);
+      await shot('06b-datepicker');
+      await input.fill(DAY);
+      await input.dispatchEvent('change');
     });
 
     await step('EOD shows sales by department', async () => {
@@ -503,6 +571,15 @@ async function launch() {
       await payroll.locator('[data-preset="this-week"]').click();
       await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') === first, opened[0]);
       assert.deepEqual(await dayHeads(), opened, 'This week is the week Payroll opened on');
+      // Next week: the Sunday–Saturday week after the range shown, even from a half week.
+      await setPayrollRange('2026-09-27', '2026-10-03');
+      await payroll.locator('[data-preset="next-week"]').click();
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-04');
+      assert.deepEqual(await dayHeads(), ['Sun10-04', 'Mon10-05', 'Tue10-06', 'Wed10-07', 'Thu10-08', 'Fri10-09', 'Sat10-10']);
+      await setPayrollRange('2026-10-04', '2026-10-07');
+      await payroll.locator('[data-preset="next-week"]').click();
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-11');
+      assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-17');
       // Reported bug: week of Mon 2026-09-28 showed Monday as 09-27.
       await setPayrollRange('2026-09-28', '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Mon09-28', 'Tue09-29', 'Wed09-30', 'Thu10-01', 'Fri10-02', 'Sat10-03', 'Sun10-04']);
