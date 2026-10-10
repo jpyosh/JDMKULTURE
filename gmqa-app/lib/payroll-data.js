@@ -32,8 +32,10 @@ async function loadPayroll(start, end, q = db) {
     const days = Object.fromEntries(attendance.filter(a => a.employee_id === employee.id)
       .map(a => [a.work_date, { code: a.code, cw_ot_hours: a.cw_ot_hours, cn_ot_hours: a.cn_ot_hours }]));
     const adj = adjustments.filter(a => a.employee_id === employee.id);
-    const pay = payrollForRange({ dates, days, rates: rates.filter(r => r.employee_id === employee.id), adjustments: adj });
-    return { employee, days, adjustments: adj, pay };
+    const own = rates.filter(r => r.employee_id === employee.id)
+      .map(r => ({ effective_from: r.effective_from, rate_per_day: r.rate_per_day, construction_rate: r.construction_rate }));
+    const pay = payrollForRange({ dates, days, rates: own, adjustments: adj });
+    return { employee, days, adjustments: adj, pay, rates: own };
   });
   return { start, end, dates, rows, totalNet: round2(rows.reduce((t, r) => t + r.pay.net, 0)), payouts, otRule: otRuleNote(start, end) };
 }

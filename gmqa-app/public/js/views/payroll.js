@@ -1,11 +1,13 @@
 // Payroll for any date range: attendance per day, overtime per day, dated adjustments, and the
 // payout that leaves the drawer (shown in that day's EOD).
-import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
 // Pay weeks run Sunday to Saturday.
 let range = { start: sundayOf(todayLocal()), end: addDays(sundayOf(todayLocal()), 6) };
 let data = null;
+// The rate in effect on a date (same rule as rateOn in lib/calc.js): the latest change on or before it.
+const rateOn = (rates, date) => rates.filter(r => r.effective_from <= date).at(-1) || { rate_per_day: 0, construction_rate: 0 };
 const CODES = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 
 function lastDayOfMonth(date) {
@@ -236,27 +238,50 @@ function adjustModal({ employee, adjustments }) {
 
 function employeeModal(row = null) {
   const e = row?.employee;
-  openModal(`${modalHeader(e ? `Edit ${e.name}` : 'Add employee', e ? 'A rate change applies from its effective date; earlier days keep the old rate.' : 'Re-adding a former employee brings their record back.', 'Team')}
+  openModal(`${modalHeader(e ? `Edit ${e.name}` : 'Add employee', e ? 'A rate change applies from its effective date (default: the start of this pay week); earlier days keep the old rate.' : 'Re-adding a former employee brings their record back.', 'Team')}
     <div class="form-grid modal-form-grid">
       <div><label>Name</label><input type="text" data-n="name" maxlength="80" value="${esc(e?.name || '')}"></div>
       <div><label>Role</label><input type="text" data-n="role" maxlength="60" placeholder="Detailer" value="${esc(e?.role || '')}"></div>
       <div><label>Carwash rate / day</label><input type="number" min="0" step="0.01" data-n="rate_per_day" value="${e ? e.rate_per_day : 250}"></div>
       <div><label>Construction rate / day</label><input type="number" min="0" step="0.01" data-n="construction_rate" value="${e ? e.construction_rate : 700}"></div>
-      ${e ? `<div><label>Rate change effective</label><input type="date" data-n="effective_from" value="${todayLocal()}"></div>` : ''}
+      ${e ? `<div><label>Rate change effective</label><input type="date" data-n="effective_from" value="${sundayOf(todayLocal())}"></div>` : ''}
     </div>
+    ${e ? '<p class="hint" data-rate-note></p>' : ''}
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>${e ? 'Save' : 'Add employee'}</button></div>`,
   card => {
     $('[data-n="name"]', card).focus();
+    const get = k => $(`[data-n="${k}"]`, card)?.value;
+    const rate = () => Number(get('rate_per_day') || 0);
+    const cnRate = () => Number(get('construction_rate') || 0);
+    // A change is measured against the rate in effect on the chosen date, not today's: a raise first
+    // saved from today can then be moved back to Sunday with the same amount.
+    const before = () => rateOn(row.rates, get('effective_from'));
+    const changesRate = () => rate() !== Number(before().rate_per_day) || cnRate() !== Number(before().construction_rate);
+    const showNote = () => {
+      const from = get('effective_from');
+      const b = before();
+      $('[data-rate-note]', card).textContent = !from ? 'Pick the date the new rate starts.'
+        : !changesRate() ? `No rate change: from ${prettyDate(from)} the rate is already ${peso(b.rate_per_day)} / ${peso(b.construction_rate)}.`
+          : `From ${prettyDate(from)} on: ${peso(b.rate_per_day)} / ${peso(b.construction_rate)} → ${peso(rate())} / ${peso(cnRate())}. `
+            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep the rate they had.');
+    };
+    if (e) {
+      ['rate_per_day', 'construction_rate', 'effective_from'].forEach(k => {
+        $(`[data-n="${k}"]`, card).addEventListener('input', showNote);
+        $(`[data-n="${k}"]`, card).addEventListener('change', showNote);
+      });
+      showNote();
+    }
     $('[data-confirm]', card).addEventListener('click', ev => busy(ev.currentTarget, async () => {
-      const get = k => $(`[data-n="${k}"]`, card)?.value;
       if (!get('name').trim()) return toast('Name is required', 'error');
       const body = { name: get('name').trim(), role: get('role').trim() };
-      const rate = Number(get('rate_per_day') || 0);
-      const cnRate = Number(get('construction_rate') || 0);
       if (!e) {
-        await api('POST', '/employees', { ...body, rate_per_day: rate, construction_rate: cnRate });
+        await api('POST', '/employees', { ...body, rate_per_day: rate(), construction_rate: cnRate() });
       } else {
-        if (rate !== e.rate_per_day || cnRate !== e.construction_rate) Object.assign(body, { rate_per_day: rate, construction_rate: cnRate, effective_from: get('effective_from') });
+        if (changesRate()) {
+          if (!get('effective_from')) return toast('Pick the date the new rate starts', 'error');
+          Object.assign(body, { rate_per_day: rate(), construction_rate: cnRate(), effective_from: get('effective_from') });
+        }
         await api('PATCH', `/employees/${e.id}`, body);
       }
       closeModal();

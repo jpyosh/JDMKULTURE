@@ -203,6 +203,9 @@ test('payroll: any date range, daily records, dated rates, adjustments and payou
   const after = (await rowFor('2026-09-14', '2026-09-20')).row;
   assert.equal(after.pay.net, 400 + 200 + 1000 + 800 + 1000 / 8 * 1.25 * 2 - 100);
   assert.equal((await ok(api(OWNER, 'GET', '/employees'))).find(e => e.id === emp.id).rate_per_day, 1000);
+  // The rate history comes with each row, so the Edit form can compare against the rate on any day.
+  assert.deepEqual(after.rates.map(r => [r.effective_from, r.rate_per_day, r.construction_rate]),
+    [['2000-01-01', 400, 800], ['2026-09-17', 1000, 800]]);
 
   // Ranges do not have to be whole weeks (e.g. 16th to 30th).
   const half = await rowFor('2026-09-16', '2026-09-30');

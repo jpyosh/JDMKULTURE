@@ -782,6 +782,62 @@ async function launch() {
       assert.ok(bytes.length > 5000, 'a real document, not an error page');
     });
 
+    await step('payroll: a raise during the week pays the whole week, earlier weeks untouched', async () => {
+      // Reported: Chesser (800/day) got 850 on Saturday; editing the rate did not change his payout for
+      // the week (it started today), and saving 850 again from Sunday did nothing since 850 was "already" his rate.
+      const today = await page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
+      const addD = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+      const sunday = addD(today, -new Date(`${today}T00:00:00Z`).getUTCDay());
+      const lastSunday = addD(sunday, -7);
+      const fmt = n => `₱${(Math.round(n * 100) / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const otPay = rate => (sunday >= '2026-10-05' ? rate / 11 : rate / 8) * 2; // 2h carwash OT on Sunday
+      const netIs = want => page.waitForFunction(w => [...document.querySelectorAll('#view-payroll tbody tr[data-emp]')]
+        .find(tr => tr.textContent.includes('Raise Tester'))?.querySelector('[data-net]').textContent.trim() === w, want, { timeout: 8000 });
+      await setPayrollRange(lastSunday, addD(sunday, 6));
+      await payroll.locator('[data-add-employee]').click();
+      await page.fill('#modal [data-n="name"]', 'Raise Tester');
+      await page.fill('#modal [data-n="rate_per_day"]', '800');
+      await page.fill('#modal [data-n="construction_rate"]', '0');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee added/);
+      const row = payroll.locator('tbody tr[data-emp]', { hasText: 'Raise Tester' });
+      await row.waitFor();
+      // Last Saturday and every day of this week, with 2h OT on Sunday.
+      for (const day of [addD(sunday, -1), ...[0, 1, 2, 3, 4, 5, 6].map(i => addD(sunday, i))]) {
+        const reloaded = page.waitForResponse(r => r.url().includes('/api/payroll?') && r.request().method() === 'GET');
+        await row.locator(`[data-day="${day}"]`).selectOption('P');
+        await reloaded;
+      }
+      await row.locator('[data-act="ot"]').click();
+      await page.fill(`#modal [data-cw="${sunday}"]`, '2');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Overtime saved/);
+      await netIs(fmt(8 * 800 + otPay(800)));
+
+      // First try, as it happened: the raise saved with today as the effective date.
+      await row.locator('[data-act="edit"]').click();
+      await page.fill('#modal [data-n="effective_from"]', today);
+      await page.fill('#modal [data-n="rate_per_day"]', '850');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee saved/);
+      await page.waitForFunction(() => !document.querySelector('#modal[open]'));
+      // Edit again: the form starts the change at this pay week's Sunday, says what changes, and saves 850
+      // from Sunday even though 850 is already today's rate.
+      await row.locator('[data-act="edit"]').click();
+      assert.equal(await page.inputValue('#modal [data-n="effective_from"]'), sunday, 'a rate change starts with this pay week by default');
+      assert.equal(await page.inputValue('#modal [data-n="rate_per_day"]'), '850');
+      assert.match(await page.textContent('#modal [data-rate-note]'), /800\.00.*850\.00/, 'the form says which rate changes from that date');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee saved/);
+      await netIs(fmt(800 + 7 * 850 + otPay(850))).catch(async () =>
+        assert.fail(`net ${(await row.locator('[data-net]').textContent()).trim()}, expected ${fmt(800 + 7 * 850 + otPay(850))}`));
+      // Days before this week keep the old rate.
+      await setPayrollRange(lastSunday, addD(sunday, -1));
+      assert.equal((await row.locator('[data-net]').textContent()).trim(), fmt(800), 'last week keeps the old rate');
+      await row.locator('[data-act="deactivate"]').click();
+      await expectToast(/removed/);
+    });
+
     await step('payroll: attendance, adjustment and payout', async () => {
       await setPayrollRange('2026-09-14', '2026-09-20');
       const first = payroll.locator('tbody tr[data-emp]').first();
