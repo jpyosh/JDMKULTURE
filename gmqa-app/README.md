@@ -1,4 +1,4 @@
-# GM QA — JDM Kulture Ops Console
+# GM Operations Console — JDM Kulture
 
 Operations console for the JDM Kulture car wash: job orders, pricing, end-of-day cash/GCash
 closing, sales reports, payroll. Express API + plain-JS frontend, Supabase Postgres + Supabase

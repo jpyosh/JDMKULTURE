@@ -49,7 +49,8 @@ test('authentication and roles', async () => {
   assert.equal((await api('bogus-token', 'GET', '/catalog')).status, 401);
   const stranger = await api('stranger@test.ph', 'GET', '/catalog');
   assert.equal(stranger.status, 403);
-  assert.match(stranger.data.error, /does not have access/);
+  assert.match(stranger.data.error, /does not have access to GM Operations Console/);
+  assert.doesNotMatch(stranger.data.error, /\bQA\b/);
 
   assert.deepEqual(await ok(api(STAFF, 'GET', '/me')), { id: uid(STAFF), email: STAFF, role: 'staff', name: 'staff' });
   assert.equal((await api(STAFF, 'GET', '/catalog')).status, 200);
