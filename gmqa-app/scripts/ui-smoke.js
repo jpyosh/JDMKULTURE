@@ -10,6 +10,9 @@ const { start } = require('./sandbox');
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';
+// Parses a computed 'rgb(r, g, b)' colour; amber = the caution colour (unpaid, commission, costs), not the error red.
+const colorOf = css => { const [r, g, b] = css.match(/[\d.]+/g).map(Number); return { r, g, b }; };
+const isAmber = c => c.r > 180 && c.g > 120 && c.b < 120;
 
 async function launch() {
   for (const channel of ['msedge', 'chrome']) {
@@ -182,8 +185,14 @@ async function launch() {
       await daily.locator('[data-date]').dispatchEvent('change');
       await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 19);
       assert.match(await daily.locator('[data-metrics]').textContent(), /Vehicles\s*19/);
+      // Scrolling the wide table sideways keeps the JO# column in view.
+      const wrap = daily.locator('.table-wrap:has(.jobs-table)');
+      const scrolled = await wrap.evaluate(el => { el.scrollLeft = 300; return el.scrollLeft; });
+      assert.ok(scrolled > 0, 'jobs table should be wide enough to scroll at 1440px');
+      const drift = await wrap.evaluate(el => el.querySelector('tr[data-id] td').getBoundingClientRect().left - el.getBoundingClientRect().left);
+      assert.ok(Math.abs(drift) <= 2, `JO# column scrolled out of view (${Math.round(drift)}px)`);
+      await wrap.evaluate(el => { el.scrollLeft = 0; });
     });
-
     await step('create a job with service + add-on + custom line', async () => {
       const editor = daily.locator('[data-editor]');
       await editor.locator('[data-f="vehicle_class"]').selectOption('M');
@@ -348,6 +357,9 @@ async function launch() {
       await eod.locator('[data-m="actual_cash"]').fill(expected);
       await eod.locator('[data-m="actual_gcash"]').fill('0');
       assert.match(await eod.locator('[data-variance]').textContent(), /✓/);
+      // Unpaid and commission need attention but are not errors: amber, not the error red.
+      const caution = colorOf(await eod.locator('[data-metrics] .value.amber').first().evaluate(el => getComputedStyle(el).color));
+      assert.ok(isAmber(caution), `unpaid/commission should read amber, got rgb(${caution.r},${caution.g},${caution.b})`);
       await eod.locator('[data-save]').click();
       await expectToast(/EOD saved/);
       await shot('06-eod');
@@ -486,6 +498,8 @@ async function launch() {
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');
+      const costs = colorOf(await page.locator('#view-reports .weekly-stat strong.amber-text').evaluate(el => getComputedStyle(el).color));
+      assert.ok(isAmber(costs), `costs should read amber, got rgb(${costs.r},${costs.g},${costs.b})`);
       await shot('08-reports');
     });
 
