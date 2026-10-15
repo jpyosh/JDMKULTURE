@@ -641,3 +641,48 @@ tr.inactive td{opacity:.5;}
 .parts-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 6px;}
 .parts-table th.num{text-align:right;}
 .parts-table .actions{min-width:0;}
+
+/* ---------- Design pass: colours that mean something, focus, native controls ----------
+   Brand red (--teal, kept for buttons/nav/headings) is no longer used for numbers.
+   Green = good (net, profit, balanced), amber = needs attention (unpaid, commission, costs),
+   red = a problem (short, over, loss). */
+:root{
+  color-scheme:dark;
+  --pos:#4cc38a;
+  --warn:#e8a849;
+  --neg:#f0646c;
+  --focus:#ff8a92;
+}
+body{font-variant-numeric:tabular-nums;}
+.metric .value.teal,.weekly-stat .pos,.money.pos,.teal-text,.variance-ok{color:var(--pos);}
+.metric .value.amber,.amber-text,.weekly-stat strong.amber-text{color:var(--warn);}
+.money.neg,.variance-bad,.row-line.total.neg-total .money{color:var(--neg);}
+.editor-totals .grand b{color:var(--text);}
+
+/* Buttons: centred labels, hover/press feedback, and a focus ring (all:unset removed it). */
+button.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;text-align:center;box-sizing:border-box;}
+button.btn,button.icon-btn,.nav button,.segmented button{transition:background-color .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;}
+button.btn:active:not(:disabled){transform:translateY(1px);}
+button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}
+.nav button:focus-visible{outline-offset:-2px;}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{transition:none !important;animation:none !important;}
+}
+
+/* Job tables: the JO# column stays put while scrolling sideways through the columns. */
+.jobs-table th:first-child,.jobs-table td:first-child{position:sticky;left:0;z-index:1;background:var(--surface);}
+.jobs-table th:first-child{background:#202124;z-index:2;}
+.jobs-table tbody tr:hover td:first-child{background:var(--surface-alt);}
+
+/* Sidebar scrolls instead of clipping the menu on short laptop screens. */
+.rail{overflow-y:auto;}
+.section-header{flex-wrap:wrap;gap:10px;}
+
+@media (max-width: 700px){
+  .rail{overflow:visible;}
+  /* Signed-in panel as one compact row: who you are on the left, Sign out on the right. */
+  .auth-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 10px;}
+  .auth-panel .auth-status{margin:0;}
+  .auth-panel .auth-email{margin:0;grid-column:1;}
+  .auth-panel .auth-signout{grid-column:2;grid-row:1 / span 2;width:auto !important;min-height:34px;padding:6px 14px !important;}
+}

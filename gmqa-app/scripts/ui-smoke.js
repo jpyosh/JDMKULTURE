@@ -10,6 +10,8 @@ const { start } = require('./sandbox');
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';
+const rgb = css => { const [r, g, b] = css.match(/\d+(\.\d+)?/g).map(Number); return { r, g, b }; };
+const isAmber = c => c.r > 180 && c.g > 120 && c.b < 120;
 
 async function launch() {
   for (const channel of ['msedge', 'chrome']) {
@@ -57,6 +59,13 @@ async function launch() {
       await daily.locator('[data-date]').dispatchEvent('change');
       await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 19);
       assert.match(await daily.locator('[data-metrics]').textContent(), /Vehicles\s*19/);
+      // Scrolling the wide table sideways keeps the JO# column in view.
+      const wrap = daily.locator('.table-wrap:has(.jobs-table)');
+      const scrolled = await wrap.evaluate(el => { el.scrollLeft = 300; return el.scrollLeft; });
+      assert.ok(scrolled > 0, 'jobs table should be wide enough to scroll at 1440px');
+      const drift = await wrap.evaluate(el => el.querySelector('tr[data-id] td').getBoundingClientRect().left - el.getBoundingClientRect().left);
+      assert.ok(Math.abs(drift) <= 2, `JO# column scrolled out of view (${Math.round(drift)}px)`);
+      await wrap.evaluate(el => { el.scrollLeft = 0; });
     });
 
     await step('create a job with service + add-on + custom line', async () => {
@@ -73,6 +82,9 @@ async function launch() {
       await editor.locator('[data-l="commission"]').fill('20');
       await editor.locator('[data-f="discount"]').fill('50');
       assert.match(await editor.locator('[data-totals]').textContent(), /Total\s*₱2,100\.00/); // 650+800+600+100-50
+      // A job total is a plain amount, not a warning: it must not be painted in the error/brand red.
+      const total = rgb(await editor.locator('[data-totals] .grand b').evaluate(el => getComputedStyle(el).color));
+      assert.ok(total.r - total.g < 40, `job total reads as an error (rgb(${total.r},${total.g},${total.b}))`);
       await shot('01-daily-entry');
       await daily.locator('[data-review]').click();
       await page.waitForSelector('#modal[open]');
@@ -187,6 +199,20 @@ async function launch() {
       await eod.locator('[data-m="actual_cash"]').fill(expected);
       await eod.locator('[data-m="actual_gcash"]').fill('0');
       assert.match(await eod.locator('[data-variance]').textContent(), /✓/);
+      // A balanced drawer must not look like a shortage: the colour has to carry the meaning.
+      const okColor = rgb(await eod.locator('[data-variance] .variance-ok').first().evaluate(el => getComputedStyle(el).color));
+      assert.ok(okColor.g > okColor.r, `balanced variance should read green, got rgb(${okColor.r},${okColor.g},${okColor.b})`);
+      await eod.locator('[data-m="actual_cash"]').fill(String(Number(expected) - 100));
+      await page.waitForFunction(() => /short/.test(document.querySelector('#view-eod [data-variance]').textContent));
+      const badColor = rgb(await eod.locator('[data-variance] .variance-bad').first().evaluate(el => getComputedStyle(el).color));
+      assert.ok(badColor.r > badColor.g, `short variance should read red, got rgb(${badColor.r},${badColor.g},${badColor.b})`);
+      const metricColor = async cls => rgb(await eod.locator(`[data-metrics] .value.${cls}`).first().evaluate(el => getComputedStyle(el).color));
+      const net = await metricColor('teal');
+      const caution = await metricColor('amber');
+      assert.ok(net.g > net.r, 'net should read as a good number (green), not as an error');
+      assert.ok(isAmber(caution), `unpaid/commission should read amber, got rgb(${caution.r},${caution.g},${caution.b})`);
+      await eod.locator('[data-m="actual_cash"]').fill(expected);
+      await page.waitForFunction(() => /✓/.test(document.querySelector('#view-eod [data-variance]').textContent));
       await eod.locator('[data-save]').click();
       await expectToast(/EOD saved/);
       await shot('06-eod');
@@ -285,6 +311,8 @@ async function launch() {
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');
+      const costs = rgb(await page.locator('#view-reports .weekly-stat strong.amber-text').evaluate(el => getComputedStyle(el).color));
+      assert.ok(isAmber(costs), `costs should read amber, got rgb(${costs.r},${costs.g},${costs.b})`);
       await shot('08-reports');
     });
 
@@ -424,6 +452,23 @@ async function launch() {
       await page.goto(`${url}/#settings`);
       await page.waitForSelector('#view-carwash.active');
       await shot('11-staff-daily');
+    });
+
+    await step('keyboard focus is visible and native controls are dark', async () => {
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'dark');
+      await page.focus('#nav button');
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      const outline = await page.evaluate(() => { const s = getComputedStyle(document.activeElement); return { tag: document.activeElement.tagName, style: s.outlineStyle, width: parseFloat(s.outlineWidth) }; });
+      assert.equal(outline.tag, 'BUTTON');
+      assert.ok(outline.style !== 'none' && outline.width >= 2, `focused nav button has no visible focus ring (${outline.style} ${outline.width}px)`);
+      await page.focus('#signout-btn');
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Tab');
+      const signout = await page.evaluate(() => { const b = document.querySelector('#signout-btn'); const s = getComputedStyle(b);
+        return { outline: s.outlineStyle, justify: s.justifyContent, display: s.display }; });
+      assert.notEqual(signout.outline, 'none', 'focused button has no visible focus ring');
+      assert.equal(signout.justify, 'center', 'button labels should be centred');
     });
 
     await step('mobile layout renders', async () => {
