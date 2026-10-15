@@ -45,7 +45,7 @@ const app = createApp();
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`GM QA running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`GM Operations Console running on http://localhost:${PORT}`));
 }
 
 module.exports = app;

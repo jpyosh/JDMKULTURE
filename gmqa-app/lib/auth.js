@@ -1,5 +1,5 @@
 // Authentication (Supabase Auth issues the session token) + authorization (app_users table
-// decides who may use GM QA and with which role). A Supabase account alone grants nothing.
+// decides who may use GM Operations Console and with which role). A Supabase account alone grants nothing.
 const { createClient } = require('@supabase/supabase-js');
 const { db } = require('./db');
 const { HttpError, forbidden } = require('./http');
@@ -49,7 +49,7 @@ function createAuth({ verifyToken = supabaseVerifier() } = {}) {
     const identity = await verifyToken(token);
     if (!identity) throw new HttpError(401, 'Your session has expired. Please sign in again.');
     const user = await resolveUser(identity);
-    if (!user) throw forbidden(`${identity.email} does not have access to GM QA yet. Ask the owner to add you in Settings.`);
+    if (!user) throw forbidden(`${identity.email} does not have access to GM Operations Console yet. Ask the owner to add you in Settings.`);
     req.user = user;
     next();
   }

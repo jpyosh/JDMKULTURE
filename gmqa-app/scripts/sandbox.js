@@ -23,7 +23,7 @@ async function start(port = Number(process.env.PORT) || 3100) {
 
 if (require.main === module) {
   start().then(({ url }) => {
-    console.log(`GM QA sandbox running at ${url}`);
+    console.log(`GM Operations Console sandbox running at ${url}`);
     console.log('Sign in as owner@sandbox or staff@sandbox (any password). Data resets when you stop it.');
   });
 }

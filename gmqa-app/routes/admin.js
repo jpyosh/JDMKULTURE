@@ -1,4 +1,4 @@
-// Owner-only administration: who can use GM QA, and the change history.
+// Owner-only administration: who can use GM Operations Console, and the change history.
 const express = require('express');
 const { requireOwner, clearUserCache } = require('../lib/auth');
 const { db } = require('../lib/db');

@@ -47,8 +47,14 @@ async function launch() {
       await page.goto(url);
       await page.waitForSelector('#login-form:not([hidden])');
       assert.match(await page.textContent('#gate-message'), /owner@sandbox/);
+      // The product is "GM Operations Console": no "QA" anywhere a person can see it.
+      assert.match(await page.title(), /GM Operations Console/);
+      assert.doesNotMatch(await page.title(), /\bQA\b/);
+      assert.match(await page.textContent('#gate .wordmark .sub'), /^GM Operations Console$/);
       await shot('00-gate');
       await signIn('owner@sandbox');
+      assert.match(await page.textContent('#app .rail .wordmark .sub'), /^GM Operations Console$/);
+      assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
           'Finance', 'Cash fund', 'Payroll', 'Settings']);
