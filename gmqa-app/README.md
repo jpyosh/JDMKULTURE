@@ -15,6 +15,14 @@ Auth, deployed on Vercel.
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
 | Settings — users & roles, vehicle classes, change history | ✓ | — |
 
+## Themes
+
+Sidebar → **Theme** (everyone, per device, remembered in the browser): **Classic** (the default look),
+**Telemetry** (industrial brutalist, dark; mechanical, stepped motion) and **Editorial** (minimalist, light;
+quiet, eased motion). Themes only restyle: `public/themes/*.css` scope every rule to `<html data-theme="…">`
+(a test checks this), `public/js/theme.js` runs the switch, and a script in `index.html` applies the saved
+theme before the first paint. All motion stops with the system's reduced-motion setting.
+
 ## Departments
 
 | Department | Tab | JO numbers | Counts as a sale |

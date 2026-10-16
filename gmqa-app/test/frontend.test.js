@@ -28,3 +28,43 @@ test('every module imported from ui.js is exported by it', () => {
     }
   }
 });
+
+// Themes (public/themes/*.css) only restyle: every rule must be scoped to its own data-theme, so nothing
+// leaks into Classic or into another theme. The theme list must agree everywhere it is written down.
+test('theme stylesheets are fully scoped, and every theme is wired up', () => {
+  const publicDir = path.join(__dirname, '..', 'public');
+  const index = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
+  const themeJs = fs.readFileSync(path.join(root, 'theme.js'), 'utf8');
+  const keys = [...themeJs.matchAll(/\{ key: '(\w+)'/g)].map(m => m[1]);
+  assert.deepEqual(keys, ['classic', 'telemetry', 'editorial']);
+  assert.match(index, /\['classic', 'telemetry', 'editorial'\]\.indexOf\(theme\)/, 'the boot script knows every theme');
+  for (const key of keys) assert.match(index, new RegExp(`data-theme-choice="${key}"`), `switch offers ${key}`);
+
+  for (const key of keys.filter(k => k !== 'classic')) {
+    assert.match(index, new RegExp(`<link rel="stylesheet" href="themes/${key}.css">`), `${key}.css is linked`);
+    const css = fs.readFileSync(path.join(publicDir, 'themes', `${key}.css`), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const scope = `:root[data-theme="${key}"]`;
+    // Walk the rules: selectors outside @keyframes must all start with this theme's scope.
+    const unscoped = [];
+    let depth = 0, inKeyframes = -1, buf = '';
+    for (const ch of css) {
+      if (ch === '{') {
+        const prelude = buf.trim();
+        if (prelude.startsWith('@keyframes')) inKeyframes = depth;
+        else if (inKeyframes < 0 && !prelude.startsWith('@')) {
+          for (const sel of prelude.split(/,(?![^(]*\))/)) if (!sel.trim().startsWith(scope)) unscoped.push(sel.trim());
+        }
+        depth++; buf = '';
+      } else if (ch === '}') {
+        depth--; buf = '';
+        if (depth === inKeyframes) inKeyframes = -1;
+      } else if (ch === ';' && depth === 0) {
+        buf = '';
+      } else buf += ch;
+    }
+    assert.deepEqual(unscoped, [], `${key}.css has rules outside ${scope}`);
+    const animations = [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1]);
+    assert.ok(animations.length >= 3, `${key} has its own motion`);
+    for (const name of animations) assert.ok(name.startsWith(key === 'telemetry' ? 'tele-' : 'ed-'), `${name}: keyframes are named per theme`);
+  }
+});
