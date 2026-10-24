@@ -152,7 +152,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   const between = [start, end];
   const [jobs, expenses, metas, payouts, setAsides, bills, funds, payroll] = await Promise.all([
     loadJobs('sale_date between $1 and $2 or paid_on between $1 and $2', between),
-    db.many('select expense_date, side, amount from expenses where expense_date between $1 and $2', between),
+    db.many('select expense_date, side, amount, for_resale from expenses where expense_date between $1 and $2', between),
     db.many('select * from daily_meta where job_date between $1 and $2', between),
     db.many('select payout_date, side, amount from payroll_payouts where payout_date between $1 and $2', between),
     db.many('select fund_id, entry_date, side, amount from fund_set_asides where entry_date between $1 and $2', between),
@@ -164,7 +164,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
 
   // Same per-day rules as EOD, added up over the period.
   const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
-    cashIn: 0, gcashIn: 0, drawerExpenses: 0, fundExpenses: 0 };
+    cashIn: 0, gcashIn: 0, drawerExpenses: 0, fundExpenses: 0, partsBoughtDrawer: 0, partsBoughtFund: 0 };
   for (const day of dates) {
     const s = daySummary({
       date: day, jobs,
@@ -181,6 +181,8 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     t.gcashIn += s.gcashReceived;
     t.drawerExpenses += s.drawerExpenses;
     t.fundExpenses += s.fundExpenses;
+    t.partsBoughtDrawer += s.partsBoughtDrawer;
+    t.partsBoughtFund += s.partsBoughtFund;
   }
   const r = n => round2(n);
   const income = {
@@ -201,15 +203,18 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     payroll: payroll.totalNet,
     bills: billsByFund,
     billsTotal: r(bills.reduce((s, b) => s + b.amount, 0)),
-    drawerExpenses: r(t.drawerExpenses),
+    // Parts bought to sell are stock, not a cost: their cost counts when sold (income.partsCost).
+    drawerExpenses: r(t.drawerExpenses - t.partsBoughtDrawer),
     // Abonos bought with the cash fund: costs, but not money out of the drawer.
-    fundExpenses: r(t.fundExpenses),
+    fundExpenses: r(t.fundExpenses - t.partsBoughtFund),
+    partsBought: r(t.partsBoughtDrawer + t.partsBoughtFund),
   };
   opex.total = r(opex.payroll + opex.billsTotal + opex.drawerExpenses + opex.fundExpenses);
 
   const sumOf = list => r(list.reduce((s, x) => s + x.amount, 0));
   const cashflow = {
-    cashIn: r(t.cashIn), gcashIn: r(t.gcashIn), commissionPaid: income.commission, drawerExpenses: opex.drawerExpenses,
+    // Everything paid out of the drawer, parts bought to sell included.
+    cashIn: r(t.cashIn), gcashIn: r(t.gcashIn), commissionPaid: income.commission, drawerExpenses: r(t.drawerExpenses),
     payrollPayouts: sumOf(payouts), setAsides: sumOf(setAsides), billTopUps: r(bills.reduce((s, b) => s + b.from_drawer, 0)),
   };
   cashflow.net = r(cashflow.cashIn + cashflow.gcashIn - cashflow.commissionPaid - cashflow.drawerExpenses

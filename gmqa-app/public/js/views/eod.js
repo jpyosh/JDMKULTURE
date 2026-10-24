@@ -132,7 +132,8 @@ function render() {
 
   $('[data-expenses]', root).innerHTML = current.day.expenses.length
     ? current.day.expenses.map(e => `<div class="row-line"><span class="k"><span class="kind-pill ${EXPENSE_PILL[e.side].cls}">${EXPENSE_PILL[e.side].label}</span> ${esc(e.description)}</span>
-        <span>${peso(e.amount)} ${locked() || e.topup_id ? '' : `<button class="icon-btn" type="button" data-del-expense="${e.id}" title="Delete">✕</button>`}</span></div>`).join('')
+        <span>${peso(e.amount)} ${e.from_stock ? '<span class="muted small" title="Undo it from the item’s stock history in Inventory">from Inventory</span>'
+          : locked() || e.topup_id ? '' : `<button class="icon-btn" type="button" data-del-expense="${e.id}" title="Delete">✕</button>`}</span></div>`).join('')
       + (current.day.summary.fundExpenses ? `<div class="hint mt">${peso(current.day.summary.fundExpenses)} was paid from the cash fund, so it is not taken out of the drawer.</div>` : '')
     : '<div class="empty-state small">No expenses recorded.</div>';
   $$('[data-del-expense]', root).forEach(b => b.addEventListener('click', async () => {

@@ -55,7 +55,8 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
       if (!line) throw bad('Unknown line item');
       lines.push({ ...line, sort_order: index });
     } else if (input?.part_id != null) {
-      const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true });
+      // Only items tagged Auto Parts are sold; lines already on a job are kept above whatever their tags now.
+      const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true, forSale: true });
       const quantity = money(input.quantity ?? 1, 'Quantity', { min: 0.01 });
       lines.push({
         kind: 'part', part_id: part.id, catalog_item_id: null, name: part.name, quantity, sort_order: index,
