@@ -752,16 +752,19 @@ test('cash fund: abonos are costs that never touch the drawer; replenishment clo
 });
 
 test('parts: inventory, average cost, selling on jobs and over the counter, stock never negative', async () => {
-  // Owner sets up a part; staff can see it but not change it.
-  assert.equal((await api(STAFF, 'POST', '/parts', { name: 'Nope', price: 1 })).status, 403);
-  const part = await ok(api(OWNER, 'POST', '/parts', { sku: 'WB-18', name: 'Wiper blade 18in', unit: 'pc', price: 450, commission: 20, reorder_level: 3 }));
-  assert.deepEqual([part.stock, part.avg_cost, part.low], [0, 0, true]);
-  assert.equal((await api(OWNER, 'POST', '/parts', { sku: 'wb-18', name: 'Another', price: 1 })).status, 409, 'SKU must be unique');
+  // Owner sets up a part (an inventory item tagged Auto Parts); staff can see it but not change it.
+  const autoParts = (await ok(api(STAFF, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  assert.equal((await api(STAFF, 'POST', '/inventory', { name: 'Nope', price: 1, tags: [autoParts.id] })).status, 403);
+  const part = await ok(api(OWNER, 'POST', '/inventory', {
+    sku: 'WB-18', name: 'Wiper blade 18in', unit: 'pc', price: 450, commission: 20, reorder_level: 3, tags: [autoParts.id],
+  }));
+  assert.deepEqual([part.stock, part.avg_cost, part.low, part.for_sale], [0, 0, true, true]);
+  assert.equal((await api(OWNER, 'POST', '/inventory', { sku: 'wb-18', name: 'Another', price: 1 })).status, 409, 'SKU must be unique');
 
   // Deliveries update the weighted average cost.
-  assert.equal((await api(STAFF, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200 })).status, 403);
-  await ok(api(OWNER, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200, supplier: 'Bosch PH' }));
-  const received = await ok(api(OWNER, 'POST', `/parts/${part.id}/receive`, { date: '2026-12-02', quantity: 10, unit_cost: 260 }));
+  assert.equal((await api(STAFF, 'POST', `/inventory/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200, paid_from: 'none' })).status, 403);
+  await ok(api(OWNER, 'POST', `/inventory/${part.id}/receive`, { date: '2026-12-01', quantity: 10, unit_cost: 200, supplier: 'Bosch PH', paid_from: 'none' }));
+  const received = await ok(api(OWNER, 'POST', `/inventory/${part.id}/receive`, { date: '2026-12-02', quantity: 10, unit_cost: 260, paid_from: 'none' }));
   assert.deepEqual([received.stock, received.avg_cost, received.low], [20, 230, false]);
 
   // Sold on a carwash job: price x quantity, commission per unit, cost frozen at the average.
@@ -797,12 +800,12 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', items: [{ catalog_item_id: premium.id }] })).status, 400,
     'services are not sold at the parts counter');
 
-  // Owner stock count adjustment, with a reason; cannot go below zero.
-  assert.equal((await api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -1 })).status, 400, 'reason required');
-  assert.equal((await api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -100, note: 'count' })).status, 400);
-  const adjusted = await ok(api(OWNER, 'POST', `/parts/${part.id}/adjust`, { date: '2026-12-04', quantity: -1, note: 'Damaged' }));
+  // Stock count, with a reason; can never go below zero.
+  assert.equal((await api(OWNER, 'POST', `/inventory/${part.id}/count`, { date: '2026-12-04', counted: 16 })).status, 400, 'reason required');
+  assert.equal((await api(OWNER, 'POST', `/inventory/${part.id}/count`, { date: '2026-12-04', counted: -1, reason: 'recount' })).status, 400);
+  const adjusted = await ok(api(OWNER, 'POST', `/inventory/${part.id}/count`, { date: '2026-12-04', counted: 16, reason: 'damaged' }));
   assert.equal(adjusted.stock, 16);
-  const moves = await ok(api(OWNER, 'GET', `/parts/${part.id}/movements`));
+  const moves = await ok(api(OWNER, 'GET', `/inventory/${part.id}/movements`));
   assert.deepEqual(moves.map(m => [m.kind, m.quantity]).slice(-3), [['return', 3], ['sale', -3], ['adjust', -1]]);
 
   // EOD shows the parts counter as its own department; Finance subtracts the cost of parts sold.
@@ -826,4 +829,102 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   const staffDay = (await ok(api(STAFF, 'GET', '/days/2026-12-03'))).summary;
   assert.equal('partsCost' in staffDay, false);
   assert.equal((await ok(api(OWNER, 'GET', '/jobs?date=2026-12-03&department=parts')))[0].totals.cost, 690);
+});
+
+test('inventory: tags decide what is sold, staff count usage, deliveries paid from the drawer or cash fund', async () => {
+  const D = '2026-12-15';
+  const tags = await ok(api(STAFF, 'GET', '/tags'));
+  const autoParts = tags.find(t => t.system_key === 'auto_parts');
+  const chem = tags.find(t => t.name === 'Carwash chemicals');
+
+  // Tags: owner-only changes; the built-in Auto Parts tag can be renamed but never deleted.
+  assert.equal((await api(STAFF, 'POST', '/tags', { name: 'Wax' })).status, 403);
+  const wax = await ok(api(OWNER, 'POST', '/tags', { name: 'Wax & sealants', color: 'amber' }));
+  assert.equal((await api(OWNER, 'POST', '/tags', { name: 'wax & SEALANTS' })).status, 409, 'tag names are unique');
+  await ok(api(OWNER, 'PATCH', `/tags/${autoParts.id}`, { name: 'Car Parts' }));
+  assert.equal((await api(OWNER, 'DELETE', `/tags/${autoParts.id}`)).status, 400);
+  const spare = await ok(api(OWNER, 'POST', '/tags', { name: 'Spare tag' }));
+  await ok(api(OWNER, 'DELETE', `/tags/${spare.id}`));
+
+  // A supply needs no price and is never offered for sale; Auto Parts items need a selling price.
+  const foam = await ok(api(OWNER, 'POST', '/inventory', { name: 'Snow foam', unit: 'gal', reorder_level: 1, tags: [chem.id, wax.id] }));
+  assert.deepEqual([foam.for_sale, [...foam.tags].sort()], [false, [chem.id, wax.id].sort()]);
+  assert.match((await api(OWNER, 'POST', '/inventory', { name: 'Horn', tags: [autoParts.id] })).data.error, /selling price/i);
+  const horn = await ok(api(OWNER, 'POST', '/inventory', { name: 'Horn', price: 1200, tags: [autoParts.id] }));
+  assert.equal(horn.for_sale, true);
+  assert.equal((await api(OWNER, 'PATCH', `/inventory/${horn.id}`, { price: 0 })).status, 400, 'a part for sale keeps a price');
+  assert.equal((await api(OWNER, 'PATCH', `/inventory/${foam.id}`, { tags: [999999] })).status, 400, 'unknown tag');
+  assert.equal((await api(STAFF, 'PATCH', `/inventory/${foam.id}`, { reorder_level: 2 })).status, 403);
+
+  // The parts list (Parts tab, job editor) holds only Auto Parts items; Inventory holds everything.
+  const sellable = (await ok(api(STAFF, 'GET', '/parts'))).map(p => p.name);
+  assert.ok(sellable.includes('Horn') && !sellable.includes('Snow foam'));
+  const everything = await ok(api(STAFF, 'GET', '/inventory'));
+  assert.ok(everything.some(p => p.name === 'Snow foam') && everything.some(p => p.name === 'Horn'));
+  assert.ok(everything.every(p => !('avg_cost' in p)), 'staff never see costs');
+  const notForSale = await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: foam.id, quantity: 1 }] });
+  assert.equal(notForSale.status, 400);
+  assert.match(notForSale.data.error, /not for sale/i);
+
+  // Deliveries: opening stock (no money), then paid from the drawer. A supply bought is a cost of that day;
+  // a part bought for resale is stock (its cost counts when sold). Both leave the drawer.
+  await ok(api(OWNER, 'POST', `/inventory/${foam.id}/receive`, { date: D, quantity: 4, unit_cost: 300, paid_from: 'none' }));
+  assert.equal((await api(OWNER, 'POST', `/inventory/${foam.id}/receive`, { date: D, quantity: 1, unit_cost: 0, paid_from: 'cash' })).status, 400,
+    'a paid delivery needs its cost');
+  const foamPaid = await ok(api(OWNER, 'POST', `/inventory/${foam.id}/receive`, { date: D, quantity: 2, unit_cost: 350, supplier: 'Meguiars PH', paid_from: 'cash' }));
+  assert.deepEqual([foamPaid.stock, foamPaid.avg_cost], [6, 316.67]);
+  await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 3, unit_cost: 700, paid_from: 'gcash' }));
+  let day = await ok(api(OWNER, 'GET', `/days/${D}`));
+  assert.deepEqual(day.expenses.map(e => [e.side, e.amount, e.for_resale, e.from_stock]), [['cash', 700, false, true], ['gcash', 2100, true, true]]);
+  assert.match(day.expenses[0].description, /2 gal Snow foam/);
+  assert.deepEqual([day.summary.cashExpenses, day.summary.gcashExpenses], [700, 2100]);
+  assert.match((await api(OWNER, 'DELETE', `/expenses/${day.expenses[0].id}`)).data.error, /Inventory/, 'undo it from Inventory, not EOD');
+  let f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  assert.deepEqual([f.opex.drawerExpenses, f.opex.partsBought, f.cashflow.drawerExpenses], [700, 2100, 2800]);
+
+  // Paid from the cash fund: refused beyond what the fund holds; otherwise it is on the fund's list.
+  assert.match((await api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 1000, unit_cost: 1000, paid_from: 'fund' })).data.error, /cash fund/i);
+  await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: D, amount: 5000 }));
+  await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 1, unit_cost: 700, paid_from: 'fund' }));
+  assert.ok((await ok(api(OWNER, 'GET', '/cash-fund'))).pending.some(e => /Horn/.test(e.description) && e.amount === 700));
+  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  assert.deepEqual([f.opex.fundExpenses, f.opex.partsBought], [0, 2800], 'a part bought with the fund is stock, not a cost');
+
+  // Undo: only an item's latest stock change; stock, average cost and the expense all go back.
+  let moves = await ok(api(OWNER, 'GET', `/inventory/${foam.id}/movements`));
+  assert.equal((await api(OWNER, 'POST', `/inventory/movements/${moves[0].id}/undo`)).status, 400, 'not the latest change');
+  assert.equal((await api(STAFF, 'POST', `/inventory/movements/${moves.at(-1).id}/undo`)).status, 403);
+  const undone = await ok(api(OWNER, 'POST', `/inventory/movements/${moves.at(-1).id}/undo`));
+  assert.deepEqual([undone.stock, undone.avg_cost], [4, 300]);
+  day = await ok(api(OWNER, 'GET', `/days/${D}`));
+  assert.equal(day.expenses.some(e => /Snow foam/.test(e.description)), false, 'its expense is gone too');
+
+  // Staff count what is left. Lower = used (or damaged/lost); a recount can go either way.
+  assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 5, reason: 'used' })).status, 400, 'cannot use more than you had');
+  assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 4, reason: 'used' })).status, 400, 'matches: nothing to record');
+  assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 3, reason: 'stolen' })).status, 400);
+  assert.equal((await ok(api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 2.5, reason: 'used' }))).stock, 2.5);
+  assert.equal((await ok(api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 3, reason: 'recount', note: 'Found one in the back' }))).stock, 3);
+  moves = await ok(api(OWNER, 'GET', `/inventory/${foam.id}/movements`));
+  assert.deepEqual(moves.slice(-2).map(m => [m.kind, m.quantity, m.note]), [['use', -1.5, 'Used'], ['adjust', 0.5, 'Recount: Found one in the back']]);
+  assert.equal((await api(STAFF, 'GET', `/inventory/${foam.id}/movements`)).status, 403);
+
+  // Import (paste from Excel): all rows or none, errors name the row; new tag names are created.
+  assert.equal((await api(STAFF, 'POST', '/inventory/import', { date: D, rows: [{ name: 'x' }] })).status, 403);
+  assert.match((await api(OWNER, 'POST', '/inventory/import', { date: D, rows: [{ name: 'Microfiber 40x40' }, { name: '' }] })).data.error, /Row 2/);
+  assert.match((await api(OWNER, 'POST', '/inventory/import', { date: D, rows: [{ name: 'snow FOAM' }] })).data.error, /already/i);
+  assert.equal((await ok(api(OWNER, 'GET', '/inventory'))).some(p => p.name === 'Microfiber 40x40'), false, 'nothing imported');
+  const imported = await ok(api(OWNER, 'POST', '/inventory/import', { date: D, rows: [
+    { sku: 'MF-4040', name: 'Microfiber 40x40', unit: 'pc', tags: ['Microfiber', 'Polishing pads'], stock: 24, unit_cost: 45, reorder_level: 10 },
+    { name: 'Air freshener', price: 150, commission: 10, tags: ['car parts'], stock: 10, unit_cost: 60 },
+  ] }));
+  assert.equal(imported.created, 2);
+  const list = await ok(api(OWNER, 'GET', '/inventory'));
+  const mf = list.find(p => p.name === 'Microfiber 40x40');
+  const pads = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.name === 'Polishing pads');
+  assert.ok(pads, 'new tag created');
+  assert.deepEqual([mf.stock, mf.avg_cost, mf.reorder_level, mf.for_sale, mf.tags.includes(pads.id)], [24, 45, 10, false, true]);
+  assert.equal(list.find(p => p.name === 'Air freshener').for_sale, true);
+  const opening = await ok(api(OWNER, 'GET', `/inventory/${mf.id}/movements`));
+  assert.deepEqual(opening.map(m => [m.kind, m.quantity, m.unit_cost, m.note]), [['receive', 24, 45, 'Opening stock']]);
 });

@@ -7,6 +7,7 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const { db } = require('./db');
 const { round2 } = require('./calc');
+const { bad } = require('./http');
 
 async function loadCashFund(q = db) {
   const [fund, totals, pending, topups] = await Promise.all([
@@ -30,6 +31,15 @@ async function loadCashFund(q = db) {
     topups: topups.map(t => ({ id: t.id, entry_date: t.entry_date, amount: t.amount, note: t.note, created_by: t.created_by,
       itemsTotal: round2(t.items_total), itemCount: t.item_count })),
   };
+}
+
+// A purchase from the fund (EOD expense or Inventory delivery) may not spend more than it holds.
+// Locks the fund for the rest of the caller's transaction so two purchases cannot both pass.
+async function assertFundCovers(q, amount) {
+  await q.query("select pg_advisory_xact_lock(hashtext('cash_fund'))");
+  const { balance } = await loadCashFund(q);
+  if (balance <= 0) throw bad('The cash fund is empty. Ask the owner to record the money for the cash fund first (Cash fund tab).');
+  if (amount > balance) throw bad(`The cash fund only has ${peso(balance)} left. Pay the rest from the drawer as a separate expense.`);
 }
 
 const topupItems = (q, topupId) => q.many(`select id, expense_date, description, amount, created_by from expenses
@@ -163,4 +173,4 @@ function buildSheet(sheet) {
   });
 }
 
-module.exports = { loadCashFund, topupItems, buildSheet, sheetFileName, peso };
+module.exports = { loadCashFund, assertFundCovers, topupItems, buildSheet, sheetFileName, peso };

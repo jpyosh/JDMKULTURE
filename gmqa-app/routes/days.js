@@ -5,7 +5,7 @@ const { db } = require('../lib/db');
 const { daySummary } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
-const { loadCashFund, peso } = require('../lib/cash-fund');
+const { assertFundCovers } = require('../lib/cash-fund');
 
 const router = express.Router();
 const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null,
@@ -14,7 +14,10 @@ const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gc
 async function loadDay(day, q = db) {
   const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
-    q.many('select id, side, description, amount, topup_id, created_by, created_at from expenses where expense_date = $1 order by id', [day]),
+    // from_stock: recorded by Inventory → Receive (undone from there, not here).
+    q.many(`select e.id, e.side, e.description, e.amount, e.topup_id, e.for_resale, e.created_by, e.created_at,
+      exists (select 1 from stock_movements m where m.expense_id = e.id) as from_stock
+      from expenses e where e.expense_date = $1 order by e.id`, [day]),
     // Sales booked today (carwash by job date, running jobs by sale date) + running jobs paid today.
     loadJobs('sale_date = $1 or paid_on = $1', [day], q),
     q.many('select id, side, amount, period_start, period_end, note from payroll_payouts where payout_date = $1 order by id', [day]),
@@ -76,12 +79,7 @@ router.post('/days/:date/expenses', async (req, res) => {
   const description = text(req.body.description, 'Description', { required: true, max: 200 });
   await db.tx(req.user.email, async q => {
     await assertDayOpen(q, day, req.user);
-    if (side === 'fund') {
-      await q.query("select pg_advisory_xact_lock(hashtext('cash_fund'))");
-      const { balance } = await loadCashFund(q);
-      if (balance <= 0) throw bad('The cash fund is empty. Ask the owner to record the money for the cash fund first (Cash fund tab).');
-      if (amount > balance) throw bad(`The cash fund only has ${peso(balance)} left. Pay the rest from the drawer as a separate expense.`);
-    }
+    if (side === 'fund') await assertFundCovers(q, amount);
     await q.query('insert into expenses (expense_date, side, description, amount) values ($1, $2, $3, $4)', [day, side, description, amount]);
   });
   res.status(201).json(await loadDay(day));
@@ -92,6 +90,9 @@ router.delete('/expenses/:id', async (req, res) => {
   const day = await db.tx(req.user.email, async q => {
     const expense = await q.one('select expense_date, topup_id from expenses where id = $1', [expenseId]);
     if (!expense) throw notFound('Expense');
+    if (await q.one('select 1 from stock_movements where expense_id = $1', [expenseId])) {
+      throw bad("This was recorded by Inventory → Receive. Undo the delivery from the item's stock history instead.");
+    }
     if (expense.topup_id) throw bad('This cash fund purchase was already replenished. Undo that replenishment (Cash fund tab) before deleting it.');
     await assertDayOpen(q, expense.expense_date, req.user);
     await q.query('delete from expenses where id = $1', [expenseId]);

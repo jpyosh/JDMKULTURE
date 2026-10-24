@@ -86,6 +86,10 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
   // Bought with the cash fund (abonos): a cost of the day, but the money never passed through the drawer.
   const fundExpenses = sum(expenses.filter(e => e.side === 'fund'), e => e.amount);
   const drawerExpenses = round2(cashExpenses + gcashExpenses);
+  // Parts bought to sell (Inventory → Receive): money out like any expense, but not a cost until sold.
+  const resale = expenses.filter(e => e.for_resale);
+  const partsBoughtDrawer = sum(resale.filter(e => e.side !== 'fund'), e => e.amount);
+  const partsBoughtFund = sum(resale.filter(e => e.side === 'fund'), e => e.amount);
 
   // Tips arrive in GCash and are passed on to the crew, so they net to zero in the GCash count.
   const jobTips = sum(received, j => j.tip_gcash);
@@ -125,6 +129,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
     net: round2(collected - commission),
     cashReceived, gcashReceived, paidInAdvance, paidEarlier,
     cashExpenses, gcashExpenses, fundExpenses, drawerExpenses, expenses: round2(drawerExpenses + fundExpenses),
+    partsBoughtDrawer, partsBoughtFund,
     jobTips, otherTips, tips,
     cashFloat, commissionCash, commissionGcash, payrollCash, payrollGcash,
     setAsideCash, setAsideGcash, billTopUpCash, billTopUpGcash,

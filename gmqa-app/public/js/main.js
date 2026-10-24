@@ -5,6 +5,7 @@ import { installThemeSwitch } from './theme.js';
 import carwash from './views/carwash.js';
 import { detailing, tintPpf } from './views/running.js';
 import parts from './views/parts.js';
+import inventory from './views/inventory.js';
 import eod from './views/eod.js';
 import pricing from './views/pricing.js';
 import reports from './views/reports.js';
@@ -17,7 +18,8 @@ const VIEWS = [
   { key: 'carwash', label: 'Carwash', module: carwash, roles: ['owner', 'staff'] },
   { key: 'detailing', label: 'Detailing', module: detailing, roles: ['owner', 'staff'] },
   { key: 'tint_ppf', label: 'Tint & PPF', module: tintPpf, roles: ['owner', 'staff'] },
-  { key: 'parts', label: 'Parts & Inventory', module: parts, roles: ['owner', 'staff'] },
+  { key: 'parts', label: 'Parts', module: parts, roles: ['owner', 'staff'] },
+  { key: 'inventory', label: 'Inventory', module: inventory, roles: ['owner', 'staff'] },
   { key: 'eod', label: 'EOD Closing', module: eod, roles: ['owner', 'staff'] },
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
@@ -49,6 +51,7 @@ const ICONS = {
   detailing: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>',
   tint_ppf: '<path d="M12 21s7.5-3.6 7.5-9.5V5.8L12 3 4.5 5.8v5.7C4.5 17.4 12 21 12 21z"/>',
   parts: '<path d="M20.5 16.2V7.8L12 3 3.5 7.8v8.4L12 21z"/><path d="M3.8 8L12 12.6 20.2 8M12 21v-8.4"/>',
+  inventory: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/>',
   eod: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.5 2.5 5-5.4"/>',
   pricing: '<path d="M20.3 13.3l-7 7a1.8 1.8 0 0 1-2.6 0L3.5 13V3.5H13l7.3 7.2a1.8 1.8 0 0 1 0 2.6z"/><circle cx="8" cy="8" r="1.4"/>',
   reports: '<path d="M3.5 20.5h17M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',

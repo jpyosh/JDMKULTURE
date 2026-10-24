@@ -10,6 +10,8 @@ Auth, deployed on Vercel.
 |---|---|---|
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
+| Parts — auto parts for sale, over-the-counter sales | ✓ | ✓ (no costs) |
+| Inventory — everything stocked, tags, sheet view, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
@@ -110,17 +112,41 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - Migration 008 adds `cash_fund`, `cash_fund_topups`, expense side `fund` and `expenses.topup_id`;
   existing expenses are unchanged.
 
-## Parts & inventory
+## Inventory and parts
 
-- **Parts & Inventory** tab: SKU, price, commission per unit, stock and a reorder level (low-stock warning).
+- **Inventory** tab: everything the shop stocks — auto parts for sale, carwash and detailing chemicals,
+  wash mitts, drying towels, microfibers, machines — with SKU, unit, tags, stock and a reorder level
+  (low-stock warning). Machines are counted like any other item.
+- **Tags** group items (any number per item; owner adds, renames, recolours, deletes them). The built-in
+  **Auto Parts** tag is what makes an item *for sale*: only those appear on the **Parts** tab and in a
+  job's "+ Add part". It can be renamed but not deleted, and an item tagged with it needs a selling price.
+- **Sheet view** works like Excel: arrow keys move, typing replaces a cell, Enter saves and moves down,
+  Tab moves right, Escape cancels, double-click edits; click a column to sort; tag chips and search
+  filter. The Item column stays in view while scrolling sideways. **Cards** view for phones (the default
+  there until someone picks a view on that device).
+- **Export CSV** opens in Excel / Google Sheets (what is shown, costs only for the owner).
+  **Paste from Excel** (owner): copy rows with their header row from Excel or Sheets; it shows a preview
+  and any row errors, then adds all rows or none. Stock is added as opening stock at its cost; new tag
+  names are created. It only adds new items (an existing name or SKU is refused); edit those in the sheet.
+- **Counting is how usage is tracked**: chemicals and supplies are not logged per job. Anyone (staff too)
+  records what is on the shelf; the difference is recorded as **Used** (or Damaged / Lost, or a Recount
+  correction up or down). Typing in the Stock column opens the count, it never just overwrites the number.
+- **Receive** (owner) adds a delivery and updates the weighted average cost. **Paid with**: drawer cash,
+  GCash or the cash fund records the amount as that day's expense (it shows on EOD as "from Inventory"
+  and can only be undone from Inventory; the cash fund refuses more than it holds), or **Already paid /
+  opening stock** records no money. **Undo** in an item's history removes its latest delivery, with its
+  stock, average cost and expense.
+- How Finance counts deliveries: a supply (not Auto Parts) is a cost on the day it is bought. An auto part
+  bought to sell is stock: the money leaves the drawer (EOD, Finance money in/out), but its cost counts
+  only as **cost of parts sold** when it sells, so it is never counted twice.
 - Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
-  counter ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
+  counter on the Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
 - Selling takes stock out and freezes the part's average cost on the line; removing the part or
   voiding the job puts the stock back. Selling more than is in stock is blocked.
-- Owner only: add/edit parts, **Receive** deliveries (updates the weighted average cost), **Adjust**
-  counts (with a reason), stock history. Every stock change is recorded.
-- Costs and margins are owner-only: staff never receive cost fields from the API.
-- Finance subtracts the cost of parts sold before net profit.
+- Every stock change is recorded (stock history, owner). Costs and margins are owner-only: staff never
+  receive cost fields from the API.
+- Migration 009 adds `tags`, `part_tags`, stock change kind `use`, `stock_movements.expense_id` /
+  `prev_avg_cost` and `expenses.for_resale`. The `parts` table holds every inventory item.
 
 ## Project layout
 

@@ -17,6 +17,21 @@ test('departments: carwash (same-day), detailing and tint_ppf (running), parts c
     [['carwash', false, true], ['detailing', true, true], ['tint_ppf', true, true], ['parts', false, false]]);
 });
 
+test('parts bought for resale leave the drawer like any expense, and are reported separately', () => {
+  const expenses = [
+    { side: 'cash', amount: 200 }, // soap: a cost
+    { side: 'cash', amount: 1000, for_resale: true }, // wipers to sell: money out, not a cost yet
+    { side: 'gcash', amount: 300, for_resale: true },
+    { side: 'fund', amount: 400, for_resale: true },
+    { side: 'fund', amount: 50 },
+  ];
+  const s = daySummary({ date: '2026-12-01', jobs: [], expenses, meta: { cash_float: 2000 } });
+  assert.equal(s.expectedCash, 2000 - 200 - 1000, 'the drawer pays for both');
+  assert.equal(s.expectedGcash, -300);
+  assert.deepEqual([s.cashExpenses, s.gcashExpenses, s.fundExpenses, s.drawerExpenses], [1200, 300, 450, 1500]);
+  assert.deepEqual([s.partsBoughtDrawer, s.partsBoughtFund], [1300, 400]);
+});
+
 test('parts: line cost is frozen per unit; cost and parts sales are counted with paid sales', () => {
   const partLine = { kind: 'part', name: 'Wiper blade', quantity: 2, price: 900, commission: 40, unit_cost: 300 };
   const counter = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', payment_received: true, items: [partLine] });

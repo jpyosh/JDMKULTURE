@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -222,7 +222,7 @@ test('008 adds the cash fund without changing any existing expense', async () =>
   const before = (await driver.query('select id, expense_date, side, description, amount from expenses order by id')).rows;
   await assert.rejects(driver.query("insert into expenses (expense_date, side, amount) values ('2026-09-02', 'fund', 1)"), /check/i);
 
-  assert.deepEqual(await migrate(driver, quiet), ['008']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '008' }), ['008']);
   assert.deepEqual((await driver.query('select id, expense_date, side, description, amount from expenses order by id')).rows, before);
   assert.equal((await one(driver, "select count(*)::int n from expenses where topup_id is not null")).n, 0);
   assert.equal(Number((await one(driver, 'select target from cash_fund')).target), 0);
@@ -320,6 +320,48 @@ test('005 adds bill funds, set-asides and bill payments', async () => {
     values ($1, '2026-10-25', 8000, 6000, 2000, null)`, [meralco]), /check/i, 'a drawer top-up needs a side');
   await driver.query(`insert into bill_payments (fund_id, paid_on, amount, from_fund, from_drawer, drawer_side)
     values ($1, '2026-10-25', 8000, 8000, 0, null)`, [meralco]);
+});
+
+test('009 adds inventory tags, usage counts and stock bought from the drawer or cash fund', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '001' });
+  await loadLegacyData(driver);
+  await migrate(driver, { ...quiet, to: '008' });
+  const expensesBefore = await all(driver, 'select id, expense_date, side, description, amount, topup_id from expenses order by id');
+  assert.deepEqual(await migrate(driver, quiet), ['009']);
+  assert.deepEqual(await all(driver, 'select id, expense_date, side, description, amount, topup_id from expenses order by id'), expensesBefore,
+    'existing expenses unchanged');
+  assert.equal((await one(driver, 'select count(*)::int n from expenses where for_resale')).n, 0, 'no existing expense is a parts purchase');
+
+  // Starter tags: the built-in Auto Parts tag plus the supplies the shop tracks.
+  const tags = await all(driver, 'select name, system_key from tags order by sort_order, id');
+  assert.deepEqual(tags.map(t => t.name), ['Auto Parts', 'Carwash chemicals', 'Detailing chemicals', 'Wash mitts', 'Drying towels',
+    'Microfiber', 'Carwash machines', 'Detailing machines']);
+  assert.deepEqual(tags.filter(t => t.system_key).map(t => [t.name, t.system_key]), [['Auto Parts', 'auto_parts']]);
+  await assert.rejects(driver.query("insert into tags (name) values ('auto parts')"), /unique/i, 'tag names are unique');
+  await assert.rejects(driver.query("insert into tags (name, system_key) values ('Parts 2', 'auto_parts')"), /unique/i);
+  await assert.rejects(driver.query("insert into tags (name, color) values ('Odd', 'neon')"), /check/i);
+
+  // Items carry any number of tags; archiving keeps them, deleting a tag removes it from items.
+  const foam = await one(driver, "insert into parts (name, unit) values ('Snow foam', 'gal') returning id");
+  const mitts = await one(driver, "select id from tags where name = 'Wash mitts'");
+  const chem = await one(driver, "select id from tags where name = 'Carwash chemicals'");
+  await driver.query('insert into part_tags (part_id, tag_id) values ($1, $2), ($1, $3)', [foam.id, mitts.id, chem.id]);
+  await assert.rejects(driver.query('insert into part_tags (part_id, tag_id) values ($1, $2)', [foam.id, chem.id]), /unique|duplicate/i);
+  await driver.query('delete from tags where id = $1', [mitts.id]);
+  assert.equal((await one(driver, 'select count(*)::int n from part_tags where part_id = $1', [foam.id])).n, 1);
+
+  // Usage (from a stock count) always takes stock out.
+  await assert.rejects(driver.query("insert into stock_movements (part_id, moved_on, kind, quantity) values ($1, '2026-12-01', 'use', 1)", [foam.id]), /check/i);
+  await driver.query("insert into stock_movements (part_id, moved_on, kind, quantity) values ($1, '2026-12-01', 'use', -0.5)", [foam.id]);
+
+  // A delivery paid from the drawer or cash fund links to its expense (one expense per delivery).
+  const paid = await one(driver, "insert into expenses (expense_date, side, description, amount) values ('2026-12-01', 'cash', 'Stock', 500) returning id");
+  await driver.query(`insert into stock_movements (part_id, moved_on, kind, quantity, unit_cost, prev_avg_cost, expense_id)
+    values ($1, '2026-12-01', 'receive', 2, 250, 0, $2)`, [foam.id, paid.id]);
+  await assert.rejects(driver.query(`insert into stock_movements (part_id, moved_on, kind, quantity, unit_cost, expense_id)
+    values ($1, '2026-12-01', 'receive', 2, 250, $2)`, [foam.id, paid.id]), /unique|duplicate/i);
+  await assert.rejects(driver.query('delete from expenses where id = $1', [paid.id]), /foreign key|violates/i, 'the expense cannot vanish under its delivery');
 });
 
 test('006 adds parts inventory, part line items and the parts counter department', async () => {

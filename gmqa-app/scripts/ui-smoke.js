@@ -101,7 +101,7 @@ async function launch() {
       assert.match(await page.textContent('#app .rail .wordmark .sub'), /^GM Operations Console$/);
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
-        ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
+        ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
           'Finance', 'Cash fund', 'Payroll', 'Settings']);
     });
 
@@ -492,27 +492,122 @@ async function launch() {
       await shot('07b-pricing-tint');
     });
 
-    await step('parts: add a part, receive stock, sell over the counter', async () => {
-      await page.click('#nav [data-view="parts"]');
-      const parts = page.locator('#view-parts');
-      await parts.locator('[data-new-part]').click();
-      await page.fill('#modal [data-p="sku"]', 'OIL-1L');
-      await page.fill('#modal [data-p="name"]', 'Engine oil 1L');
-      await page.fill('#modal [data-p="price"]', '550');
-      await page.fill('#modal [data-p="reorder_level"]', '2');
-      await page.click('#modal [data-confirm]');
-      await expectToast(/Part added/);
-      const row = parts.locator('[data-parts] tr', { hasText: 'Engine oil 1L' });
-      await row.waitFor();
-      assert.match(await row.textContent(), /Low/, 'no stock yet: flagged low');
+    const inv = page.locator('#view-inventory');
+    const invRow = name => inv.locator('[data-sheet] tbody tr[data-item]', { hasText: name });
+    const invCell = (name, field) => invRow(name).locator(`td[data-field="${field}"]`);
+    const cellText = async (name, field) => (await invCell(name, field).textContent()).trim();
 
-      await row.locator('[data-act="receive"]').click();
+    await step('inventory: paste rows from Excel, tags, low stock', async () => {
+      await page.click('#nav [data-view="inventory"]');
+      await inv.locator('[data-paste]').click();
+      await page.fill('#modal [data-paste-text]', [
+        'SKU\tItem\tUnit\tSelling price\tReorder at\tTags\tStock\tCost',
+        'OIL-1L\tEngine oil 1L\tbottle\t550\t2\tAuto Parts\t0\t0',
+        '\tSnow foam\tgal\t\t1\tCarwash chemicals\t4\t300',
+        '\tMicrofiber 40x40\tpc\t\t10\tMicrofiber; Detailing chemicals\t24\t45',
+      ].join('\n'));
+      await page.waitForFunction(() => document.querySelectorAll('#modal [data-preview] tbody tr').length === 3);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/3 items added/);
+      await invRow('Snow foam').waitFor();
+      assert.match(await invRow('Engine oil 1L').textContent(), /Low/, 'no stock yet: flagged low');
+      assert.match(await invRow('Engine oil 1L').locator('td[data-field="tags"]').textContent(), /Auto Parts/);
+      assert.equal(await cellText('Microfiber 40x40', 'stock'), '24');
+      assert.match(await inv.locator('[data-low]').textContent(), /Engine oil 1L/);
+
+      // Tag chips filter the sheet.
+      await inv.locator('[data-tag-filter]', { hasText: 'Carwash chemicals' }).click();
+      await page.waitForFunction(() => document.querySelectorAll('#view-inventory [data-sheet] tbody tr[data-item]').length === 1);
+      assert.equal(await invRow('Snow foam').count(), 1);
+      await inv.locator('[data-tag-filter=""]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#view-inventory [data-sheet] tbody tr[data-item]').length === 3);
+      await inv.locator('[data-search]').fill('micro');
+      await page.waitForFunction(() => document.querySelectorAll('#view-inventory [data-sheet] tbody tr[data-item]').length === 1);
+      await inv.locator('[data-search]').fill('');
+      await page.waitForFunction(() => document.querySelectorAll('#view-inventory [data-sheet] tbody tr[data-item]').length === 3);
+    });
+
+    await step('inventory sheet: edit cells like Excel, a count records usage', async () => {
+      // Type on a cell to replace it, Enter saves and moves down (sorted by name: Microfiber → Snow foam).
+      await invCell('Microfiber 40x40', 'reorder_level').click();
+      await page.keyboard.type('12');
+      await page.keyboard.press('Enter');
+      await expectToast(/Saved/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Microfiber'))?.querySelector('td[data-field="reorder_level"]').textContent.trim() === '12');
+      const focused = await page.evaluate(() => ({ field: document.activeElement.dataset.field, row: document.activeElement.closest('tr')?.textContent }));
+      assert.equal(focused.field, 'reorder_level', 'Enter moves to the cell below');
+      assert.match(focused.row, /Snow foam/);
+      // Escape cancels an edit; arrow keys move between cells.
+      await page.keyboard.type('99');
+      await page.keyboard.press('Escape');
+      assert.equal(await cellText('Snow foam', 'reorder_level'), '1');
+      await page.keyboard.press('ArrowLeft');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.field), 'stock');
+      await page.keyboard.press('ArrowUp');
+      assert.match(await page.evaluate(() => document.activeElement.closest('tr').textContent), /Microfiber/);
+
+      // The stock column records a count with a reason, never just overwrites the number.
+      await invCell('Snow foam', 'stock').click();
+      await page.keyboard.type('2.5');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('#modal[open] [data-c="reason"]');
+      assert.equal(await page.inputValue('#modal [data-c="reason"]'), 'used');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /1\.5 gal used/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Count saved/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Snow foam'))?.querySelector('td[data-field="stock"]').textContent.trim() === '2.5');
+
+      // Tags are edited from the tags cell.
+      await invCell('Snow foam', 'tags').dblclick();
+      await page.waitForSelector('#modal[open] [data-tag-pick]');
+      await page.locator('#modal [data-tag-pick]', { hasText: 'Detailing chemicals' }).locator('input').check();
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Saved/);
+      await page.waitForFunction(() => /Detailing chemicals/.test([...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Snow foam'))?.querySelector('td[data-field="tags"]').textContent || ''));
+    });
+
+    await step('inventory: receive, history, cards view, CSV export', async () => {
+      await invRow('Engine oil 1L').locator('[data-act="receive"]').click();
       await page.fill('#modal [data-r="quantity"]', '12');
       await page.fill('#modal [data-r="unit_cost"]', '300');
+      await page.selectOption('#modal [data-r="paid_from"]', 'none');
       await page.click('#modal [data-confirm]');
       await expectToast(/Stock received/);
-      await page.waitForFunction(() => /\b12\b/.test([...document.querySelectorAll('#view-parts [data-parts] tr')]
-        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent || ''));
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Engine oil'))?.querySelector('td[data-field="stock"]').textContent.trim() === '12');
+      assert.match(await inv.locator('[data-total-value]').textContent(), /₱/, 'stock value total for the owner');
+
+      await invRow('Snow foam').locator('[data-act="history"]').click();
+      await page.waitForSelector('#modal[open] .history-entry');
+      assert.match(await page.textContent('#modal .history-list'), /Used[\s\S]*-1\.5 gal[\s\S]*Received[\s\S]*\+4 gal/);
+      await page.click('#modal [data-close]');
+
+      await inv.locator('[data-mode="cards"]').click();
+      await inv.locator('[data-cards] .inv-card', { hasText: 'Snow foam' }).waitFor();
+      assert.equal(await inv.locator('[data-sheet]').isVisible(), false);
+      await shot('07c-inventory-cards');
+      await inv.locator('[data-mode="sheet"]').click();
+      await inv.locator('[data-sheet]').waitFor();
+
+      const [csv] = await Promise.all([page.waitForEvent('download'), inv.locator('[data-export]').click()]);
+      assert.match(csv.suggestedFilename(), /^Inventory_\d{4}-\d{2}-\d{2}\.csv$/);
+      const text = fs.readFileSync(await csv.path(), 'utf8');
+      assert.ok(text.startsWith('﻿'), 'Excel-friendly CSV');
+      assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Avg cost,Stock,Reorder at,Value/);
+      assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,300,12,2,3600/);
+      await shot('07c-inventory');
+    });
+
+    await step('parts: only Auto Parts items, sold over the counter', async () => {
+      await page.click('#nav [data-view="parts"]');
+      const parts = page.locator('#view-parts');
+      const row = parts.locator('[data-parts] tr', { hasText: 'Engine oil 1L' });
+      await row.waitFor();
+      assert.equal(await parts.locator('[data-parts] tr', { hasText: 'Snow foam' }).count(), 0, 'supplies are not on the Parts tab');
+      assert.match(await row.locator('[data-stock]').textContent(), /\b12\b/);
 
       await parts.locator('[data-counter-date]').fill('2026-09-21');
       await parts.locator('[data-counter-date]').dispatchEvent('change');
@@ -1076,7 +1171,7 @@ async function launch() {
       const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
       assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
-      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts & Inventory', 'EOD Closing', 'Pricing Matrix']);
+      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix']);
       assert.ok(await page.locator('.theme-switch').isVisible(), 'staff can pick a theme too');
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
@@ -1092,8 +1187,24 @@ async function launch() {
       await page.locator('#view-parts [data-counter-date]').fill('2026-09-21');
       await page.locator('#view-parts [data-counter-date]').dispatchEvent('change');
       await page.locator('#view-parts [data-counter] tr', { hasText: 'PC-092126-001' }).waitFor();
-      assert.equal(await page.locator('#view-parts [data-new-part]').isVisible(), false);
       assert.equal(await page.locator('#view-parts thead th', { hasText: /cost/i }).count(), 0, 'staff must not see part costs');
+      // Staff see the inventory without costs and record counts, but cannot change items.
+      await page.click('#nav [data-view="inventory"]');
+      await invRow('Microfiber 40x40').waitFor();
+      assert.equal(await inv.locator('[data-sheet] thead th', { hasText: /cost|value/i }).count(), 0, 'staff must not see costs');
+      assert.equal(await inv.locator('[data-paste]').isVisible(), false);
+      assert.equal(await inv.locator('[data-act="receive"]').count(), 0);
+      await invCell('Microfiber 40x40', 'price').click();
+      await page.keyboard.type('5');
+      assert.equal(await page.locator('#view-inventory td[data-field="price"] input').count(), 0, 'staff cannot edit prices');
+      await invCell('Microfiber 40x40', 'stock').click();
+      await page.keyboard.type('20');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('#modal[open] [data-c="reason"]');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Count saved/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Microfiber'))?.querySelector('td[data-field="stock"]').textContent.trim() === '20');
       await page.goto(`${url}/#settings`);
       await page.waitForSelector('#view-carwash.active');
       await shot('11-staff-daily');
@@ -1112,6 +1223,12 @@ async function launch() {
         .filter(el => el.offsetParent).map(el => `${el.textContent.trim() || el.getAttribute('aria-label')} ${Math.round(el.getBoundingClientRect().height)}px`)
         .filter(s => parseInt(s.split(' ').pop(), 10) < 44));
       assert.deepEqual(short, [], 'buttons shorter than 44px on mobile');
+      // Inventory: the sheet scrolls inside its own box; the page never scrolls sideways.
+      await page.click('#nav [data-view="inventory"]');
+      await invRow('Snow foam').waitFor();
+      const invOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(invOverflow <= 1, `inventory scrolls sideways by ${invOverflow}px on mobile`);
+      await shot('12b-mobile-inventory');
       // Payroll (owner): the action buttons, including the sign-off sheet, fit the phone width.
       await page.click('#signout-btn');
       await signIn('owner@sandbox');

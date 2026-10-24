@@ -196,3 +196,14 @@
 @media (prefers-contrast:more){
   :root[data-theme="editorial"]{--muted:#4A4946;--border:#BDBCB8;}
 }
+
+/* Inventory tag colours: darker inks so tag names stay readable on white paper (4.5:1 or better). */
+:root[data-theme="editorial"] .c-slate{--tag:#56565a;}
+:root[data-theme="editorial"] .c-red{--tag:#b0262d;}
+:root[data-theme="editorial"] .c-orange{--tag:#9a4b05;}
+:root[data-theme="editorial"] .c-amber{--tag:#7a5c00;}
+:root[data-theme="editorial"] .c-green{--tag:#1d6b34;}
+:root[data-theme="editorial"] .c-teal{--tag:#0b6577;}
+:root[data-theme="editorial"] .c-blue{--tag:#1f56b0;}
+:root[data-theme="editorial"] .c-violet{--tag:#6236b0;}
+:root[data-theme="editorial"] .c-pink{--tag:#a3285f;}
