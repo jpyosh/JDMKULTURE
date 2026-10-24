@@ -1,6 +1,7 @@
 import { $, api, esc, state, setTokenProvider, toast, ApiError, startClock } from './ui.js';
 import { installDatePicker } from './components/datepicker.js';
 import { installTimePicker } from './components/timepicker.js';
+import { installThemeSwitch } from './theme.js';
 import carwash from './views/carwash.js';
 import { detailing, tintPpf } from './views/running.js';
 import parts from './views/parts.js';
@@ -178,5 +179,6 @@ window.addEventListener('unhandledrejection', event => {
 
 installDatePicker();
 installTimePicker();
+installThemeSwitch();
 startClock($('[data-clock]'));
 init();

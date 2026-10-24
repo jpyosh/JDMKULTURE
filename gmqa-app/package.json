@@ -1,7 +1,7 @@
 {
-  "name": "gm-qa-ops-console",
+  "name": "gm-operations-console",
   "version": "2.0.0",
-  "description": "JDM Kulture GM QA - Carwash Ops Console (Daily Log, Pricing Matrix, EOD Reconciliation, Payroll)",
+  "description": "JDM Kulture GM Operations Console (Daily Log, Pricing Matrix, EOD Reconciliation, Payroll)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

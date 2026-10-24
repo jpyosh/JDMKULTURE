@@ -114,7 +114,7 @@ function render() {
   editing = null;
   const low = items.filter(i => i.low);
   $('[data-low]', root).innerHTML = low.length
-    ? `<div class="banner">Low stock: ${low.map(i => `<b>${esc(i.name)}</b> (${qty(i.stock)} ${esc(i.unit)})`).join(', ')}. Time to reorder.</div>` : '';
+    ? `<div class="banner"><span>Low stock: ${low.map(i => `<b>${esc(i.name)}</b> (${qty(i.stock)} ${esc(i.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
   $('[data-tag-filters]', root).innerHTML = [`<button type="button" class="filter-chip ${filter.tag ? '' : 'active'}" data-tag-filter="">All <span>${items.length}</span></button>`,
     ...tags.map(t => `<button type="button" class="filter-chip ${Number(filter.tag) === t.id ? 'active' : ''}" data-tag-filter="${t.id}">
       <i class="dot c-${esc(t.color)}"></i>${esc(t.name)} <span>${items.filter(i => i.tags.includes(t.id)).length}</span></button>`)].join('');

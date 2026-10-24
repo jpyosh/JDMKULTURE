@@ -5,9 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#000000">
-<title>GM QA — JDM Kulture Ops Console</title>
+<title>GM Operations Console — JDM Kulture</title>
 <link rel="icon" href="jdm-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="themes/telemetry.css">
+<link rel="stylesheet" href="themes/editorial.css">
+<script>
+  // The look (Classic, Telemetry, Editorial; see js/theme.js) is applied before the first paint.
+  (function () {
+    var root = document.documentElement, theme = root.getAttribute('data-default-theme') || 'classic';
+    try { theme = localStorage.getItem('gmops-theme') || theme; } catch (e) { /* storage blocked */ }
+    if (['classic', 'telemetry', 'editorial'].indexOf(theme) < 0) theme = 'classic';
+    root.setAttribute('data-theme', theme);
+  })();
+</script>
 </head>
 <body>
 
@@ -15,7 +26,7 @@
 <div id="gate" class="gate">
   <div class="gate-card">
     <div class="brand-lockup"><img src="assets/jdm-kulture-logo.png" onerror="this.onerror=null;this.src='jdm-mark.svg'" alt="JDM Kulture">
-      <div class="wordmark"><div class="name">JDM KULTURE</div><div class="sub">GM QA — Ops Console</div></div></div>
+      <div class="wordmark"><div class="name">JDM KULTURE</div><div class="sub">GM Operations Console</div></div></div>
     <form id="login-form" class="login-form" hidden>
       <label for="login-email">Email</label>
       <input type="email" id="login-email" autocomplete="email" required>
@@ -32,12 +43,20 @@
   <nav class="rail">
     <div class="wordmark">
       <div class="brand-lockup"><img src="assets/jdm-kulture-logo.png" onerror="this.onerror=null;this.src='jdm-mark.svg'" alt="JDM Kulture">
-        <div><div class="name">JDM KULTURE</div><div class="sub">GM QA — Ops Console</div></div></div>
+        <div><div class="name">JDM KULTURE</div><div class="sub">GM Operations Console</div></div></div>
       <div class="shop-clock" data-clock title="Shop time (Philippines)"></div>
     </div>
     <div class="auth-panel">
       <div class="auth-status"><span class="status-dot online"></span><span id="user-role"></span></div>
       <div class="auth-email" id="user-email"></div>
+      <div class="theme-switch">
+        <span class="theme-label">Theme <b data-theme-name>Classic</b></span>
+        <div class="theme-options" role="radiogroup" aria-label="Theme">
+          <button type="button" role="radio" aria-checked="true" aria-label="Classic" title="Classic" data-theme-choice="classic"><span class="swatch" aria-hidden="true"></span></button>
+          <button type="button" role="radio" aria-checked="false" aria-label="Telemetry" title="Telemetry" data-theme-choice="telemetry" tabindex="-1"><span class="swatch" aria-hidden="true"></span></button>
+          <button type="button" role="radio" aria-checked="false" aria-label="Editorial" title="Editorial" data-theme-choice="editorial" tabindex="-1"><span class="swatch" aria-hidden="true"></span></button>
+        </div>
+      </div>
       <button class="btn ghost auth-signout" id="signout-btn" type="button">Sign out</button>
     </div>
     <div class="nav" id="nav" aria-label="Main navigation"></div>

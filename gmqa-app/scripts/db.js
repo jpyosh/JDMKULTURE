@@ -166,7 +166,7 @@ async function main() {
         break;
       }
       case 'users': {
-        console.log('App users (who may use GM QA):');
+        console.log('App users (who may use GM Operations Console):');
         console.table((await driver.query('select email, role, display_name, active, user_id is not null as has_logged_in from public.app_users order by email')).rows);
         try {
           console.log('Supabase Auth accounts (who can sign in):');

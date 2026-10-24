@@ -1,0 +1,221 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* GM Operations Console — theme: Telemetry (Industrial Brutalism / Tactical Telemetry, dark).
+   Active when <html data-theme="telemetry"> (sidebar → Theme, see js/theme.js). Every rule is scoped to
+   that attribute, so this file only restyles the same screens; it never changes what they do.
+   Deactivated-CRT black, white phosphor, one hazard red, JetBrains Mono uppercase telemetry, Inter Black
+   headers, square corners, 1px grid lines, scanlines. Motion is mechanical and stepped, like hardware.
+   Deliberate exceptions to the one-accent rule, for meaning: amber stays the caution colour (unpaid,
+   commission, costs) and terminal green marks only the online dot. Text contrast is at least 4.5:1. */
+
+:root[data-theme="telemetry"]{color-scheme:dark;
+  --bg:#0A0A0A;                /* deactivated CRT, not pure black */
+  --surface:#121212;
+  --surface-alt:#1A1A1A;
+  --surface-3:#262626;
+  --border:#333333;            /* 1px grid lines */
+  --line-strong:#5C5C5C;
+  --fill:#0A0A0A;
+  --text:#EAEAEA;              /* white phosphor, 15.5:1 */
+  --muted:#A3A3A3;             /* 7.4:1 */
+  --faint:#6E6E6E;             /* placeholders only */
+  --accent:#E61919;            /* hazard red fill; white text on it 4.6:1 */
+  --accent-hover:#C41212;      /* darker on hover keeps white text at 6:1 */
+  --accent-text:#FF2A2A;       /* red as text, 5.0:1 */
+  --accent-soft:#240A0A;
+  --accent-line:#E61919;
+  --green:#EAEAEA;             /* "good" is plain phosphor; the words carry the meaning */
+  --green-soft:transparent;
+  --blue:#A3A3A3;
+  --blue-soft:transparent;
+  --orange:#FFB340;            /* caution, kept on purpose */
+  --orange-soft:transparent;
+  --phosphor-green:#4AF626;    /* one element only: the online dot */
+  --font:"JetBrains Mono", ui-monospace, Consolas, monospace;
+  --mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+  --display:"Inter", "Segoe UI", system-ui, sans-serif;
+  --brand:"Inter", "Segoe UI", system-ui, sans-serif;
+  --tele:.12em;
+  --r-sm:0; --r:0; --r-lg:0; --r-xl:0;
+  --shadow:none;
+  --shadow-pop:none;
+  --glass:#0A0A0A;}
+/* ---------- geometry: every corner is 90 degrees ---------- */
+:root[data-theme="telemetry"] *,:root[data-theme="telemetry"] *::before,:root[data-theme="telemetry"] *::after{border-radius:0 !important;}
+/* ---------- substrate: blueprint grid, scanlines, grain ---------- */
+:root[data-theme="telemetry"]{background:#0A0A0A;}
+:root[data-theme="telemetry"] body{background-color:var(--bg);
+  background-image:linear-gradient(#141414 1px,transparent 1px),linear-gradient(90deg,#141414 1px,transparent 1px);
+  background-size:48px 48px;
+  font-size:13px;letter-spacing:0;font-feature-settings:normal;}
+:root[data-theme="telemetry"] body::after{content:"";position:fixed;inset:0;z-index:2147483000;pointer-events:none;
+  background-image:
+    repeating-linear-gradient(0deg,transparent 0,transparent 2px,rgba(0,0,0,.16) 2px,rgba(0,0,0,.16) 3px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E");}
+:root[data-theme="telemetry"] ::selection{background:var(--accent);color:#fff;}
+:root[data-theme="telemetry"] :focus-visible{outline:2px solid var(--accent-text);outline-offset:2px;}
+/* ---------- type ---------- */
+:root[data-theme="telemetry"] h1,:root[data-theme="telemetry"] h2,:root[data-theme="telemetry"] h3{font-family:var(--display);}
+:root[data-theme="telemetry"] .view-header{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:22px;}
+:root[data-theme="telemetry"] .view-header h1{font-weight:900;text-transform:uppercase;letter-spacing:-.045em;line-height:.9;font-size:30px;}
+:root[data-theme="telemetry"] .view-header h1::before{content:"///";color:var(--accent-text);letter-spacing:-.08em;margin-right:.18em;}
+:root[data-theme="telemetry"] .view-header .desc{font-family:var(--font);font-size:12px;letter-spacing:.02em;margin-top:10px;}
+:root[data-theme="telemetry"] .card h2,:root[data-theme="telemetry"] .breakdown-card h2,:root[data-theme="telemetry"] .section-header h2,:root[data-theme="telemetry"] .weekly-section-header h2{font-family:var(--font);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:var(--tele);}
+:root[data-theme="telemetry"] .card h2::before,:root[data-theme="telemetry"] .breakdown-card h2::before,:root[data-theme="telemetry"] .section-header h2::before{content:"[ ";color:var(--accent-text);}
+:root[data-theme="telemetry"] .card h2::after,:root[data-theme="telemetry"] .breakdown-card h2::after,:root[data-theme="telemetry"] .section-header h2::after{content:" ]";color:var(--accent-text);}
+:root[data-theme="telemetry"] .eyebrow,:root[data-theme="telemetry"] .pl-section,:root[data-theme="telemetry"] .entry-group-title,:root[data-theme="telemetry"] .guide-pill{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10px;}
+:root[data-theme="telemetry"] .hint{font-size:12px;}
+/* ---------- frame ---------- */
+:root[data-theme="telemetry"] .rail{background:#0A0A0A;-webkit-backdrop-filter:none;backdrop-filter:none;border-right:1px solid var(--border);border-bottom-color:var(--border);}
+:root[data-theme="telemetry"] .brand-lockup img{border:1px solid var(--line-strong);background:#fff;}
+:root[data-theme="telemetry"] .wordmark .name{font-family:var(--brand);font-weight:900;text-transform:uppercase;letter-spacing:-.04em;line-height:.9;}
+:root[data-theme="telemetry"] .wordmark .name::after{content:"®";font-size:.42em;vertical-align:super;color:var(--accent-text);margin-left:2px;letter-spacing:0;}
+:root[data-theme="telemetry"] .wordmark .sub{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:9.5px;margin-top:6px;}
+:root[data-theme="telemetry"] .shop-clock{font-family:var(--font);text-transform:uppercase;letter-spacing:.08em;}
+:root[data-theme="telemetry"] .shop-clock .clock-time{font-weight:700;letter-spacing:.02em;}
+:root[data-theme="telemetry"] .nav button{font-family:var(--font);text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:500;opacity:1;color:var(--muted);transition:none;}
+:root[data-theme="telemetry"] .nav button:hover{background:#161616;color:var(--text);}
+:root[data-theme="telemetry"] .nav button:active{background:#1F1F1F;}
+:root[data-theme="telemetry"] .nav button.active{background:var(--accent);color:#fff;}
+:root[data-theme="telemetry"] .nav-icon{color:var(--faint);stroke-width:1.4;}
+:root[data-theme="telemetry"] .nav button:hover .nav-icon{color:var(--text);}
+:root[data-theme="telemetry"] .auth-status{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10px;}
+:root[data-theme="telemetry"] .status-dot{width:8px;height:8px;}
+:root[data-theme="telemetry"] .status-dot.online{background:var(--phosphor-green);box-shadow:none;}
+:root[data-theme="telemetry"] .auth-email{font-family:var(--font);font-size:12px;}
+:root[data-theme="telemetry"] .theme-label{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10px;}
+:root[data-theme="telemetry"] .theme-options button{box-shadow:0 0 0 1px var(--border);transition:none;}
+:root[data-theme="telemetry"] .theme-options button:hover{box-shadow:0 0 0 1px var(--text);}
+:root[data-theme="telemetry"] .theme-options button[aria-checked="true"]{box-shadow:0 0 0 2px var(--accent-text);}
+:root[data-theme="telemetry"] .main::before{content:"UNIT / GM-OPS-01  ───  JDM KULTURE®  ───  SHOP CONSOLE  ───  PHT / UTC+8  ───  ©";
+  display:block;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid var(--border);
+  font-family:var(--font);font-size:10px;letter-spacing:.14em;color:var(--faint);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* ---------- controls ---------- */
+:root[data-theme="telemetry"] input[type=date],:root[data-theme="telemetry"] input[type=text],:root[data-theme="telemetry"] input[type=number],:root[data-theme="telemetry"] input[type=time],:root[data-theme="telemetry"] input[type=email],:root[data-theme="telemetry"] input[type=password],:root[data-theme="telemetry"] select,:root[data-theme="telemetry"] textarea{background-color:var(--bg);border:1px solid var(--border);font-family:var(--font);font-size:13px;letter-spacing:0;transition:none;}
+:root[data-theme="telemetry"] input:hover,:root[data-theme="telemetry"] select:hover,:root[data-theme="telemetry"] textarea:hover{background-color:var(--bg);border-color:var(--line-strong);}
+:root[data-theme="telemetry"] input:focus,:root[data-theme="telemetry"] select:focus,:root[data-theme="telemetry"] textarea:focus{border-color:var(--accent-text);box-shadow:inset 0 0 0 1px var(--accent-text);}
+:root[data-theme="telemetry"] select option,:root[data-theme="telemetry"] select optgroup{background-color:#121212;}
+:root[data-theme="telemetry"] input[type=checkbox]{accent-color:var(--accent);}
+:root[data-theme="telemetry"] button.btn{font-family:var(--font);text-transform:uppercase;letter-spacing:.1em;font-size:12px;font-weight:700;border:1px solid var(--accent);transition:none;}
+:root[data-theme="telemetry"] button.btn:hover{background:var(--accent-hover);border-color:var(--accent-hover);}
+:root[data-theme="telemetry"] button.btn:active{transform:none;background:var(--text);border-color:var(--text);color:#0A0A0A;}
+:root[data-theme="telemetry"] button.btn.ghost{background:transparent;border-color:var(--line-strong);color:var(--text);}
+:root[data-theme="telemetry"] button.btn.ghost:hover{background:#161616;border-color:var(--text);}
+:root[data-theme="telemetry"] button.btn.ghost:active{background:var(--text);color:#0A0A0A;}
+:root[data-theme="telemetry"] button.btn.danger{background:transparent;border-color:var(--accent-text);color:var(--accent-text);}
+:root[data-theme="telemetry"] button.btn.danger:hover{background:var(--accent);border-color:var(--accent);color:#fff;}
+:root[data-theme="telemetry"] button.btn.small{font-size:11px;letter-spacing:.08em;}
+:root[data-theme="telemetry"] button.icon-btn{border:1px solid transparent;}
+:root[data-theme="telemetry"] button.icon-btn:hover{background:transparent;border-color:var(--line-strong);}
+:root[data-theme="telemetry"] .check,:root[data-theme="telemetry"] .inline-label,:root[data-theme="telemetry"] .date-range-picker label,:root[data-theme="telemetry"] .entry-grid label,:root[data-theme="telemetry"] .form-grid label,:root[data-theme="telemetry"] .entry-group label,:root[data-theme="telemetry"] .paid-toggle{font-family:var(--font);text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;}
+:root[data-theme="telemetry"] .segmented{background:transparent;border:1px solid var(--border);padding:0;gap:0;}
+:root[data-theme="telemetry"] .segmented button{font-family:var(--font);text-transform:uppercase;letter-spacing:.1em;font-size:11px;padding:7px 14px;border-right:1px solid var(--border);transition:none;}
+:root[data-theme="telemetry"] .segmented button:last-child{border-right:0;}
+:root[data-theme="telemetry"] .segmented button:hover{background:#161616;}
+:root[data-theme="telemetry"] .segmented button.active{background:var(--text);color:#0A0A0A;box-shadow:none;}
+/* ---------- compartments ---------- */
+:root[data-theme="telemetry"] .card,:root[data-theme="telemetry"] .breakdown-card{position:relative;border:1px solid var(--border);}
+:root[data-theme="telemetry"] .card::before,:root[data-theme="telemetry"] .breakdown-card::before{content:"+";position:absolute;top:-8px;left:-5px;font-family:var(--font);font-size:13px;line-height:1;color:var(--line-strong);pointer-events:none;}
+/* ruled like a ledger: every cell draws its right and bottom rule, so an empty slot stays empty */
+:root[data-theme="telemetry"] .metrics-row,:root[data-theme="telemetry"] .weekly-summary,:root[data-theme="telemetry"] .pricing-summary{gap:0;background:none;border-top:1px solid var(--border);border-left:1px solid var(--border);}
+:root[data-theme="telemetry"] .metric,:root[data-theme="telemetry"] .weekly-stat,:root[data-theme="telemetry"] .summary-card{border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
+:root[data-theme="telemetry"] .metric,:root[data-theme="telemetry"] .weekly-stat,:root[data-theme="telemetry"] .summary-card{background:var(--bg);}
+:root[data-theme="telemetry"] .metric .label,:root[data-theme="telemetry"] .weekly-stat-label,:root[data-theme="telemetry"] .summary-card span{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10px;color:var(--muted);}
+:root[data-theme="telemetry"] .metric .value,:root[data-theme="telemetry"] .summary-card strong,:root[data-theme="telemetry"] .weekly-stat strong{font-family:var(--font);font-weight:700;letter-spacing:-.03em;}
+:root[data-theme="telemetry"] .summary-card.accent{background:var(--accent);}
+:root[data-theme="telemetry"] .summary-card.accent span,:root[data-theme="telemetry"] .summary-card.accent strong{color:#fff;}
+:root[data-theme="telemetry"] .banner{border:1px solid var(--orange);background:transparent;font-family:var(--font);font-size:12px;}
+:root[data-theme="telemetry"] .banner.ok{border-color:var(--text);}
+:root[data-theme="telemetry"] .empty-state{font-family:var(--font);text-transform:uppercase;letter-spacing:.1em;font-size:11px;background:transparent;}
+:root[data-theme="telemetry"] .entry-group{background:transparent;box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="telemetry"] .line-editor{border:1px solid var(--border);background:var(--bg);box-shadow:none;}
+:root[data-theme="telemetry"] .line-row{border-bottom:1px solid var(--border);}
+:root[data-theme="telemetry"] .editor-totals{font-family:var(--font);text-transform:uppercase;letter-spacing:.06em;font-size:11px;}
+:root[data-theme="telemetry"] .editor-totals .grand b{font-size:22px;letter-spacing:-.03em;}
+:root[data-theme="telemetry"] .pill,:root[data-theme="telemetry"] .kind-pill,:root[data-theme="telemetry"] .status-pill{background:transparent !important;border:1px solid currentColor;padding:1px 6px;
+  font-family:var(--font);text-transform:uppercase;letter-spacing:.08em;font-size:10px;font-weight:700;}
+:root[data-theme="telemetry"] .item-chip{background:transparent;border:1px solid var(--border);font-family:var(--font);font-size:11px;}
+:root[data-theme="telemetry"] .item-chip.addon{box-shadow:none;border-style:dashed;}
+/* ---------- tables ---------- */
+:root[data-theme="telemetry"] .table-wrap{border:1px solid var(--border);box-shadow:none;}
+:root[data-theme="telemetry"] .jobs-table th,:root[data-theme="telemetry"] .daily-table th,:root[data-theme="telemetry"] .matrix-table th,:root[data-theme="telemetry"] .payroll-table th,:root[data-theme="telemetry"] .dept-table th,:root[data-theme="telemetry"] .funds-table th,:root[data-theme="telemetry"] .parts-table th,:root[data-theme="telemetry"] .weekly-table thead th{font-family:var(--font);text-transform:uppercase;letter-spacing:.1em;font-size:10px;font-weight:700;border-bottom:1px solid var(--line-strong);}
+:root[data-theme="telemetry"] .jobs-table td,:root[data-theme="telemetry"] .daily-table td,:root[data-theme="telemetry"] .matrix-table td,:root[data-theme="telemetry"] .payroll-table td,:root[data-theme="telemetry"] .dept-table td,:root[data-theme="telemetry"] .funds-table td,:root[data-theme="telemetry"] .parts-table td,:root[data-theme="telemetry"] .simple-table td,:root[data-theme="telemetry"] .weekly-table td{border-bottom:1px solid var(--border);}
+:root[data-theme="telemetry"] tbody tr{transition:none;}
+:root[data-theme="telemetry"] tbody tr:hover td,:root[data-theme="telemetry"] .jobs-table tbody tr:hover td:first-child{background:#171717;}
+:root[data-theme="telemetry"] .matrix-table .group-head{background:#171717;}
+:root[data-theme="telemetry"] .weekly-table .weekly-total td,:root[data-theme="telemetry"] .history-entry{background:#141414;}
+:root[data-theme="telemetry"] .jo-number{color:var(--text);letter-spacing:.02em;}
+/* ---------- modal, toast, sign-in ---------- */
+:root[data-theme="telemetry"] .modal::backdrop{background:rgba(10,10,10,.86);-webkit-backdrop-filter:none;backdrop-filter:none;}
+:root[data-theme="telemetry"] .modal-card{border:1px solid var(--text);border-top:6px solid var(--accent);}
+:root[data-theme="telemetry"] .modal-header h2{font-weight:900;text-transform:uppercase;letter-spacing:-.035em;line-height:.95;font-size:26px;}
+:root[data-theme="telemetry"] .modal-header p{font-family:var(--font);font-size:12px;}
+:root[data-theme="telemetry"] .review-details{gap:1px;background:var(--border);border:1px solid var(--border);}
+:root[data-theme="telemetry"] .review-detail{background:var(--bg);}
+:root[data-theme="telemetry"] .review-detail .label{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10px;}
+:root[data-theme="telemetry"] .app-toast{background:#0A0A0A;border:1px solid var(--text);-webkit-backdrop-filter:none;backdrop-filter:none;font-family:var(--font);text-transform:uppercase;letter-spacing:.08em;font-size:12px;}
+:root[data-theme="telemetry"] .app-toast::before{content:">>> ";color:var(--accent-text);}
+:root[data-theme="telemetry"] .app-toast.error{background:var(--accent);border-color:var(--accent);}
+:root[data-theme="telemetry"] .app-toast.error::before{color:#fff;}
+:root[data-theme="telemetry"] .gate{background:var(--bg);}
+:root[data-theme="telemetry"] .gate-card{position:relative;border:1px solid var(--text);padding-top:0;overflow:hidden;}
+:root[data-theme="telemetry"] .gate-card::before{content:"";display:block;height:12px;margin:0 -28px;
+  background:repeating-linear-gradient(-45deg,var(--accent) 0,var(--accent) 10px,#0A0A0A 10px,#0A0A0A 20px);}
+:root[data-theme="telemetry"] .gate-card::after{content:"AUTH / OPERATOR ACCESS  ─  ®";text-align:center;font-family:var(--font);font-size:9.5px;letter-spacing:var(--tele);color:var(--faint);}
+:root[data-theme="telemetry"] .gate-card .login-form label{font-family:var(--font);text-transform:uppercase;letter-spacing:var(--tele);font-size:10.5px;}
+:root[data-theme="telemetry"] .gate-message{font-family:var(--font);font-size:12px;}
+:root[data-theme="telemetry"] .guide,:root[data-theme="telemetry"] .help-card{border:1px solid var(--border);}
+:root[data-theme="telemetry"] .datepicker,:root[data-theme="telemetry"] .timepicker{border:1px solid var(--text);box-shadow:none;}
+:root[data-theme="telemetry"] .dp-title,:root[data-theme="telemetry"] .dp-weekday,:root[data-theme="telemetry"] .dp-link{font-family:var(--font);text-transform:uppercase;letter-spacing:.08em;}
+:root[data-theme="telemetry"] .tp-col{background:#141414;}
+/* ---------- motion: mechanical, stepped, like hardware ---------- */
+@keyframes tele-scan{from{clip-path:inset(0 0 100% 0);}to{clip-path:inset(0 0 0 0);}}
+@keyframes tele-blink{50%{opacity:0;}}
+@keyframes tele-flicker{0%{opacity:0;}30%{opacity:1;}45%{opacity:.3;}60%{opacity:1;}}
+@keyframes tele-power{0%{opacity:0;transform:scale(.6,.01);}35%{opacity:1;transform:scale(1,.01);}100%{opacity:1;transform:none;}}
+@keyframes tele-strobe{0%{opacity:0;}50%{opacity:1;}75%{opacity:.6;}100%{opacity:1;}}
+/* screens draw in top to bottom like a CRT sweep; the title cursor blinks four times and stays */
+:root[data-theme="telemetry"] .view.active{animation:tele-scan .26s steps(8,end) backwards;}
+:root[data-theme="telemetry"] .view-header h1::after{content:"";display:inline-block;width:.36em;height:.68em;margin-left:.14em;background:var(--accent-text);animation:tele-blink 1.06s steps(1,end) 4;}
+/* refreshed figures flicker in, so a change in the numbers is noticed */
+:root[data-theme="telemetry"] .metric .value,:root[data-theme="telemetry"] .summary-card strong,:root[data-theme="telemetry"] .weekly-stat strong{animation:tele-flicker .34s steps(1,end) backwards;}
+/* dialogs switch on like a tube: a bright line, then the picture */
+:root[data-theme="telemetry"] .modal[open]{animation:tele-power .24s steps(6,end) both;}
+:root[data-theme="telemetry"] .modal[open]::backdrop{animation:tele-strobe .16s steps(1,end) both;}
+:root[data-theme="telemetry"] .datepicker,:root[data-theme="telemetry"] .timepicker{animation:tele-scan .16s steps(5,end) backwards;}
+:root[data-theme="telemetry"] .app-toast{transition:opacity .15s steps(3,end),transform .15s steps(3,end);}
+:root[data-theme="telemetry"] .app-toast.show::after{content:"_";margin-left:.35em;animation:tele-blink .9s steps(1,end) infinite;}
+:root[data-theme="telemetry"] .nav button.active::after{content:"<<<";margin-left:auto;font-size:10px;letter-spacing:0;animation:tele-blink .24s steps(1,end) 2;}
+/* switching to this theme wipes it in like a scan */
+:root[data-theme="telemetry"]::view-transition-old(root){animation:none;}
+:root[data-theme="telemetry"]::view-transition-new(root){animation:tele-scan .36s steps(10,end) both;}
+/* ---------- regular screens ---------- */
+@media (min-width:701px){
+  :root[data-theme="telemetry"] .view-header h1{font-size:clamp(40px,5.4vw,78px);line-height:.88;}
+  :root[data-theme="telemetry"] .main::before{margin-bottom:28px;}
+  :root[data-theme="telemetry"] .rail{gap:18px;}
+  :root[data-theme="telemetry"] .wordmark .name{font-size:22px;}
+  :root[data-theme="telemetry"] .shop-clock{display:grid;grid-template-columns:auto 1fr;align-items:baseline;gap:2px 8px;margin-top:14px;padding:7px 8px;border:1px solid var(--border);font-size:10px;}
+  :root[data-theme="telemetry"] .shop-clock::before{content:"[ SHOP TIME / PHT ]";grid-column:1/-1;color:var(--faint);font-size:9px;letter-spacing:var(--tele);}
+  :root[data-theme="telemetry"] .shop-clock .clock-time{font-size:15px;}
+  :root[data-theme="telemetry"] .nav{gap:0;border-top:1px solid var(--border);}
+  :root[data-theme="telemetry"] .nav button{min-height:38px;padding:8px 10px;border-bottom:1px solid var(--border);}
+  :root[data-theme="telemetry"] .auth-panel{background:transparent;border:1px solid var(--border);padding:10px;}
+  :root[data-theme="telemetry"] .card,:root[data-theme="telemetry"] .breakdown-card{padding:20px;}
+  :root[data-theme="telemetry"] .metric,:root[data-theme="telemetry"] .weekly-stat,:root[data-theme="telemetry"] .summary-card{padding:14px 16px;}
+  :root[data-theme="telemetry"] .metric .value{font-size:28px;}
+  :root[data-theme="telemetry"] .gate-card .wordmark .name{font-size:30px;}
+}
+/* ---------- phones ---------- */
+@media (max-width:700px){
+  :root[data-theme="telemetry"] .nav button{background:transparent;border:1px solid var(--border);}
+  :root[data-theme="telemetry"] .nav button.active{background:var(--accent);border-color:var(--accent);}
+  :root[data-theme="telemetry"] .nav button.active::after{content:none;}
+  :root[data-theme="telemetry"] .auth-panel{background:transparent;}
+  :root[data-theme="telemetry"] .main::before{font-size:9px;}
+  :root[data-theme="telemetry"] .wordmark .name{font-size:14px;white-space:nowrap;}
+  :root[data-theme="telemetry"] .wordmark .name::after{content:none;}
+  :root[data-theme="telemetry"] .shop-clock{font-size:10px;letter-spacing:.04em;}
+  :root[data-theme="telemetry"] .modal-card::before{background:var(--line-strong);}
+}

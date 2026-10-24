@@ -1,4 +1,5 @@
-// Parts & Inventory: stock list (everyone), owner price/stock management, and over-the-counter sales.
+// Parts: the auto parts for sale (items tagged Auto Parts in Inventory), their stock, and over-the-counter
+// sales. Items, prices, deliveries and stock counts are managed on the Inventory tab.
 import { $, $$, api, esc, peso, toast, busy, todayLocal, openModal, closeModal, modalHeader, isOwner, loadCatalog, state } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
 import { itemsSummary, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
@@ -52,7 +53,7 @@ function renderParts(parts) {
   const owner = isOwner();
   const low = parts.filter(p => p.low);
   $('[data-low]', root).innerHTML = low.length
-    ? `<div class="banner">Low stock: ${low.map(p => `<b>${esc(p.name)}</b> (${p.stock} ${esc(p.unit)})`).join(', ')}. Time to reorder.</div>` : '';
+    ? `<div class="banner"><span>Low stock: ${low.map(p => `<b>${esc(p.name)}</b> (${p.stock} ${esc(p.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
   $('[data-parts]', root).innerHTML = `
     <thead><tr><th>SKU</th><th>Part</th><th class="num">Price</th><th class="num">Comm./unit</th>${owner ? '<th class="num">Avg cost</th>' : ''}
       <th class="num">Stock</th><th class="num">Reorder at</th></tr></thead>

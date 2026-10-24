@@ -10,6 +10,54 @@ const { start } = require('./sandbox');
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';
+// Parses a computed 'rgb(r, g, b)' colour; amber = the caution colour (unpaid, commission, costs), not the error red.
+const colorOf = css => { const [r, g, b] = css.match(/[\d.]+/g).map(Number); return { r, g, b }; };
+const isAmber = c => c.r > 180 && c.g > 120 && c.b < 120;
+
+// What the current theme renders: colours, fonts, corners, motion and WCAG contrast of key text.
+const LOOK_PARTS = ['#view-carwash.active h1', '#view-carwash .desc', '#view-carwash .card', '#view-carwash .metric .label',
+  '#view-carwash .metric .value.amber', '#view-carwash [data-review]', '#nav button'];
+async function readLook(page) {
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForFunction(parts => parts.every(sel => document.querySelector(sel)), LOOK_PARTS);
+  return page.evaluate(() => {
+    const rgb = c => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+    const lum = c => {
+      const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+    const css = (sel, pseudo) => getComputedStyle(document.querySelector(sel), pseudo);
+    const opaque = sel => {
+      for (let el = document.querySelector(sel); el; el = el.parentElement) {
+        const bg = getComputedStyle(el).backgroundColor;
+        if (!/rgba\(.*, 0\)$|transparent/.test(bg)) return bg;
+      }
+      return getComputedStyle(document.documentElement).backgroundColor;
+    };
+    const primary = css('#view-carwash [data-review]');
+    return {
+      theme: document.documentElement.dataset.theme,
+      bg: css('body').backgroundColor,
+      font: css('body').fontFamily,
+      heading: { font: css('#view-carwash h1').fontFamily, case: css('#view-carwash h1').textTransform },
+      navFont: css('#nav button').fontFamily,
+      radius: { card: css('#view-carwash .card').borderTopLeftRadius, button: primary.borderTopLeftRadius },
+      buttonBg: primary.backgroundColor,
+      muted: contrast(css('#view-carwash .desc').color, opaque('#view-carwash .desc')),
+      label: contrast(css('#view-carwash .metric .label').color, opaque('#view-carwash .metric')),
+      button: contrast(primary.color, primary.backgroundColor),
+      text: contrast(css('#view-carwash h1').color, opaque('#view-carwash h1')),
+      caution: css('#view-carwash .metric .value.amber').color,
+      motion: {
+        view: css('#view-carwash.active').animationName,
+        header: css('#view-carwash.active > .view-header').animationName,
+        cursor: css('#view-carwash h1', '::after').animationName,
+      },
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+}
 
 async function launch() {
   for (const channel of ['msedge', 'chrome']) {
@@ -44,8 +92,14 @@ async function launch() {
       await page.goto(url);
       await page.waitForSelector('#login-form:not([hidden])');
       assert.match(await page.textContent('#gate-message'), /owner@sandbox/);
+      // The product is "GM Operations Console": no "QA" anywhere a person can see it.
+      assert.match(await page.title(), /GM Operations Console/);
+      assert.doesNotMatch(await page.title(), /\bQA\b/);
+      assert.match(await page.textContent('#gate .wordmark .sub'), /^GM Operations Console$/);
       await shot('00-gate');
       await signIn('owner@sandbox');
+      assert.match(await page.textContent('#app .rail .wordmark .sub'), /^GM Operations Console$/);
+      assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
           'Finance', 'Cash fund', 'Payroll', 'Settings']);
@@ -182,8 +236,14 @@ async function launch() {
       await daily.locator('[data-date]').dispatchEvent('change');
       await page.waitForFunction(() => document.querySelectorAll('#view-carwash [data-jobs] tr[data-id]').length === 19);
       assert.match(await daily.locator('[data-metrics]').textContent(), /Vehicles\s*19/);
+      // Scrolling the wide table sideways keeps the JO# column in view.
+      const wrap = daily.locator('.table-wrap:has(.jobs-table)');
+      const scrolled = await wrap.evaluate(el => { el.scrollLeft = 300; return el.scrollLeft; });
+      assert.ok(scrolled > 0, 'jobs table should be wide enough to scroll at 1440px');
+      const drift = await wrap.evaluate(el => el.querySelector('tr[data-id] td').getBoundingClientRect().left - el.getBoundingClientRect().left);
+      assert.ok(Math.abs(drift) <= 2, `JO# column scrolled out of view (${Math.round(drift)}px)`);
+      await wrap.evaluate(el => { el.scrollLeft = 0; });
     });
-
     await step('create a job with service + add-on + custom line', async () => {
       const editor = daily.locator('[data-editor]');
       await editor.locator('[data-f="vehicle_class"]').selectOption('M');
@@ -348,6 +408,9 @@ async function launch() {
       await eod.locator('[data-m="actual_cash"]').fill(expected);
       await eod.locator('[data-m="actual_gcash"]').fill('0');
       assert.match(await eod.locator('[data-variance]').textContent(), /✓/);
+      // Unpaid and commission need attention but are not errors: amber, not the error red.
+      const caution = colorOf(await eod.locator('[data-metrics] .value.amber').first().evaluate(el => getComputedStyle(el).color));
+      assert.ok(isAmber(caution), `unpaid/commission should read amber, got rgb(${caution.r},${caution.g},${caution.b})`);
       await eod.locator('[data-save]').click();
       await expectToast(/EOD saved/);
       await shot('06-eod');
@@ -581,6 +644,8 @@ async function launch() {
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');
+      const costs = colorOf(await page.locator('#view-reports .weekly-stat strong.amber-text').evaluate(el => getComputedStyle(el).color));
+      assert.ok(isAmber(costs), `costs should read amber, got rgb(${costs.r},${costs.g},${costs.b})`);
       await shot('08-reports');
     });
 
@@ -1012,6 +1077,94 @@ async function launch() {
       await shot('10-settings');
     });
 
+    // Picks a theme in the sidebar and waits for the switch (and its transition) to finish.
+    const pickTheme = async name => {
+      await page.click(`.theme-switch [data-theme-choice="${name}"]`);
+      await page.waitForFunction(n => document.documentElement.dataset.theme === n && !document.documentElement.classList.contains('theme-switching'), name);
+    };
+    const modalMotion = async () => {
+      await daily.locator('tr[data-id] [data-act="edit"]').first().click();
+      await page.waitForSelector('#modal[open]');
+      const name = await page.evaluate(() => getComputedStyle(document.querySelector('#modal')).animationName);
+      await page.click('#modal [data-close]');
+      await page.waitForFunction(() => !document.querySelector('#modal').open);
+      return name;
+    };
+
+    await step('themes: Classic, Telemetry and Editorial, each with its own look and motion, remembered per device', async () => {
+      await page.click('#nav [data-view="carwash"]');
+      await daily.locator('[data-date]').fill(DAY);
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForSelector('#view-carwash tr[data-id]');
+      const choices = page.locator('.theme-switch [data-theme-choice]');
+      assert.deepEqual(await choices.evaluateAll(els => els.map(e => [e.dataset.themeChoice, e.getAttribute('aria-label'), e.getAttribute('role')])),
+        [['classic', 'Classic', 'radio'], ['telemetry', 'Telemetry', 'radio'], ['editorial', 'Editorial', 'radio']]);
+
+      // Classic is the default and is the app exactly as it was.
+      let look = await readLook(page);
+      assert.equal(look.theme, 'classic');
+      assert.equal(look.bg, 'rgb(0, 0, 0)');
+      assert.match(look.font, /^-apple-system/);
+      assert.equal(look.motion.view, 'view-in');
+      assert.equal(await page.getAttribute('.theme-switch [data-theme-choice="classic"]', 'aria-checked'), 'true');
+      assert.match(await page.textContent('.theme-switch [data-theme-name]'), /^Classic$/);
+      assert.equal(await modalMotion(), 'sheet-in');
+      await shot('14-theme-classic');
+
+      // Telemetry: industrial brutalist, dark. Mechanical, stepped motion.
+      await pickTheme('telemetry');
+      look = await readLook(page);
+      assert.equal(look.bg, 'rgb(10, 10, 10)', 'deactivated-CRT black, not pure black');
+      assert.match(look.navFont, /^"?JetBrains Mono/);
+      assert.match(look.heading.font, /^"?Inter/);
+      assert.equal(look.heading.case, 'uppercase');
+      assert.deepEqual(look.radius, { card: '0px', button: '0px' }, 'square corners');
+      for (const k of ['muted', 'label', 'button', 'text']) assert.ok(look[k] >= 4.5, `telemetry ${k} contrast ${look[k].toFixed(2)}:1`);
+      const [r, g, b] = look.caution.match(/\d+/g).map(Number);
+      assert.ok(r > 180 && g > 120 && b < 120, `caution amounts stay amber (got ${look.caution})`);
+      assert.equal(look.motion.view, 'tele-scan', 'screens draw in like a CRT scan');
+      assert.equal(look.motion.cursor, 'tele-blink', 'the title has a terminal cursor');
+      assert.equal(await modalMotion(), 'tele-power', 'dialogs switch on like a CRT');
+      assert.equal(await page.getAttribute('.theme-switch [data-theme-choice="telemetry"]', 'aria-checked'), 'true');
+      assert.equal(await page.getAttribute('.theme-switch [data-theme-choice="classic"]', 'aria-checked'), 'false');
+      await page.keyboard.press('Tab');
+      await page.locator('#nav button').first().focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none', 'focus ring in telemetry');
+      await shot('15-theme-telemetry');
+
+      // Editorial: premium minimalist, light. Quiet, eased, staggered motion.
+      await pickTheme('editorial');
+      look = await readLook(page);
+      assert.equal(look.bg, 'rgb(247, 246, 243)', 'warm bone paper');
+      assert.match(look.font, /^"?Geist/);
+      assert.match(look.heading.font, /^"?Newsreader/);
+      assert.equal(look.heading.case, 'none');
+      assert.equal(look.radius.card, '12px');
+      assert.equal(look.buttonBg, 'rgb(17, 17, 17)');
+      for (const k of ['muted', 'label', 'button', 'text']) assert.ok(look[k] >= 4.5, `editorial ${k} contrast ${look[k].toFixed(2)}:1`);
+      assert.equal(look.caution, 'rgb(149, 100, 0)', 'caution in the muted yellow');
+      assert.equal(look.motion.header, 'ed-in', 'sections fade up in sequence');
+      assert.equal(await modalMotion(), 'ed-rise');
+      assert.equal(await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content), '#F7F6F3');
+      await shot('16-theme-editorial');
+
+      // Remembered on this device, and applied before the first paint (no flash of another theme).
+      assert.equal(await page.evaluate(() => localStorage.getItem('gmops-theme')), 'editorial');
+      await page.reload();
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'editorial');
+      await page.waitForSelector('#app:not([hidden])');
+
+      // Reduced motion: no theme animates.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await pickTheme('telemetry');
+      assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#view-carwash.active')).animationDuration)), 0);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+      await pickTheme('classic');
+      assert.equal((await readLook(page)).bg, 'rgb(0, 0, 0)');
+      assert.equal(await page.evaluate(() => document.querySelector('meta[name="theme-color"]').content), '#000000');
+    });
+
     await step('staff: limited nav, closed day is read-only', async () => {
       await page.click('#signout-btn');
       await page.waitForSelector('#login-form:not([hidden])');
@@ -1019,6 +1172,7 @@ async function launch() {
       assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix']);
+      assert.ok(await page.locator('.theme-switch').isVisible(), 'staff can pick a theme too');
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
@@ -1089,6 +1243,34 @@ async function launch() {
       assert.deepEqual(offscreen, [], 'payroll buttons cut off on mobile');
       await shot('13-mobile-payroll');
       await shot('12-mobile');
+    });
+
+    await step('mobile: every theme fits a phone, with 44px touch targets', async () => {
+      await page.click('#nav [data-view="carwash"]');
+      await page.waitForSelector('#view-carwash [data-entry-card]:not([hidden])');
+      assert.ok(await page.locator('.theme-switch').isVisible(), 'the theme switch is reachable on a phone');
+      for (const theme of ['telemetry', 'editorial', 'classic']) {
+        await pickTheme(theme);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        assert.ok(overflow <= 1, `${theme}: page scrolls sideways by ${overflow}px on mobile`);
+        const short = await page.evaluate(() => [...document.querySelectorAll('#nav button, #view-carwash .date-nav .btn, #view-carwash [data-review]')]
+          .filter(el => el.offsetParent).filter(el => el.getBoundingClientRect().height < 44).map(el => el.textContent.trim() || el.getAttribute('aria-label')));
+        assert.deepEqual(short, [], `${theme}: buttons shorter than 44px on mobile`);
+        const spill = await page.evaluate(() => [...document.querySelectorAll('#view-carwash .card input, #view-carwash .card select')]
+          .filter(el => el.offsetParent).filter(el => {
+            const card = el.closest('.card').getBoundingClientRect();
+            const box = el.getBoundingClientRect();
+            return box.right > card.right + 0.5 || box.left < card.left - 0.5;
+          }).map(el => {
+            const card = el.closest('.card').getBoundingClientRect();
+            const box = el.getBoundingClientRect();
+            return `${el.dataset.f || el.placeholder || el.type} ${Math.round(box.left)}-${Math.round(box.right)} in card ${Math.round(card.left)}-${Math.round(card.right)}`;
+          }));
+        assert.deepEqual(spill, [], `${theme}: fields spill out of their card on mobile`);
+        const switchBox = await page.locator('.theme-switch').boundingBox();
+        assert.ok(switchBox.x >= 0 && switchBox.x + switchBox.width <= 390, `${theme}: theme switch cut off on mobile`);
+        await shot(`17-mobile-${theme}`);
+      }
     });
 
     assert.deepEqual(problems, [], 'browser reported errors');

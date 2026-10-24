@@ -1,0 +1,209 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Newsreader:wght@400;500;600&display=swap');
+
+/* GM Operations Console — theme: Editorial (Premium Utilitarian Minimalism, light).
+   Active when <html data-theme="editorial"> (sidebar → Theme, see js/theme.js). Every rule is scoped to
+   that attribute, so this file only restyles the same screens; it never changes what they do.
+   Warm paper and charcoal ink, 1px #EAEAEA hairlines, 6–12px corners, charcoal buttons, washed-out pastel
+   tags, Newsreader serif headings and figures, Geist text. Motion is quiet, eased and in sequence.
+   Secondary grey is #6B6A67 (the usual #787774 is only 4.4:1 on this paper); text contrast is at least 4.5:1. */
+
+:root[data-theme="editorial"]{color-scheme:light;
+  --bg:#F7F6F3;                /* warm bone paper */
+  --surface:#FFFFFF;           /* cards */
+  --surface-alt:#F7F6F3;
+  --surface-3:#EFEEEA;
+  --border:#EAEAEA;            /* every hairline */
+  --fill:#EFEEEA;
+  --wash:#FBFBFA;              /* hover rows, quiet panels */
+  --text:#2F3437;              /* charcoal, 12.4:1 */
+  --ink:#111111;               /* headings and primary buttons */
+  --muted:#6B6A67;             /* 5.3:1 (4.9:1 on paper); the skill's #787774 is only 4.4:1 */
+  --faint:#A8A7A3;             /* placeholders only */
+  --accent:#111111;            /* fills (buttons, selected dates); white on it 18.9:1 */
+  --accent-hover:#333333;
+  --accent-text:#9F2F2D;       /* errors and "today", 6.9:1 */
+  --accent-soft:#FDEBEC;
+  --accent-line:#F2C9CB;
+  --green:#346538; --green-soft:#EDF3EC;
+  --blue:#1F6C9F;  --blue-soft:#E1F3FE;
+  --orange:#956400; --orange-soft:#FBF3DB;   /* caution, 5.0:1 */
+  --red:#9F2F2D;
+  --amber:var(--orange);
+  --font:"Geist","SF Pro Display","Helvetica Neue","Segoe UI",system-ui,sans-serif;
+  --display:"Newsreader","Iowan Old Style",Georgia,serif;
+  --serif:"Newsreader","Iowan Old Style",Georgia,serif;
+  --mono:"Geist Mono","SF Mono","JetBrains Mono",Consolas,monospace;
+  --brand:var(--serif);
+  --r-sm:6px; --r:8px; --r-lg:12px; --r-xl:12px;
+  --shadow:none;
+  --shadow-pop:0 12px 32px rgba(17,17,17,.045),0 0 0 1px #EAEAEA;
+  --lift:0 2px 8px rgba(0,0,0,.04);
+  --glass:#FBFBFA;
+  --ease:cubic-bezier(.16,1,.3,1);}
+/* ---------- paper ---------- */
+:root[data-theme="editorial"]{background:var(--bg);}
+:root[data-theme="editorial"] body{background-color:var(--bg);
+  background-image:radial-gradient(70% 45% at 85% -10%,rgba(149,100,0,.035),transparent 70%);
+  background-attachment:fixed;
+  color:var(--text);font-size:14px;line-height:1.55;letter-spacing:0;font-feature-settings:normal;}
+:root[data-theme="editorial"] ::selection{background:var(--blue-soft);color:var(--ink);}
+:root[data-theme="editorial"] :focus-visible{outline:2px solid var(--text);outline-offset:2px;}
+/* ---------- type ---------- */
+:root[data-theme="editorial"] .view-header h1{font-family:var(--serif);font-weight:500;font-size:32px;letter-spacing:-.03em;line-height:1.1;color:var(--ink);}
+:root[data-theme="editorial"] .view-header .desc{color:var(--muted);}
+:root[data-theme="editorial"] .card h2,:root[data-theme="editorial"] .breakdown-card h2,:root[data-theme="editorial"] .section-header h2,:root[data-theme="editorial"] .weekly-section-header h2{font-family:var(--font);font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--ink);}
+:root[data-theme="editorial"] .eyebrow,:root[data-theme="editorial"] .pl-section,:root[data-theme="editorial"] .entry-group-title,:root[data-theme="editorial"] .guide-pill{font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:var(--muted);}
+:root[data-theme="editorial"] .hint{color:var(--muted);}
+/* ---------- frame ---------- */
+:root[data-theme="editorial"] .rail{background:var(--wash);-webkit-backdrop-filter:none;backdrop-filter:none;border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
+:root[data-theme="editorial"] .brand-lockup img{background:#fff;box-shadow:0 0 0 1px var(--border);}
+:root[data-theme="editorial"] .wordmark .name{font-family:var(--serif);font-weight:600;letter-spacing:.02em;color:var(--ink);}
+:root[data-theme="editorial"] .wordmark .sub{color:var(--muted);}
+:root[data-theme="editorial"] .shop-clock .clock-time{color:var(--ink);font-family:var(--mono);font-weight:500;}
+:root[data-theme="editorial"] .nav button{position:relative;color:var(--text);opacity:1;font-weight:500;transition:background-color .2s ease,color .2s ease,box-shadow .2s ease;}
+:root[data-theme="editorial"] .nav button:hover{background:var(--surface-3);}
+:root[data-theme="editorial"] .nav button:active{background:#E6E5E0;}
+:root[data-theme="editorial"] .nav button.active{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="editorial"] .nav-icon{color:var(--muted);stroke-width:1.9;transition:color .2s ease;}
+:root[data-theme="editorial"] .nav button.active .nav-icon{color:var(--ink);}
+:root[data-theme="editorial"] .nav button:focus-visible{outline-color:var(--text);}
+:root[data-theme="editorial"] .status-dot.online{background:var(--green);box-shadow:0 0 0 3px var(--green-soft);}
+:root[data-theme="editorial"] .theme-label b{color:var(--ink);}
+:root[data-theme="editorial"] .theme-options button{box-shadow:0 0 0 1px var(--border);transition:box-shadow .25s var(--ease),transform .15s ease;}
+:root[data-theme="editorial"] .theme-options button:hover{box-shadow:0 0 0 1px #C9C8C3;}
+:root[data-theme="editorial"] .theme-options button[aria-checked="true"]{box-shadow:0 0 0 2px var(--ink);}
+:root[data-theme="editorial"] .theme-options button:focus-visible{outline-color:var(--text);}
+/* ---------- controls ---------- */
+:root[data-theme="editorial"] input[type=date],:root[data-theme="editorial"] input[type=text],:root[data-theme="editorial"] input[type=number],:root[data-theme="editorial"] input[type=time],:root[data-theme="editorial"] input[type=email],:root[data-theme="editorial"] input[type=password],:root[data-theme="editorial"] select,:root[data-theme="editorial"] textarea{background-color:var(--surface);color:var(--text);border:1px solid var(--border);
+  transition:border-color .2s ease,box-shadow .25s var(--ease);}
+:root[data-theme="editorial"] input:hover,:root[data-theme="editorial"] select:hover,:root[data-theme="editorial"] textarea:hover{background-color:var(--surface);border-color:#D6D5D0;}
+:root[data-theme="editorial"] input:focus,:root[data-theme="editorial"] select:focus,:root[data-theme="editorial"] textarea:focus{border-color:var(--text);box-shadow:0 0 0 3px rgba(47,52,55,.08);}
+:root[data-theme="editorial"] input[type=date]::-webkit-calendar-picker-indicator,:root[data-theme="editorial"] input[type=time]::-webkit-calendar-picker-indicator{filter:none;opacity:.55;}
+:root[data-theme="editorial"] select option,:root[data-theme="editorial"] select optgroup{background-color:var(--surface);color:var(--text);}
+:root[data-theme="editorial"] input[type=checkbox]{accent-color:var(--ink);}
+:root[data-theme="editorial"] button.btn{background:var(--ink);color:#fff;font-weight:500;letter-spacing:0;border-radius:6px;transition:background-color .2s ease,box-shadow .2s ease,transform .12s ease;}
+:root[data-theme="editorial"] button.btn:hover{background:var(--accent-hover);}
+:root[data-theme="editorial"] button.btn:active{transform:scale(.98);}
+:root[data-theme="editorial"] button.btn.ghost{background:var(--surface);color:var(--text);box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="editorial"] button.btn.ghost:hover{background:var(--bg);}
+:root[data-theme="editorial"] button.btn.danger{background:var(--accent-soft);color:var(--accent-text);}
+:root[data-theme="editorial"] button.btn.danger:hover{background:#FADADC;}
+:root[data-theme="editorial"] button.icon-btn{color:var(--muted);}
+:root[data-theme="editorial"] button.icon-btn:hover{background:var(--surface-3);color:var(--ink);}
+:root[data-theme="editorial"] .segmented{background:var(--surface-3);border-radius:8px;}
+:root[data-theme="editorial"] .segmented button{border-radius:6px;color:var(--text);}
+:root[data-theme="editorial"] .segmented button:hover{background:rgba(0,0,0,.03);}
+:root[data-theme="editorial"] .segmented button.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.04),inset 0 0 0 1px var(--border);}
+/* ---------- cards (bento) ---------- */
+:root[data-theme="editorial"] .card,:root[data-theme="editorial"] .breakdown-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;transition:box-shadow .25s ease;}
+:root[data-theme="editorial"] .card:hover,:root[data-theme="editorial"] .breakdown-card:hover{box-shadow:var(--lift);}
+:root[data-theme="editorial"] .metric,:root[data-theme="editorial"] .weekly-stat,:root[data-theme="editorial"] .summary-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;}
+:root[data-theme="editorial"] .metric .label,:root[data-theme="editorial"] .weekly-stat-label,:root[data-theme="editorial"] .summary-card span{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:500;}
+:root[data-theme="editorial"] .metric .value,:root[data-theme="editorial"] .summary-card strong,:root[data-theme="editorial"] .weekly-stat strong{font-family:var(--serif);font-weight:500;letter-spacing:-.02em;color:var(--ink);}
+:root[data-theme="editorial"] .metric .value.amber,:root[data-theme="editorial"] .weekly-stat strong.amber-text{color:var(--orange);}
+:root[data-theme="editorial"] .summary-card.accent{background:var(--ink);border-color:var(--ink);}
+:root[data-theme="editorial"] .summary-card.accent span,:root[data-theme="editorial"] .summary-card.accent strong{color:#fff;}
+:root[data-theme="editorial"] .banner{background:var(--orange-soft);color:var(--text);border:1px solid #F1E3B8;}
+:root[data-theme="editorial"] .banner.ok{background:var(--green-soft);border-color:#D5E4D3;}
+:root[data-theme="editorial"] .empty-state{background:var(--wash);border:1px dashed var(--border);color:var(--muted);}
+:root[data-theme="editorial"] .entry-group,:root[data-theme="editorial"] .line-editor{background:var(--wash);box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="editorial"] .editor-totals .grand b{font-family:var(--serif);font-weight:500;font-size:24px;color:var(--ink);}
+:root[data-theme="editorial"] .pill,:root[data-theme="editorial"] .kind-pill,:root[data-theme="editorial"] .status-pill{border-radius:9999px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
+:root[data-theme="editorial"] .kind-pill.custom{background:var(--surface-3);color:var(--text);}
+:root[data-theme="editorial"] .item-chip{background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);}
+:root[data-theme="editorial"] .item-chip.addon{box-shadow:none;border-color:#CFE7F7;background:var(--blue-soft);}
+/* ---------- tables ---------- */
+:root[data-theme="editorial"] .table-wrap{background:var(--surface);box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="editorial"] .card .table-wrap{background:transparent;}
+:root[data-theme="editorial"] .jobs-table th,:root[data-theme="editorial"] .daily-table th,:root[data-theme="editorial"] .matrix-table th,:root[data-theme="editorial"] .payroll-table th,:root[data-theme="editorial"] .dept-table th,:root[data-theme="editorial"] .funds-table th,:root[data-theme="editorial"] .parts-table th{background:var(--surface);font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border);}
+:root[data-theme="editorial"] .jobs-table td,:root[data-theme="editorial"] .daily-table td,:root[data-theme="editorial"] .matrix-table td,:root[data-theme="editorial"] .payroll-table td,:root[data-theme="editorial"] .dept-table td,:root[data-theme="editorial"] .funds-table td,:root[data-theme="editorial"] .parts-table td,:root[data-theme="editorial"] .simple-table td{border-bottom:1px solid var(--border);}
+:root[data-theme="editorial"] tbody tr:hover td,:root[data-theme="editorial"] .jobs-table tbody tr:hover td:first-child{background:var(--wash);}
+:root[data-theme="editorial"] .matrix-table .group-head{background:var(--bg);}
+:root[data-theme="editorial"] .weekly-table .weekly-total td{background:var(--wash);}
+:root[data-theme="editorial"] .weekly-table td:first-child{background:var(--wash);}
+:root[data-theme="editorial"] .history-entry{background:var(--wash);box-shadow:inset 0 0 0 1px var(--border);}
+:root[data-theme="editorial"] .tp-col{background:var(--wash);}
+/* ---------- modal, toast, sign-in, pickers ---------- */
+:root[data-theme="editorial"] .modal::backdrop{background:rgba(17,17,17,.2);-webkit-backdrop-filter:none;backdrop-filter:none;}
+:root[data-theme="editorial"] .modal-card{background:var(--surface);border:1px solid var(--border);}
+:root[data-theme="editorial"] .modal-header h2{font-family:var(--serif);font-weight:500;font-size:28px;letter-spacing:-.02em;line-height:1.1;color:var(--ink);}
+:root[data-theme="editorial"] .review-details{background:var(--border);gap:1px;border:1px solid var(--border);}
+:root[data-theme="editorial"] .review-detail{background:var(--surface);}
+:root[data-theme="editorial"] .review-detail .label{text-transform:uppercase;letter-spacing:.05em;font-size:11px;}
+:root[data-theme="editorial"] .app-toast{background:var(--ink);color:#fff;border-radius:8px;-webkit-backdrop-filter:none;backdrop-filter:none;font-size:13px;}
+:root[data-theme="editorial"] .app-toast.error{background:var(--accent-text);}
+:root[data-theme="editorial"] .gate{background:radial-gradient(60% 40% at 50% 0%,rgba(149,100,0,.05),transparent 70%),var(--bg);}
+:root[data-theme="editorial"] .gate-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;}
+:root[data-theme="editorial"] .gate-card .login-form label{color:var(--muted);}
+:root[data-theme="editorial"] .datepicker,:root[data-theme="editorial"] .timepicker{background:var(--surface);border:1px solid var(--border);}
+:root[data-theme="editorial"] .weekly-table tr{background:var(--surface);}
+:root[data-theme="editorial"] .modal-card::before{background:var(--surface-3);}
+/* ---------- motion: quiet, eased, in sequence ---------- */
+@keyframes ed-in{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:none;}}
+@keyframes ed-rise{from{opacity:0;transform:translateY(10px) scale(.985);}to{opacity:1;transform:none;}}
+@keyframes ed-fade{from{opacity:0;}to{opacity:1;}}
+@keyframes ed-fade-out{to{opacity:0;}}
+/* a screen arrives section by section */
+:root[data-theme="editorial"] .view.active{animation:none;}
+:root[data-theme="editorial"] .view.active>*{animation:ed-in .6s var(--ease) backwards;}
+:root[data-theme="editorial"] .view.active>:nth-child(2){animation-delay:70ms;}
+:root[data-theme="editorial"] .view.active>:nth-child(3){animation-delay:140ms;}
+:root[data-theme="editorial"] .view.active>:nth-child(4){animation-delay:210ms;}
+:root[data-theme="editorial"] .view.active>:nth-child(n+5){animation-delay:280ms;}
+/* refreshed figures settle in softly */
+:root[data-theme="editorial"] .metric .value,:root[data-theme="editorial"] .summary-card strong,:root[data-theme="editorial"] .weekly-stat strong{animation:ed-fade .5s ease backwards;}
+/* dialogs rise a little and come into focus */
+:root[data-theme="editorial"] .modal[open]{animation:ed-rise .42s var(--ease) both;}
+:root[data-theme="editorial"] .modal[open]::backdrop{animation:ed-fade .3s ease both;}
+:root[data-theme="editorial"] .datepicker,:root[data-theme="editorial"] .timepicker{animation:ed-rise .26s var(--ease);}
+:root[data-theme="editorial"] .app-toast{transition:opacity .35s var(--ease),transform .5s var(--ease);}
+/* switching to this theme dissolves slowly */
+:root[data-theme="editorial"]::view-transition-old(root){animation:ed-fade-out .3s ease both;}
+:root[data-theme="editorial"]::view-transition-new(root){animation:ed-fade .55s var(--ease) both;}
+/* ---------- regular screens ---------- */
+@media (min-width:701px){
+  :root[data-theme="editorial"] .main{padding:48px 56px 96px;}
+  :root[data-theme="editorial"] .view-header{margin-bottom:32px;}
+  :root[data-theme="editorial"] .view-header h1{font-size:46px;}
+  :root[data-theme="editorial"] .view-header .desc{font-size:15px;margin-top:8px;}
+  :root[data-theme="editorial"] .wordmark .name{font-size:20px;}
+  :root[data-theme="editorial"] .shop-clock .clock-time{font-size:14px;}
+  :root[data-theme="editorial"] .auth-panel{background:var(--surface);box-shadow:inset 0 0 0 1px var(--border);}
+  /* a thin ink bar grows beside the screen you are on */
+  :root[data-theme="editorial"] .nav button::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--ink);transform:scaleY(0);transition:transform .35s var(--ease);}
+  :root[data-theme="editorial"] .nav button.active::before{transform:scaleY(1);}
+  :root[data-theme="editorial"] .card,:root[data-theme="editorial"] .breakdown-card{padding:28px;}
+  :root[data-theme="editorial"] .metrics-row,:root[data-theme="editorial"] .weekly-summary,:root[data-theme="editorial"] .pricing-summary{gap:12px;}
+  :root[data-theme="editorial"] .metric,:root[data-theme="editorial"] .weekly-stat,:root[data-theme="editorial"] .summary-card{padding:18px 20px;}
+  :root[data-theme="editorial"] .metric .value{font-size:30px;}
+  :root[data-theme="editorial"] .modal-card{border-radius:12px;padding:32px;}
+  :root[data-theme="editorial"] .gate-card{padding:40px 36px;}
+  :root[data-theme="editorial"] .gate-card .wordmark .name{font-size:26px;}
+}
+/* ---------- phones ---------- */
+@media (max-width:700px){
+  :root[data-theme="editorial"] .nav button{background:var(--surface);box-shadow:inset 0 0 0 1px var(--border);}
+  :root[data-theme="editorial"] .nav button.active{background:var(--ink);color:#fff;box-shadow:none;}
+  :root[data-theme="editorial"] .nav button.active .nav-icon{color:#fff;}
+  :root[data-theme="editorial"] .auth-panel{background:none;box-shadow:none;}
+  :root[data-theme="editorial"] .wordmark .name{font-size:15.5px;white-space:nowrap;letter-spacing:0;}
+  :root[data-theme="editorial"] .shop-clock{white-space:nowrap;}
+}
+/* ---------- accessibility preferences (the Classic dark values do not fit paper) ---------- */
+@media (prefers-reduced-transparency:reduce){
+  :root[data-theme="editorial"] .modal::backdrop{background:rgba(17,17,17,.45);}
+}
+@media (prefers-contrast:more){
+  :root[data-theme="editorial"]{--muted:#4A4946;--border:#BDBCB8;}
+}
+
+/* Inventory tag colours: darker inks so tag names stay readable on white paper (4.5:1 or better). */
+:root[data-theme="editorial"] .c-slate{--tag:#56565a;}
+:root[data-theme="editorial"] .c-red{--tag:#b0262d;}
+:root[data-theme="editorial"] .c-orange{--tag:#9a4b05;}
+:root[data-theme="editorial"] .c-amber{--tag:#7a5c00;}
+:root[data-theme="editorial"] .c-green{--tag:#1d6b34;}
+:root[data-theme="editorial"] .c-teal{--tag:#0b6577;}
+:root[data-theme="editorial"] .c-blue{--tag:#1f56b0;}
+:root[data-theme="editorial"] .c-violet{--tag:#6236b0;}
+:root[data-theme="editorial"] .c-pink{--tag:#a3285f;}
