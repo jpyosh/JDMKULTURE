@@ -1077,10 +1077,18 @@ async function launch() {
       await shot('10-settings');
     });
 
-    // Picks a theme in the sidebar and waits for the switch (and its transition) to finish.
+    // Animations and transitions still moving or resizing something (a fading cursor does not change any box).
+    const moving = () => document.getAnimations()
+      .filter(a => a.playState === 'running' && a.effect?.getComputedTiming().endTime !== Infinity)
+      .filter(a => a.effect.getKeyframes().some(k => ['transform', 'translate', 'scale', 'rotate'].some(p => p in k)))
+      .map(a => `${a.animationName || a.transitionProperty} on ${a.effect.target?.id || a.effect.target?.className || a.effect.target?.tagName}`);
+    // Picks a theme in the sidebar and waits for the switch (and its transition) to finish, then for its fonts
+    // and for the screen's entrance to come to rest, so sizes are read from the settled layout.
     const pickTheme = async name => {
       await page.click(`.theme-switch [data-theme-choice="${name}"]`);
       await page.waitForFunction(n => document.documentElement.dataset.theme === n && !document.documentElement.classList.contains('theme-switching'), name);
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForFunction(`(${moving})().length === 0`, null, { polling: 'raf' });
     };
     const modalMotion = async () => {
       await daily.locator('tr[data-id] [data-act="edit"]').first().click();
@@ -1251,6 +1259,8 @@ async function launch() {
       assert.ok(await page.locator('.theme-switch').isVisible(), 'the theme switch is reachable on a phone');
       for (const theme of ['telemetry', 'editorial', 'classic']) {
         await pickTheme(theme);
+        // Measured at rest: the tail of an entrance (a 0.0001px translate) reads a 44px button as 43.99997px.
+        assert.deepEqual(await page.evaluate(moving), [], `${theme}: still animating when measured`);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 1, `${theme}: page scrolls sideways by ${overflow}px on mobile`);
         const short = await page.evaluate(() => [...document.querySelectorAll('#nav button, #view-carwash .date-nav .btn, #view-carwash [data-review]')]
