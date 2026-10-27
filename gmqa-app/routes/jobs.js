@@ -9,7 +9,7 @@ const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/calc');
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
-const { loadPart, takeStock, returnStock } = require('../lib/inventory');
+const { loadPart, takeStock, returnStock, piecesOf } = require('../lib/inventory');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -56,13 +56,18 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
       lines.push({ ...line, sort_order: index });
     } else if (input?.part_id != null) {
       // Only items tagged Auto Parts are sold; lines already on a job are kept above whatever their tags now.
+      // as_set: sold as a set (set price, takes set_size pieces per set); unit_cost is the cost of what is sold.
       const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true, forSale: true });
       const quantity = money(input.quantity ?? 1, 'Quantity', { min: 0.01 });
+      const asSet = Boolean(input.as_set);
+      if (asSet && !(part.set_size > 1 && part.set_price > 0)) throw bad(`${part.name} is not sold as a set. Give it a set size and set price in Inventory.`);
+      const pack = asSet ? part.set_size : 1;
       lines.push({
-        kind: 'part', part_id: part.id, catalog_item_id: null, name: part.name, quantity, sort_order: index,
-        price: Math.round(part.price * quantity * 100) / 100,
-        commission: Math.round(part.commission * quantity * 100) / 100,
-        unit_cost: part.avg_cost,
+        kind: 'part', part_id: part.id, catalog_item_id: null, sort_order: index, quantity, pack_size: pack,
+        name: asSet ? `${part.name} (set of ${pack})` : part.name,
+        price: Math.round((asSet ? part.set_price : part.price) * quantity * 100) / 100,
+        commission: Math.round((asSet ? part.set_commission : part.commission) * quantity * 100) / 100,
+        unit_cost: Math.round(part.avg_cost * pack * 100) / 100,
       });
     } else if (input?.catalog_item_id != null) {
       if (!vehicleClass) throw bad('Choose a vehicle class before adding services or add-ons');
@@ -91,7 +96,7 @@ async function saveLines(q, jobId, lines, existing) {
   const keep = new Set(lines.filter(l => l.id).map(l => l.id));
   const removed = existing.filter(l => !keep.has(l.id)).map(l => l.id);
   for (const line of existing.filter(l => !keep.has(l.id) && l.kind === 'part')) {
-    await returnStock(q, line.part_id, line.quantity, jobId, 'Removed from job');
+    await returnStock(q, line.part_id, piecesOf(line), jobId, 'Removed from job');
   }
   if (removed.length) await q.query('delete from job_items where id = any($1::bigint[])', [removed]);
   for (const line of lines) {
@@ -100,10 +105,10 @@ async function saveLines(q, jobId, lines, existing) {
         where id = $1 and (sort_order, price, commission) is distinct from ($2::int, $3::numeric, $4::numeric)`,
       [line.id, line.sort_order, line.price, line.commission]);
     } else {
-      if (line.kind === 'part') await takeStock(q, line.part_id, line.quantity, jobId);
-      await q.query(`insert into job_items (job_id, kind, catalog_item_id, part_id, quantity, unit_cost, name, price, commission, sort_order)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [jobId, line.kind, line.catalog_item_id, line.part_id ?? null, line.quantity ?? 1, line.unit_cost ?? null,
+      if (line.kind === 'part') await takeStock(q, line.part_id, piecesOf(line), jobId);
+      await q.query(`insert into job_items (job_id, kind, catalog_item_id, part_id, quantity, pack_size, unit_cost, name, price, commission, sort_order)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [jobId, line.kind, line.catalog_item_id, line.part_id ?? null, line.quantity ?? 1, line.pack_size ?? 1, line.unit_cost ?? null,
         line.name, line.price, line.commission, line.sort_order]);
     }
   }
@@ -295,7 +300,7 @@ router.post('/jobs/:id/void', requireOwner, async (req, res) => {
       [jobId, req.user.email, reason]);
     if (!changed) throw notFound('Active job');
     for (const line of (await loadJob(jobId, q)).items.filter(l => l.kind === 'part')) {
-      await returnStock(q, line.part_id, line.quantity, jobId, 'Job voided');
+      await returnStock(q, line.part_id, piecesOf(line), jobId, 'Job voided');
     }
   });
   res.json(await loadJob(jobId));
@@ -307,7 +312,7 @@ router.post('/jobs/:id/restore', requireOwner, async (req, res) => {
     const changed = await q.exec('update jobs set voided_at = null, voided_by = null, void_reason = null where id = $1 and voided_at is not null', [jobId]);
     if (!changed) throw notFound('Voided job');
     for (const line of (await loadJob(jobId, q)).items.filter(l => l.kind === 'part')) {
-      await takeStock(q, line.part_id, line.quantity, jobId);
+      await takeStock(q, line.part_id, piecesOf(line), jobId);
     }
   });
   res.json(await loadJob(jobId));

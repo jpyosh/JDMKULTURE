@@ -77,14 +77,25 @@ router.get('/inventory', async (req, res) => {
   res.json(await loadItems(db, all ? 'true' : 'p.active'));
 });
 
+// A set: how many pieces it holds (blank / 0 = not sold as a set) and its price. Stock stays in pieces.
+function setSize(value) {
+  const n = money(value, 'Set of', { allowNull: true });
+  if (!n) return null;
+  if (n <= 1) throw bad('Set of must be more than 1 piece (leave it blank if it is not sold as a set)');
+  return n;
+}
+
 function cleanItem(body, partial) {
-  const f = pick(body, ['sku', 'name', 'unit', 'price', 'commission', 'reorder_level', 'active']);
+  const f = pick(body, ['sku', 'name', 'unit', 'price', 'commission', 'set_size', 'set_price', 'set_commission', 'reorder_level', 'active']);
   const out = {};
   if ('sku' in f) out.sku = text(f.sku, 'SKU', { max: 40 });
   if (!partial || 'name' in f) out.name = text(f.name, 'Name', { required: true, max: 120 });
   if ('unit' in f) out.unit = text(f.unit, 'Unit', { max: 12 }) || 'pc';
   if ('price' in f) out.price = money(f.price, 'Selling price');
   if ('commission' in f) out.commission = money(f.commission, 'Commission per unit');
+  if ('set_size' in f) out.set_size = setSize(f.set_size);
+  if ('set_price' in f) out.set_price = money(f.set_price, 'Set price', { allowNull: true });
+  if ('set_commission' in f) out.set_commission = money(f.set_commission, 'Commission per set');
   if ('reorder_level' in f) out.reorder_level = money(f.reorder_level, 'Reorder level');
   if ('active' in f) out.active = Boolean(f.active);
   return out;

@@ -17,7 +17,7 @@ export function createJobEditor(root, { job = null, department = job?.department
   const originalClass = job?.vehicle_class || '';
   const editor = {
     lines: (job?.items || []).map(i => ({
-      id: i.id, kind: i.kind, catalog_item_id: i.catalog_item_id, part_id: i.part_id, quantity: i.quantity,
+      id: i.id, kind: i.kind, catalog_item_id: i.catalog_item_id, part_id: i.part_id, quantity: i.quantity, pack_size: i.pack_size,
       name: i.name, price: i.price, commission: i.commission,
     })),
   };
@@ -28,6 +28,11 @@ export function createJobEditor(root, { job = null, department = job?.department
   const items = state.catalog.items.filter(i => i.kind === 'addon' || i.department === department);
   const parts = state.catalog.parts || [];
   const partOf = partId => parts.find(p => p.id === partId);
+  // A part may also sell as a set (set_size pieces at set_price); stock is always in pieces.
+  const hasSet = p => p.set_size > 1 && p.set_price > 0;
+  const packOf = line => (line.as_set ? partOf(line.part_id)?.set_size || 1 : 1);
+  const unitPrice = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_price || 0 : p?.price || 0; };
+  const unitCommission = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_commission || 0 : p?.commission || 0; };
 
   root.innerHTML = `
     <div class="job-editor">
@@ -51,7 +56,9 @@ export function createJobEditor(root, { job = null, department = job?.department
           <select data-add="addon"><option value="">+ Add add-on…</option>
             ${items.filter(i => i.kind === 'addon').map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select>` : ''}
           <select data-add="part"><option value="">+ Add part…</option>
-            ${parts.map(p => `<option value="${p.id}" ${p.stock > 0 ? '' : 'disabled'}>${esc(p.name)} · ${peso(p.price)} · ${p.stock} ${esc(p.unit)} left</option>`).join('')}</select>
+            ${parts.length ? parts.map(p => `<option value="${p.id}" ${p.stock > 0 ? '' : 'disabled'}>${esc(p.name)} · ${peso(p.price)} per ${esc(p.unit)} · ${p.stock} ${esc(p.unit)} left</option>`
+              + (hasSet(p) ? `<option value="${p.id}:set" ${p.stock >= p.set_size ? '' : 'disabled'}>${esc(p.name)} — set of ${p.set_size} · ${peso(p.set_price)}</option>` : '')).join('')
+    : '<option value="" disabled>No parts for sale yet: tag items Auto Parts in Inventory</option>'}</select>
           <button class="btn ghost" type="button" data-add-custom>+ Custom item</button>
         </div>
         <div class="lines" data-lines></div>
@@ -73,9 +80,8 @@ export function createJobEditor(root, { job = null, department = job?.department
   // changes (the server re-prices those). New part lines are priced from the parts list x quantity.
   function linePrice(line) {
     if (line.kind === 'part' && !line.id) {
-      const part = partOf(line.part_id);
       const qty = Number(line.quantity) || 0;
-      return { price: round2((part?.price || 0) * qty), commission: round2((part?.commission || 0) * qty) };
+      return { price: round2(unitPrice(line) * qty), commission: round2(unitCommission(line) * qty) };
     }
     const reprice = line.catalog_item_id && (!line.id || currentClass() !== originalClass);
     if (!reprice) return { price: Number(line.price) || 0, commission: Number(line.commission) || 0 };
@@ -100,7 +106,7 @@ export function createJobEditor(root, { job = null, department = job?.department
     if (line.kind === 'part' && !line.id) {
       const part = partOf(line.part_id);
       return `<span class="line-name">${esc(line.name)} <span class="muted small">${part ? `${part.stock} ${esc(part.unit)} in stock` : ''}</span></span>
-        <span class="qty-cell"><input type="number" min="0.01" step="1" data-l="quantity" value="${line.quantity}" aria-label="Quantity"> × ${peso(part?.price || 0)}</span>
+        <span class="qty-cell"><input type="number" min="0.01" step="1" data-l="quantity" value="${line.quantity}" aria-label="${line.as_set ? 'Sets' : 'Quantity'}"> × ${peso(unitPrice(line))}</span>
         <span class="money">${peso(p.price)}</span>`;
     }
     const qty = line.kind === 'part' ? ` <span class="muted small">× ${line.quantity}</span>` : '';
@@ -136,7 +142,10 @@ export function createJobEditor(root, { job = null, department = job?.department
   function renderTotals() {
     const t = totals();
     const missingPrice = currentClass() && editor.lines.some(l => l.catalog_item_id && linePrice(l).price === 0);
-    const overStock = editor.lines.some(l => l.kind === 'part' && !l.id && Number(l.quantity) > (partOf(l.part_id)?.stock ?? 0));
+    // Pieces asked of each part across its new lines (a set counts its pieces).
+    const asked = new Map();
+    for (const l of editor.lines.filter(x => x.kind === 'part' && !x.id)) asked.set(l.part_id, (asked.get(l.part_id) || 0) + (Number(l.quantity) || 0) * packOf(l));
+    const overStock = [...asked].some(([partId, pieces]) => pieces > (partOf(partId)?.stock ?? 0));
     $('[data-totals]', root).innerHTML = `
       <span>Subtotal <b class="money">${peso(t.subtotal)}</b></span>
       ${t.discount ? `<span>Discount <b class="money">−${peso(t.discount)}</b></span>` : ''}
@@ -150,8 +159,10 @@ export function createJobEditor(root, { job = null, department = job?.department
 
   $$('[data-add]', root).forEach(select => select.addEventListener('change', () => {
     if (select.dataset.add === 'part') {
-      const part = partOf(Number(select.value));
-      if (part) editor.lines.push({ kind: 'part', part_id: part.id, name: part.name, quantity: 1 });
+      const [partId, as] = select.value.split(':');
+      const part = partOf(Number(partId));
+      const asSet = as === 'set';
+      if (part) editor.lines.push({ kind: 'part', part_id: part.id, as_set: asSet, name: asSet ? `${part.name} (set of ${part.set_size})` : part.name, quantity: 1 });
     } else {
       const item = items.find(i => i.id === Number(select.value));
       if (item) editor.lines.push({ kind: item.kind, catalog_item_id: item.id, name: item.name });
@@ -203,7 +214,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       if (!locked) {
         out.items = editor.lines.map(l => {
           if (l.id) return { id: l.id };
-          if (l.kind === 'part') return { part_id: l.part_id, quantity: Number(l.quantity) || 0 };
+          if (l.kind === 'part') return { part_id: l.part_id, quantity: Number(l.quantity) || 0, ...(l.as_set ? { as_set: true } : {}) };
           if (l.catalog_item_id) return { catalog_item_id: l.catalog_item_id };
           return { name: l.name.trim(), price: Number(l.price) || 0, commission: Number(l.commission) || 0 };
         });

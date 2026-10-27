@@ -55,7 +55,7 @@ function renderParts(parts) {
   $('[data-low]', root).innerHTML = low.length
     ? `<div class="banner"><span>Low stock: ${low.map(p => `<b>${esc(p.name)}</b> (${p.stock} ${esc(p.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
   $('[data-parts]', root).innerHTML = `
-    <thead><tr><th>SKU</th><th>Part</th><th class="num">Price</th><th class="num">Comm./unit</th>${owner ? '<th class="num">Avg cost</th>' : ''}
+    <thead><tr><th>SKU</th><th>Part</th><th class="num">Price</th><th class="num">Comm./unit</th><th class="num">Set</th>${owner ? '<th class="num">Avg cost</th>' : ''}
       <th class="num">Stock</th><th class="num">Reorder at</th></tr></thead>
     <tbody>${parts.length ? parts.map(p => `
       <tr data-part="${p.id}">
@@ -63,10 +63,11 @@ function renderParts(parts) {
         <td><b>${esc(p.name)}</b> <span class="muted small">per ${esc(p.unit)}</span></td>
         <td class="num money">${peso(p.price)}</td>
         <td class="num money">${p.commission ? peso(p.commission) : '—'}</td>
+        <td class="num money">${p.set_size > 1 && p.set_price > 0 ? `Set of ${p.set_size} · ${peso(p.set_price)}` : '—'}</td>
         ${owner ? `<td class="num money">${peso(p.avg_cost)}</td>` : ''}
         <td class="num" data-stock>${p.stock} ${p.low ? '<span class="status-pill waiting">Low</span>' : ''}</td>
         <td class="num">${p.reorder_level}</td>
-      </tr>`).join('') : `<tr><td colspan="7"><div class="empty-state small">No parts for sale yet. Tag items <b>Auto Parts</b> in Inventory.</div></td></tr>`}</tbody>`;
+      </tr>`).join('') : `<tr><td colspan="8"><div class="empty-state small">No parts for sale yet. Tag items <b>Auto Parts</b> in Inventory.</div></td></tr>`}</tbody>`;
 }
 
 function renderCounter() {

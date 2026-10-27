@@ -141,6 +141,11 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   only as **cost of parts sold** when it sells, so it is never counted twice.
 - Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
   counter on the Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
+- **Sets**: a part can also sell as a set (e.g. one bulb ₱2,000, a pair ₱3,500). Count stock in **pieces**
+  (unit `pc`) and fill **Set of** (pieces per set) and **Set price** (and commission per set). "+ Add part"
+  then offers both; a set line takes its pieces from the same stock, and removing, voiding or restoring it
+  moves exactly those pieces. Its cost is the pieces' average cost. Blank Set of = not sold as a set.
+  Migration 010 adds `parts.set_size / set_price / set_commission` and `job_items.pack_size`.
 - Selling takes stock out and freezes the part's average cost on the line; removing the part or
   voiding the job puts the stock back. Selling more than is in stock is blocked.
 - Every stock change is recorded (stock history, owner). Costs and margins are owner-only: staff never
