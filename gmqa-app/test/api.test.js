@@ -928,3 +928,61 @@ test('inventory: tags decide what is sold, staff count usage, deliveries paid fr
   const opening = await ok(api(OWNER, 'GET', `/inventory/${mf.id}/movements`));
   assert.deepEqual(opening.map(m => [m.kind, m.quantity, m.unit_cost, m.note]), [['receive', 24, 45, 'Opening stock']]);
 });
+
+test('sets: stock is counted in pieces; a part sells per piece or as a set', async () => {
+  const D = '2026-12-20';
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  assert.match((await api(OWNER, 'POST', '/inventory', { name: 'Odd set', price: 10, set_size: 1, tags: [autoParts.id] })).data.error, /more than 1/);
+  const bulb = await ok(api(OWNER, 'POST', '/inventory', {
+    name: 'Lazertech 2in', unit: 'pc', price: 2000, commission: 50, set_size: 2, set_price: 3500, set_commission: 80, tags: [autoParts.id],
+  }));
+  assert.deepEqual([bulb.set_size, bulb.set_price, bulb.set_commission], [2, 3500, 80]);
+  await ok(api(OWNER, 'POST', `/inventory/${bulb.id}/receive`, { date: D, quantity: 5, unit_cost: 1200, paid_from: 'none' }));
+  const staffBulb = (await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === bulb.id);
+  assert.deepEqual([staffBulb.set_size, staffBulb.set_price], [2, 3500], 'staff see set prices (not costs)');
+
+  // One set (2 pieces at the set price) and one piece, from the same stock.
+  const sale = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: D, department: 'parts', payment_received: true,
+    items: [{ part_id: bulb.id, quantity: 1, as_set: true }, { part_id: bulb.id, quantity: 1 }],
+  }));
+  const [setLine, pieceLine] = sale.items;
+  assert.deepEqual([setLine.name, setLine.quantity, setLine.pack_size, setLine.price, setLine.commission],
+    ['Lazertech 2in (set of 2)', 1, 2, 3500, 80]);
+  assert.deepEqual([pieceLine.name, pieceLine.quantity, pieceLine.pack_size, pieceLine.price, pieceLine.commission],
+    ['Lazertech 2in', 1, 1, 2000, 50]);
+  assert.deepEqual([sale.totals.total, sale.totals.commission], [5500, 130]);
+  const stockOf = async () => (await ok(api(STAFF, 'GET', '/inventory'))).find(p => p.id === bulb.id).stock;
+  assert.equal(await stockOf(), 2, '5 pieces − a set of 2 − 1 piece');
+  const owned = (await ok(api(OWNER, 'GET', `/jobs?date=${D}&department=parts`))).find(j => j.id === sale.id);
+  assert.equal(owned.items[0].unit_cost, 2400, 'a set costs its pieces');
+  assert.equal(owned.totals.cost, 3600);
+
+  // Two more sets need 4 pieces; only 2 are left.
+  const short = await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: bulb.id, quantity: 2, as_set: true }] });
+  assert.equal(short.status, 400);
+  assert.match(short.data.error, /Only 2 pc/);
+
+  // Removing the set puts its 2 pieces back; voiding and restoring move the rest.
+  await ok(api(STAFF, 'PATCH', `/jobs/${sale.id}`, { items: [{ id: pieceLine.id }] }));
+  assert.equal(await stockOf(), 4);
+  const again = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: bulb.id, quantity: 2, as_set: true }] }));
+  assert.equal(await stockOf(), 0);
+  await ok(api(OWNER, 'POST', `/jobs/${again.id}/void`, { reason: 'Wrong item' }));
+  assert.equal(await stockOf(), 4);
+  await ok(api(OWNER, 'POST', `/jobs/${again.id}/restore`));
+  assert.equal(await stockOf(), 0);
+  const moves = await ok(api(OWNER, 'GET', `/inventory/${bulb.id}/movements`));
+  assert.deepEqual(moves.slice(-3).map(m => [m.kind, m.quantity]), [['sale', -4], ['return', 4], ['sale', -4]], 'stock moves in pieces');
+
+  // A part with no set (or a set with no price) cannot be sold as one.
+  const horn = await ok(api(OWNER, 'POST', '/inventory', { name: 'Plain horn', price: 500, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 3, unit_cost: 200, paid_from: 'none' }));
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: horn.id, quantity: 1, as_set: true }] })).data.error,
+    /not sold as a set/);
+  await ok(api(OWNER, 'PATCH', `/inventory/${horn.id}`, { set_size: 2 }));
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: horn.id, quantity: 1, as_set: true }] })).data.error,
+    /not sold as a set/, 'a set needs its price too');
+  const cleared = await ok(api(OWNER, 'PATCH', `/inventory/${bulb.id}`, { set_size: null, set_price: null }));
+  assert.deepEqual([cleared.set_size, cleared.set_price], [null, null]);
+});

@@ -28,6 +28,9 @@ const COLUMNS = [
   { field: 'tags', label: 'Tags', type: 'tags', edit: 'owner' },
   { field: 'price', label: 'Price', type: 'money', edit: 'owner' },
   { field: 'commission', label: 'Comm./unit', type: 'money', edit: 'owner' },
+  // Optional set (e.g. a pair of bulbs): pieces per set and the set's price. Blank = not sold as a set.
+  { field: 'set_size', label: 'Set of', type: 'qty', edit: 'owner', optional: true },
+  { field: 'set_price', label: 'Set price', type: 'money', edit: 'owner', optional: true },
   { field: 'avg_cost', label: 'Avg cost', type: 'money', ownerOnly: true },
   { field: 'stock', label: 'Stock', type: 'qty', edit: 'count' },
   { field: 'reorder_level', label: 'Reorder at', type: 'qty', edit: 'owner' },
@@ -46,6 +49,7 @@ const valueOf = item => Math.round(Number(item.stock) * Number(item.avg_cost || 
 const tagOf = tagId => tags.find(t => t.id === tagId);
 const tagChip = tag => tag ? `<span class="tag-chip c-${esc(tag.color)}">${esc(tag.name)}</span>` : '';
 const tagChips = item => item.tags.map(t => tagChip(tagOf(t))).join('');
+const hasSet = item => Number(item.set_size) > 1 && Number(item.set_price) > 0;
 const rawValue = (item, field) => (field === 'value' ? valueOf(item) : item[field]);
 
 function mount(el) {
@@ -128,7 +132,8 @@ function render() {
 function cellHtml(item, col) {
   const v = rawValue(item, col.field);
   if (col.type === 'tags') return tagChips(item) || '<span class="muted">—</span>';
-  if (col.type === 'money') return (col.field === 'price' || col.field === 'commission') && !Number(v) ? '<span class="muted">—</span>' : peso(v);
+  if (v == null || ((col.field === 'price' || col.field === 'commission' || col.optional) && !Number(v))) return '<span class="muted">—</span>';
+  if (col.type === 'money') return peso(v);
   if (col.type === 'qty') return col.field === 'stock' && item.low ? `${qty(v)} <span class="status-pill waiting">Low</span>` : qty(v);
   return v ? esc(v) : '<span class="muted">—</span>';
 }
@@ -179,7 +184,7 @@ function renderCards() {
       <div class="inv-card-tags">${tagChips(item)}</div>
       <div class="inv-card-stock"><span class="big">${qty(item.stock)}</span> ${esc(item.unit)} ${item.low ? '<span class="status-pill waiting">Low</span>' : ''}
         <span class="muted small">reorder at ${qty(item.reorder_level)}</span></div>
-      ${item.for_sale ? `<div class="muted small">Sells for ${peso(item.price)}</div>` : ''}
+      ${item.for_sale ? `<div class="muted small">Sells for ${peso(item.price)} per ${esc(item.unit)}${hasSet(item) ? ` · set of ${qty(item.set_size)} ${peso(item.set_price)}` : ''}</div>` : ''}
       <div class="actions">${rowButtons(item)}</div></div>`).join('')
     : `<div class="empty-state small">${items.length ? 'Nothing matches.' : 'No items yet.'}</div>`;
 }
@@ -285,12 +290,13 @@ async function commit(target) {
     return;
   }
   let value = raw;
-  if (col.type !== 'text') {
+  if (col.type !== 'text' && raw === '' && col.optional) value = null;
+  else if (col.type !== 'text') {
     value = Number(raw.replace(/₱|,/g, '') || 0);
     if (!Number.isFinite(value) || value < 0) { toast(`${col.label} must be a number of 0 or more`, 'error'); return done(); }
   }
   if (col.field === 'name' && !value) { toast('Name is required', 'error'); return done(); }
-  if (String(value) === String(item[col.field] ?? '')) return done();
+  if (String(value ?? '') === String(item[col.field] ?? '')) return done();
   td.classList.add('saving');
   try {
     const saved = await api('PATCH', `/inventory/${item.id}`, { [col.field]: value });
@@ -326,6 +332,9 @@ function itemModal(item) {
       <div><label>Selling price</label><input type="number" min="0" step="0.01" data-p="price" value="${item?.price || ''}" placeholder="Only for Auto Parts"></div>
       <div><label>Commission / unit</label><input type="number" min="0" step="0.01" data-p="commission" value="${item?.commission ?? 0}"></div>
       <div><label>Reorder when stock ≤</label><input type="number" min="0" step="1" data-p="reorder_level" value="${item?.reorder_level ?? 0}"></div>
+      <div><label>Set of (pieces)</label><input type="number" min="0" step="1" data-p="set_size" value="${item?.set_size ?? ''}" placeholder="e.g. 2 for a pair"></div>
+      <div><label>Set price</label><input type="number" min="0" step="0.01" data-p="set_price" value="${item?.set_price ?? ''}" placeholder="Blank: no set"></div>
+      <div><label>Commission / set</label><input type="number" min="0" step="0.01" data-p="set_commission" value="${item?.set_commission ?? 0}"></div>
     </div>
     <div class="inv-label">Tags</div>
     <div class="tag-pick-list">${tags.map(t => `<label class="tag-pick" data-tag-pick><input type="checkbox" value="${t.id}" ${item?.tags.includes(t.id) ? 'checked' : ''}> ${tagChip(t)}</label>`).join('')}</div>
@@ -338,6 +347,8 @@ function itemModal(item) {
       if (!get('name')) return toast('Name is required', 'error');
       const body = { sku: get('sku'), name: get('name'), unit: get('unit'), price: Number(get('price') || 0),
         commission: Number(get('commission') || 0), reorder_level: Number(get('reorder_level') || 0),
+        set_size: get('set_size') === '' ? null : Number(get('set_size')), set_price: get('set_price') === '' ? null : Number(get('set_price')),
+        set_commission: Number(get('set_commission') || 0),
         tags: $$('[data-tag-pick] input:checked', card).map(i => Number(i.value)) };
       if (item) await api('PATCH', `/inventory/${item.id}`, body);
       else await api('POST', '/inventory', body);
@@ -486,7 +497,7 @@ function tagsModal() {
 function pasteModal() {
   openModal(`${modalHeader('Paste from Excel or Sheets', 'Select your rows in Excel / Google Sheets (include the header row), copy, and paste here.')}
     <textarea data-paste-text rows="7" placeholder="SKU&#9;Item&#9;Unit&#9;Selling price&#9;Reorder at&#9;Tags&#9;Stock&#9;Cost"></textarea>
-    <p class="hint">Columns it understands: SKU, Item (or Name), Unit, Selling price, Commission, Reorder at, Tags (separate with , or ;), Stock, Cost.
+    <p class="hint">Columns it understands: SKU, Item (or Name), Unit, Selling price, Commission, Set of, Set price, Reorder at, Tags (separate with , or ;), Stock, Cost.
       Other columns are ignored. Stock is added as opening stock at its cost; no money is recorded.</p>
     <div data-paste-errors></div>
     <div class="table-wrap"><table class="simple-table" data-preview></table></div>
@@ -503,9 +514,9 @@ function pasteModal() {
         ? `<div class="banner">${parsed.errors.map(esc).join('<br>')}<br>Fix these in your sheet and paste again.</div>`
         : fresh.length ? `<p class="hint">New tags will be created: ${fresh.map(esc).join(', ')}</p>` : '';
       $('[data-preview]', card).innerHTML = parsed.rows.length ? `<thead><tr><th>SKU</th><th>Item</th><th>Unit</th><th>Tags</th><th class="num">Price</th>
-          <th class="num">Stock</th><th class="num">Cost</th><th class="num">Reorder at</th></tr></thead>
+          <th class="num">Set</th><th class="num">Stock</th><th class="num">Cost</th><th class="num">Reorder at</th></tr></thead>
         <tbody>${parsed.rows.map(r => `<tr><td class="mono">${esc(r.sku)}</td><td>${esc(r.name)}</td><td>${esc(r.unit)}</td><td>${r.tags.map(esc).join(', ')}</td>
-          <td class="num">${r.price ? peso(r.price) : '—'}</td><td class="num">${qty(r.stock)}</td><td class="num">${peso(r.unit_cost)}</td><td class="num">${qty(r.reorder_level)}</td></tr>`).join('')}</tbody>` : '';
+          <td class="num">${r.price ? peso(r.price) : '—'}</td><td class="num">${r.set_size ? `of ${qty(r.set_size)}${r.set_price ? ` · ${peso(r.set_price)}` : ''}` : '—'}</td><td class="num">${qty(r.stock)}</td><td class="num">${peso(r.unit_cost)}</td><td class="num">${qty(r.reorder_level)}</td></tr>`).join('')}</tbody>` : '';
       const button = $('[data-confirm]', card);
       button.disabled = !parsed.rows.length || parsed.errors.length > 0;
       button.textContent = parsed.rows.length ? `Add ${parsed.rows.length} item${parsed.rows.length === 1 ? '' : 's'}` : 'Add items';
@@ -521,9 +532,11 @@ function pasteModal() {
 
 function exportCsv() {
   const owner = isOwner();
-  const header = ['SKU', 'Item', 'Unit', 'Tags', 'Price', 'Commission', ...(owner ? ['Avg cost'] : []), 'Stock', 'Reorder at', ...(owner ? ['Value'] : [])];
+  const header = ['SKU', 'Item', 'Unit', 'Tags', 'Price', 'Commission', 'Set of', 'Set price', ...(owner ? ['Avg cost'] : []), 'Stock', 'Reorder at',
+    ...(owner ? ['Value'] : [])];
   const rows = visibleItems().map(i => [i.sku || '', i.name, i.unit, i.tags.map(t => tagOf(t)?.name).filter(Boolean).join(', '),
-    Number(i.price), Number(i.commission), ...(owner ? [Number(i.avg_cost)] : []), Number(i.stock), Number(i.reorder_level), ...(owner ? [valueOf(i)] : [])]);
+    Number(i.price), Number(i.commission), i.set_size ?? '', i.set_price ?? '',
+    ...(owner ? [Number(i.avg_cost)] : []), Number(i.stock), Number(i.reorder_level), ...(owner ? [valueOf(i)] : [])]);
   const url = URL.createObjectURL(new Blob([toCsv([header, ...rows])], { type: 'text/csv;charset=utf-8' }));
   const link = Object.assign(document.createElement('a'), { href: url, download: `Inventory_${todayLocal()}.csv` });
   document.body.append(link);

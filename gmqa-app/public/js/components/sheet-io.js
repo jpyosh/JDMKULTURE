@@ -48,6 +48,8 @@ const HEADERS = {
   tags: ['tags', 'tag', 'category', 'categories'],
   stock: ['stock', 'qty', 'quantity', 'onhand', 'stockonhand', 'instock'],
   unit_cost: ['cost', 'unitcost', 'avgcost', 'averagecost', 'costperunit', 'cost/unit'],
+  set_size: ['setof', 'setsize', 'piecesperset', 'pcsperset', 'perset'],
+  set_price: ['setprice', 'priceperset', 'setsrp'],
 };
 const NUMBER_LABELS = { price: 'Selling price', commission: 'Commission', reorder_level: 'Reorder level', stock: 'Stock', unit_cost: 'Cost' };
 const key = header => String(header || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -80,7 +82,7 @@ export function importRows(table) {
       sku: get('sku'), name: get('name'), unit: get('unit') || 'pc',
       price: 0, commission: 0, reorder_level: 0,
       tags: get('tags').split(/[,;]/).map(t => t.trim()).filter(Boolean),
-      stock: 0, unit_cost: 0,
+      stock: 0, unit_cost: 0, set_size: null, set_price: null,
     };
     const problems = [];
     if (!item.name) problems.push('the name is missing');
@@ -88,6 +90,18 @@ export function importRows(table) {
       const value = parseNumber(get(field));
       if (!Number.isFinite(value) || value < 0) problems.push(`${label} "${get(field)}" is not a number`);
       else item[field] = value;
+    }
+    // A set (optional): pieces per set and its price; blank = not sold as a set.
+    if (get('set_size')) {
+      const size = parseNumber(get('set_size'));
+      if (!Number.isFinite(size) || size < 0) problems.push(`Set of "${get('set_size')}" is not a number`);
+      else if (size > 0 && size <= 1) problems.push(`Set of "${get('set_size')}" must be more than 1 piece`);
+      else if (size > 1) item.set_size = size;
+    }
+    if (get('set_price')) {
+      const price = parseNumber(get('set_price'));
+      if (!Number.isFinite(price) || price < 0) problems.push(`Set price "${get('set_price')}" is not a number`);
+      else item.set_price = price;
     }
     if (problems.length) errors.push(`Row ${n}: ${problems.join(', ')}`);
     else rows.push(item);

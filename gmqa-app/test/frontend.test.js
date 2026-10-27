@@ -54,11 +54,24 @@ test('sheet paste: rows copied from Excel/Sheets become items', async () => {
     ['', 'Bad price', '', 'abc', '', '', '', '', '', ''],
   ]);
   assert.deepEqual(rows[0], { sku: 'RIM-15', name: 'Rims 15in', unit: 'set', price: 12500, commission: 500, reorder_level: 1,
-    tags: ['Auto Parts', 'Wheels'], stock: 2, unit_cost: 9000 });
-  assert.deepEqual(rows[1], { sku: '', name: 'APC', unit: 'gal', price: 0, commission: 0, reorder_level: 0, tags: ['Carwash chemicals'], stock: 3.5, unit_cost: 420 });
+    tags: ['Auto Parts', 'Wheels'], stock: 2, unit_cost: 9000, set_size: null, set_price: null });
+  assert.deepEqual(rows[1], { sku: '', name: 'APC', unit: 'gal', price: 0, commission: 0, reorder_level: 0, tags: ['Carwash chemicals'], stock: 3.5,
+    unit_cost: 420, set_size: null, set_price: null });
   assert.equal(rows.length, 2, 'blank rows are skipped; rows with errors are listed, not imported');
   assert.deepEqual(errors, ['Row 5: Selling price "abc" is not a number']);
   assert.deepEqual(importRows([['Price'], ['1']]).errors, ['The header row needs a Name (or Item) column']);
+});
+
+test('sheet paste: a set (pieces per set and its price) can be given per row', async () => {
+  const { importRows } = await sheetIo();
+  const { rows, errors } = importRows([
+    ['Item', 'Unit', 'Selling price', 'Set of', 'Set price'],
+    ['Lazertech 2in', 'pc', '2000', '2', '3,500'],
+    ['Horn', 'pc', '500', '', ''],
+    ['Odd', 'pc', '1', '1', '5'],
+  ]);
+  assert.deepEqual(rows.map(r => [r.name, r.set_size, r.set_price]), [['Lazertech 2in', 2, 3500], ['Horn', null, null]]);
+  assert.deepEqual(errors, ['Row 4: Set of "1" must be more than 1 piece']);
 });
 
 // Themes (public/themes/*.css) only restyle: every rule must be scoped to its own data-theme, so nothing

@@ -8,7 +8,8 @@ const { assertFundCovers } = require('./cash-fund');
 const SHOP_TODAY = "(now() at time zone 'Asia/Manila')::date";
 const AUTO_PARTS = 'auto_parts';
 const FOR_SALE = `exists (select 1 from part_tags pt join tags t on t.id = pt.tag_id where pt.part_id = p.id and t.system_key = '${AUTO_PARTS}')`;
-const ITEM_SELECT = `select p.id, p.sku, p.name, p.unit, p.price, p.commission, p.avg_cost, p.stock, p.reorder_level, p.active,
+const ITEM_SELECT = `select p.id, p.sku, p.name, p.unit, p.price, p.commission, p.set_size, p.set_price, p.set_commission,
+  p.avg_cost, p.stock, p.reorder_level, p.active,
   coalesce((select json_agg(pt.tag_id order by pt.tag_id) from part_tags pt where pt.part_id = p.id), '[]'::json) as tags,
   ${FOR_SALE} as for_sale
   from parts p`;
@@ -26,6 +27,9 @@ async function loadPart(q, partId, { activeOnly = false, forSale = false } = {})
   if (forSale && !part.for_sale) throw bad(`${part.name} is not for sale. Tag it as an auto part in Inventory to sell it.`);
   return part;
 }
+
+// Pieces a part line took from stock: its quantity × pieces per unit (a set line: the set size).
+const piecesOf = line => round2(Number(line.quantity) * (Number(line.pack_size) || 1));
 
 // Takes `quantity` out of stock for a sale; fails with a clear message if there is not enough.
 async function takeStock(q, partId, quantity, jobId) {
@@ -78,4 +82,4 @@ async function countStock(q, part, { day, counted, reason, note = null }) {
     [part.id, day, reason === 'used' ? 'use' : 'adjust', change, note ? `${label}: ${note}` : label]);
 }
 
-module.exports = { AUTO_PARTS, FOR_SALE, withLow, loadItems, loadPart, takeStock, returnStock, receiveStock, countStock, COUNT_REASONS };
+module.exports = { AUTO_PARTS, FOR_SALE, piecesOf, withLow, loadItems, loadPart, takeStock, returnStock, receiveStock, countStock, COUNT_REASONS };

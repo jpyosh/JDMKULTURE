@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -322,13 +322,32 @@ test('005 adds bill funds, set-asides and bill payments', async () => {
     values ($1, '2026-10-25', 8000, 8000, 0, null)`, [meralco]);
 });
 
+test('010 lets a part be sold as a set of pieces as well as per piece', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '009' });
+  const part = await one(driver, "insert into parts (name, unit, price, stock) values ('Lazertech 2in', 'pc', 2000, 4) returning id");
+  const job = await one(driver, "insert into jobs (job_date, department, jo_number) values ('2026-12-01', 'parts', 'PC-120126-001') returning id");
+  await driver.query(`insert into job_items (job_id, kind, part_id, name, quantity, price, commission, unit_cost)
+    values ($1, 'part', $2, 'Lazertech 2in', 2, 4000, 0, 1200)`, [job.id, part.id]);
+
+  assert.deepEqual(await migrate(driver, quiet), ['010']);
+  assert.deepEqual(await all(driver, 'select quantity, pack_size from job_items'), [{ quantity: 2, pack_size: 1 }], 'existing lines are per piece');
+  assert.deepEqual(await one(driver, 'select set_size, set_price, set_commission from parts'), { set_size: null, set_price: null, set_commission: 0 },
+    'existing items have no set');
+
+  await driver.query('update parts set set_size = 2, set_price = 3500, set_commission = 80 where id = $1', [part.id]);
+  await assert.rejects(driver.query('update parts set set_size = 1 where id = $1', [part.id]), /check/i, 'a set has more than one piece');
+  await assert.rejects(driver.query('update parts set set_price = -1 where id = $1', [part.id]), /check/i);
+  await assert.rejects(driver.query('update job_items set pack_size = 0'), /check/i);
+});
+
 test('009 adds inventory tags, usage counts and stock bought from the drawer or cash fund', async () => {
   const driver = await newDriver();
   await migrate(driver, { ...quiet, to: '001' });
   await loadLegacyData(driver);
   await migrate(driver, { ...quiet, to: '008' });
   const expensesBefore = await all(driver, 'select id, expense_date, side, description, amount, topup_id from expenses order by id');
-  assert.deepEqual(await migrate(driver, quiet), ['009']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '009' }), ['009']);
   assert.deepEqual(await all(driver, 'select id, expense_date, side, description, amount, topup_id from expenses order by id'), expensesBefore,
     'existing expenses unchanged');
   assert.equal((await one(driver, 'select count(*)::int n from expenses where for_resale')).n, 0, 'no existing expense is a parts purchase');

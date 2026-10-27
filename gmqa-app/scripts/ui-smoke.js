@@ -592,12 +592,23 @@ async function launch() {
       await inv.locator('[data-mode="sheet"]').click();
       await inv.locator('[data-sheet]').waitFor();
 
+      // Also sold as a set: a case of 4 bottles for ₱2,000 (stock stays in bottles).
+      await invCell('Engine oil 1L', 'set_size').click();
+      await page.keyboard.type('4');
+      await page.keyboard.press('Tab');
+      await expectToast(/Saved/);
+      await page.waitForFunction(() => document.activeElement?.dataset?.field === 'set_price');
+      await page.keyboard.type('2000');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory tr[data-item]')]
+        .find(r => r.textContent.includes('Engine oil'))?.querySelector('td[data-field="set_price"]').textContent.includes('2,000'));
+
       const [csv] = await Promise.all([page.waitForEvent('download'), inv.locator('[data-export]').click()]);
       assert.match(csv.suggestedFilename(), /^Inventory_\d{4}-\d{2}-\d{2}\.csv$/);
       const text = fs.readFileSync(await csv.path(), 'utf8');
       assert.ok(text.startsWith('﻿'), 'Excel-friendly CSV');
-      assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Avg cost,Stock,Reorder at,Value/);
-      assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,300,12,2,3600/);
+      assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Set of,Set price,Avg cost,Stock,Reorder at,Value/);
+      assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,4,2000,300,12,2,3600/);
       await shot('07c-inventory');
     });
 
@@ -625,6 +636,19 @@ async function launch() {
       assert.doesNotMatch(await sale.textContent(), /Unpaid/);
       await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
         .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('10'));
+
+      // The same part as a set: one case of 4 at the set price takes 4 bottles.
+      assert.match(await row.textContent(), /Set of 4[\s\S]*₱2,000\.00/, 'the Parts list shows the set price');
+      await parts.locator('[data-new-sale]').click();
+      await page.waitForSelector('#modal[open] [data-add="part"]');
+      const setOption = await page.locator('#modal [data-add="part"] option', { hasText: 'set of 4' }).getAttribute('value');
+      await page.selectOption('#modal [data-add="part"]', setOption);
+      assert.match(await page.textContent('#modal [data-lines]'), /set of 4/);
+      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱2,000\.00/);
+      await page.click('#modal [data-save]');
+      await expectToast(/PC-092126-002 added/);
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
+        .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('6'));
       await shot('07c-parts');
     });
 
