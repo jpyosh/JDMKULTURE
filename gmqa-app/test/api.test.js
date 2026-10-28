@@ -424,6 +424,55 @@ test('an employee can have their own normal hours and OT multiplier from a date 
   assert.equal(await otOn('2028-02-13'), 343.75, 'the week before keeps its own rule');
 });
 
+test('an OT change is previewed first: per-hour example, whose pay changes, and weeks already paid out', async () => {
+  const crew = await ok(api(OWNER, 'POST', '/employees', { name: 'Preview Crew', role: '', rate_per_day: 1100, construction_rate: 800 }));
+  const other = await ok(api(OWNER, 'POST', '/employees', { name: 'Preview Other', role: '', rate_per_day: 500, construction_rate: 0 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${crew.id}/2028-03-05`, { code: 'P', cw_ot_hours: 2 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${crew.id}/2028-03-13`, { code: 'P', cw_ot_hours: 1 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${other.id}/2028-03-06`, { code: 'P' })); // no OT: pay does not change
+
+  const rule = { kind: 'ot-rule', effective_from: '2028-03-05', carwash_hours: 8, construction_hours: 8, multiplier: 1.25 };
+  assert.equal((await api(STAFF, 'POST', '/payroll/preview', rule)).status, 403);
+  assert.equal((await api(OWNER, 'POST', '/payroll/preview', { ...rule, multiplier: 9 })).status, 400);
+  assert.equal((await api(OWNER, 'POST', '/payroll/preview', { kind: 'nope' })).status, 400);
+  const p = await ok(api(OWNER, 'POST', '/payroll/preview', rule));
+  assert.equal(p.from, '2028-03-05');
+  const mine = p.changes.find(c => c.employee_id === crew.id);
+  assert.deepEqual(mine, { employee_id: crew.id, name: 'Preview Crew', otHours: 3,
+    before: { otPay: 300, gross: 2500 }, after: { otPay: 515.63, gross: 2715.63 } }); // 1100/11 × 3 → 1100/8 × 1.25 × 3
+  assert.ok(!p.changes.some(c => c.employee_id === other.id), 'nobody whose pay stays the same');
+  assert.deepEqual(p.paidOut, []);
+  assert.ok(p.example.rate > 0 && p.example.hours === 8 && p.example.multiplier === 1.25, 'an example employee on the shop rule');
+  assert.equal(p.example.perHour, Math.round(p.example.rate / 8 * 1.25 * 100) / 100);
+
+  // Wages for Mar 5-11 are already paid: the preview says so, and saving needs a second confirm.
+  const payout = await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: '2028-03-11', period_start: '2028-03-05', period_end: '2028-03-11', side: 'cash', amount: 1000 }));
+  const paid = await ok(api(OWNER, 'POST', '/payroll/preview', rule));
+  assert.deepEqual(paid.paidOut, [{ payout_date: '2028-03-11', period_start: '2028-03-05', period_end: '2028-03-11' }]);
+  const { kind, effective_from, ...body } = rule;
+  const refused = await api(OWNER, 'PUT', '/payroll/ot-rules/2028-03-05', body);
+  assert.equal(refused.status, 409);
+  assert.match(refused.data.error, /already paid out.*Mar 5.*Mar 11, 2028/);
+  await ok(api(OWNER, 'PUT', '/payroll/ot-rules/2028-03-05', { ...body, confirm_paid: true }));
+  // Starting after the paid week touches nothing paid: no confirm needed.
+  await ok(api(OWNER, 'PUT', '/payroll/ot-rules/2028-03-12', body));
+  assert.equal((await api(OWNER, 'DELETE', '/payroll/ot-rules/2028-03-05')).status, 409, 'undoing it changes the paid week too');
+  await ok(api(OWNER, 'DELETE', '/payroll/ot-rules/2028-03-05?confirm_paid=1'));
+  await ok(api(OWNER, 'DELETE', '/payroll/ot-rules/2028-03-12'));
+
+  // One employee's own work day: only their pay, with their own per-hour figure.
+  const own = { kind: 'employee', employee_id: crew.id, effective_from: '2028-03-05', carwash_hours: 8, ot_multiplier: '' };
+  const e = await ok(api(OWNER, 'POST', '/payroll/preview', own));
+  assert.deepEqual(e.changes.map(c => [c.name, c.before.otPay, c.after.otPay]), [['Preview Crew', 300, 412.5]]); // 1100/8 × 1 × 3
+  assert.deepEqual(e.example, { name: 'Preview Crew', rate: 1100, hours: 8, multiplier: 1, perHour: 137.5 });
+  assert.equal(e.paidOut.length, 1);
+  assert.equal((await api(OWNER, 'PATCH', `/employees/${crew.id}`, { carwash_hours: 8, effective_from: '2028-03-05' })).status, 409);
+  await ok(api(OWNER, 'PATCH', `/employees/${crew.id}`, { carwash_hours: 8, effective_from: '2028-03-05', confirm_paid: true }));
+  // A change to someone with nothing in the paid week goes through without the confirm.
+  await ok(api(OWNER, 'PATCH', `/employees/${other.id}`, { rate_per_day: 600, effective_from: '2028-03-12' }));
+  await ok(api(OWNER, 'DELETE', `/payroll/payouts/${payout.id}`));
+});
+
 test('own hours and OT multiplier show next to the rate on the sign-off sheet', async () => {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
   const gm = await ok(api(OWNER, 'POST', '/employees', { name: 'Sheet GM', role: 'GM', rate_per_day: 1100, construction_rate: 0 }));
@@ -432,7 +481,7 @@ test('own hours and OT multiplier show next to the rate on the sign-off sheet', 
   assert.equal(saved.ot_multiplier, 1.25);
   await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/${today}`, { code: 'P' }));
   const pdf = (await pdfLines((await download(OWNER, `/payroll/signoff.pdf?start=${today}&end=${today}`)).body)).flat().join('\n');
-  assert.match(pdf, /GM · ₱1,100 \/ 0 · 8h day · OT × 1\.25/);
+  assert.match(pdf, /GM · ₱1,100 \/ 0 · 8h day · OT \+25%/);
 });
 
 test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {

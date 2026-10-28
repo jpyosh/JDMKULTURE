@@ -189,6 +189,21 @@ function rateOn(rates, date) {
   return best || { rate_per_day: 0, construction_rate: 0 };
 }
 
+// One overtime hour's pay on a date: the day's rate ÷ the normal hours of that kind of day × the OT
+// multiplier. Carwash hours and the multiplier are the employee's own when set, else the shop rule's.
+function otHourly(rates, otRules, date) {
+  const r = rateOn(rates, date);
+  const shop = otRuleOn(otRules, date);
+  const carwashHours = Number(r.carwash_hours ?? shop.carwash_hours);
+  const constructionHours = Number(shop.construction_hours);
+  const multiplier = Number(r.ot_multiplier ?? shop.multiplier);
+  return {
+    carwashHours, constructionHours, multiplier,
+    carwash: (Number(r.rate_per_day) || 0) / carwashHours * multiplier,
+    construction: (Number(r.construction_rate) || 0) / constructionHours * multiplier,
+  };
+}
+
 // Pay for one employee over the given dates. days: { 'YYYY-MM-DD': { code, cw_ot_hours, cn_ot_hours } },
 // adjustments: [{ kind: 'addition' | 'deduction', amount }] already limited to the range,
 // otRules: the shop's overtime rules (see otRuleOn).
@@ -209,10 +224,8 @@ function payrollForRange({ dates, days = {}, rates = [], adjustments = [], otRul
     const cwOt = Number(d.cw_ot_hours) || 0;
     const cnOt = Number(d.cn_ot_hours) || 0;
     t.otHours += cwOt + cnOt;
-    const shop = otRuleOn(otRules, date);
-    const cwHours = Number(r.carwash_hours ?? shop.carwash_hours);
-    const multiplier = Number(r.ot_multiplier ?? shop.multiplier);
-    t.otPay += (cw / cwHours * cwOt + cn / Number(shop.construction_hours) * cnOt) * multiplier;
+    const hourly = otHourly(rates, otRules, date);
+    t.otPay += hourly.carwash * cwOt + hourly.construction * cnOt;
   }
   const additions = sum(adjustments.filter(a => a.kind === 'addition'), a => a.amount);
   const deductions = sum(adjustments.filter(a => a.kind === 'deduction'), a => a.amount);
@@ -300,7 +313,7 @@ function joPrefix(date, prefix = 'JO') {
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, isCounted, daySummary,
-  ATTENDANCE_CODES, otRuleOn, otRuleNote, rateOn, payrollForRange,
+  ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
 };

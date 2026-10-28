@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { rateOn, payrollForRange: payWith, datesBetween, daySummary, otRuleOn, otRuleNote: noteWith } = require('../lib/calc');
+const { rateOn, payrollForRange: payWith, datesBetween, daySummary, otRuleOn, otHourly, otRuleNote: noteWith } = require('../lib/calc');
 
 // The shop's overtime rules as migration 011 seeds them (the owner can change them on the Payroll screen).
 const SHOP_RULES = [
@@ -128,6 +128,17 @@ test('an employee can have their own normal hours and OT multiplier, dated like 
   const crew = payrollForRange({ dates: ['2026-11-01'], rates: [{ effective_from: '2000-01-01', rate_per_day: 1100, construction_rate: 0 }],
     days: { '2026-11-01': { code: 'P', cw_ot_hours: 2 } } });
   assert.equal(crew.otPay, 200);                                          // 1100 / 11 × 1 × 2
+});
+
+test('otHourly gives one OT hour\'s pay on a date, the same figure the pay uses', () => {
+  const rates = [
+    { effective_from: '2000-01-01', rate_per_day: 1100, construction_rate: 800 },
+    { effective_from: '2026-11-01', rate_per_day: 1100, construction_rate: 800, carwash_hours: 8, ot_multiplier: 1.25 },
+  ];
+  assert.deepEqual(otHourly(rates, SHOP_RULES, '2026-10-20'),
+    { carwashHours: 11, constructionHours: 8, multiplier: 1, carwash: 100, construction: 100 });
+  assert.deepEqual(otHourly(rates, SHOP_RULES, '2026-11-01'),
+    { carwashHours: 8, constructionHours: 8, multiplier: 1.25, carwash: 171.875, construction: 125 });
 });
 
 test('the shop overtime rule comes from the rules passed in, so the owner can change it from a date', () => {
