@@ -3,7 +3,6 @@
 // people who prepare, check, approve and release the pay.
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const { otRuleNote } = require('./calc');
 
 const MAX_DAYS = 16; // one pay period: a week, 1st-15th or 16th-end
 const FONTS = {
@@ -49,6 +48,9 @@ function displayName(name) {
   return tidy.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, sep, ch) => sep + ch.toUpperCase());
 }
 const roleLabel = role => (role ? `${displayName(role)} · ` : '');
+// An employee's own normal carwash hours / OT multiplier (blank = the shop rule), as on the Payroll screen.
+const ownOtLabel = e => [e.carwash_hours != null && ` · ${plain(e.carwash_hours)}h day`, e.ot_multiplier != null && ` · OT × ${plain(e.ot_multiplier)}`]
+  .filter(Boolean).join('');
 
 // ---------------------------------------------------------------- rows
 
@@ -57,7 +59,7 @@ function sheetRows(payroll) {
     .filter(r => r.pay.gross > 0 || r.adjustments.length > 0) // nobody with nothing to pay
     .map(({ employee, days, pay }) => ({
       name: displayName(employee.name),
-      rates: `${roleLabel(employee.role)}${rate(employee.rate_per_day)} / ${plain(employee.construction_rate)}`,
+      rates: `${roleLabel(employee.role)}${rate(employee.rate_per_day)} / ${plain(employee.construction_rate)}${ownOtLabel(employee)}`,
       days: payroll.dates.map(d => {
         const day = days[d] || {};
         const ot = (Number(day.cw_ot_hours) || 0) + (Number(day.cn_ot_hours) || 0);
@@ -199,7 +201,7 @@ function buildPdf(payroll) {
     put('TOTAL NET PAY', { x: totalRight - totalW - 140, w: 130 }, top + 16, { font: 'bold', size: 9, align: 'right' });
     put('P = Carwash day · 0.5P = Half carwash · CN = Construction · 0.5CN = Half construction · A = Absent · OFF = Day off · +h = overtime hours.',
       at(M, right - M), top + 36, { size: 7, color: MUTED });
-    put(`Rate shown as carwash / construction daily rate. ${payroll.otRule || otRuleNote(payroll.start, payroll.end)}`, at(M, right - M), top + 47, { size: 7, color: MUTED });
+    put(`Rate shown as carwash / construction daily rate. ${payroll.otRule}`, at(M, right - M), top + 47, { size: 7, color: MUTED });
     const boxes = [['Prepared by', '(Name & signature)'], ['Checked by', '(Name & signature)'], ['Approved by', '(Owner / Manager)'], ['Released by', '(Cash / GCash)']];
     const boxW = (right - M) / 4;
     boxes.forEach(([label, hint], i) => {

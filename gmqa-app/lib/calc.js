@@ -144,38 +144,34 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 
 const ATTENDANCE_CODES = ['P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 // Overtime pays the hourly rate (the day's rate ÷ the normal hours of that kind of day) × a multiplier,
-// using the rule in effect on the day the overtime was worked. Dated like employee rates, so a change
-// never alters days before it. Newest last.
-const OT_RULES = [
-  { from: '2000-01-01', multiplier: 1.25, carwashHours: 8, constructionHours: 8 },
-  // Owner's decisions: OT at the plain hourly rate from Sun Oct 4, 2026; a carwash day is 11 hours from Mon Oct 5, 2026.
-  { from: '2026-10-04', multiplier: 1, carwashHours: 8, constructionHours: 8 },
-  { from: '2026-10-05', multiplier: 1, carwashHours: 11, constructionHours: 8 },
-];
-function otRuleOn(date) {
-  let rule = OT_RULES[0];
-  for (const r of OT_RULES) if (r.from <= date) rule = r;
+// using the rule in effect on the day the overtime was worked. The shop's rules live in the ot_rules
+// table, set by the owner on the Payroll screen: [{ effective_from, multiplier, carwash_hours,
+// construction_hours }], oldest first. Dated like employee rates, so a change never alters days before it.
+const NO_OT_RULE = { effective_from: '2000-01-01', multiplier: 1, carwash_hours: 8, construction_hours: 8 };
+function otRuleOn(rules, date) {
+  let rule = rules[0] || NO_OT_RULE;
+  for (const r of rules) if (r.effective_from <= date) rule = r;
   return rule;
 }
-const otMultiplierOn = date => otRuleOn(date).multiplier;
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const longDate = date => { const [y, m, d] = date.split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${d}, ${y}`; };
 // The overtime rule(s) that apply to the days start..end, as one sentence for the screen and the sheet.
-function otRuleNote(start, end) {
+function otRuleNote(rules, start, end) {
   const parts = [];
-  OT_RULES.forEach((rule, i) => {
-    const next = OT_RULES[i + 1];
-    const until = next ? addDays(next.from, -1) : null;
-    if ((until && until < start) || rule.from > end) return; // no day of the range uses this rule
-    parts.push({ rule, until, from: rule.from });
+  rules.forEach((rule, i) => {
+    const next = rules[i + 1];
+    const until = next ? addDays(next.effective_from, -1) : null;
+    if ((until && until < start) || (i > 0 && rule.effective_from > end)) return; // no day of the range uses this rule
+    parts.push({ rule, until, from: rule.effective_from });
   });
-  const hourly = r => (r.carwashHours === r.constructionHours
-    ? `the day's rate ÷ ${r.carwashHours}`
-    : `the carwash rate ÷ ${r.carwashHours} (construction rate ÷ ${r.constructionHours})`);
-  if (parts.length === 1) return `OT pays ${hourly(parts[0].rule)} × ${parts[0].rule.multiplier} per hour.`;
+  if (!parts.length) parts.push({ rule: NO_OT_RULE, until: null, from: start });
+  const hourly = r => (Number(r.carwash_hours) === Number(r.construction_hours)
+    ? `the day's rate ÷ ${Number(r.carwash_hours)}`
+    : `the carwash rate ÷ ${Number(r.carwash_hours)} (construction rate ÷ ${Number(r.construction_hours)})`);
+  if (parts.length === 1) return `OT pays ${hourly(parts[0].rule)} × ${Number(parts[0].rule.multiplier)} per hour.`;
   const last = parts.length - 1;
   const clauses = parts.map((p, i) => {
-    const pay = `${hourly(p.rule)} × ${p.rule.multiplier}${i === 0 ? ' per hour' : ''}`;
+    const pay = `${hourly(p.rule)} × ${Number(p.rule.multiplier)}${i === 0 ? ' per hour' : ''}`;
     if (i === 0) return `${pay} up to ${longDate(p.until)}`;
     if (i === last) return `${pay} from ${longDate(p.from)}`;
     return p.from === p.until ? `${pay} on ${longDate(p.from)}` : `${pay} from ${longDate(p.from)} to ${longDate(p.until)}`;
@@ -185,7 +181,8 @@ function otRuleNote(start, end) {
     : `OT pays ${clauses.slice(0, last).join('; ')}; and ${clauses[last]}.`;
 }
 
-// rates: [{ effective_from, rate_per_day, construction_rate }]; the latest one on or before date applies.
+// rates: [{ effective_from, rate_per_day, construction_rate, carwash_hours, ot_multiplier }]; the latest
+// one on or before date applies. carwash_hours / ot_multiplier are the employee's own (null = shop rule).
 function rateOn(rates, date) {
   let best = null;
   for (const r of rates) if (r.effective_from <= date && (!best || r.effective_from > best.effective_from)) best = r;
@@ -193,8 +190,9 @@ function rateOn(rates, date) {
 }
 
 // Pay for one employee over the given dates. days: { 'YYYY-MM-DD': { code, cw_ot_hours, cn_ot_hours } },
-// adjustments: [{ kind: 'addition' | 'deduction', amount }] already limited to the range.
-function payrollForRange({ dates, days = {}, rates = [], adjustments = [] }) {
+// adjustments: [{ kind: 'addition' | 'deduction', amount }] already limited to the range,
+// otRules: the shop's overtime rules (see otRuleOn).
+function payrollForRange({ dates, days = {}, rates = [], adjustments = [], otRules = [] }) {
   const t = { carwashDays: 0, constructionDays: 0, absences: 0, daysOff: 0, carwashPay: 0, constructionPay: 0, otPay: 0, otHours: 0 };
   for (const date of dates) {
     const d = days[date];
@@ -211,8 +209,10 @@ function payrollForRange({ dates, days = {}, rates = [], adjustments = [] }) {
     const cwOt = Number(d.cw_ot_hours) || 0;
     const cnOt = Number(d.cn_ot_hours) || 0;
     t.otHours += cwOt + cnOt;
-    const ot = otRuleOn(date);
-    t.otPay += (cw / ot.carwashHours * cwOt + cn / ot.constructionHours * cnOt) * ot.multiplier;
+    const shop = otRuleOn(otRules, date);
+    const cwHours = Number(r.carwash_hours ?? shop.carwash_hours);
+    const multiplier = Number(r.ot_multiplier ?? shop.multiplier);
+    t.otPay += (cw / cwHours * cwOt + cn / Number(shop.construction_hours) * cnOt) * multiplier;
   }
   const additions = sum(adjustments.filter(a => a.kind === 'addition'), a => a.amount);
   const deductions = sum(adjustments.filter(a => a.kind === 'deduction'), a => a.amount);
@@ -300,7 +300,7 @@ function joPrefix(date, prefix = 'JO') {
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, isCounted, daySummary,
-  ATTENDANCE_CODES, OT_RULES, otMultiplierOn, otRuleNote, rateOn, payrollForRange,
+  ATTENDANCE_CODES, otRuleOn, otRuleNote, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
 };

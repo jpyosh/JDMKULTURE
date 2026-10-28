@@ -362,6 +362,79 @@ test('overtime pays ×1 from 2026-10-04 on screen and on the sign-off sheet; ear
   assert.equal(across.otRule, "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026; the day's rate ÷ 8 × 1 on Oct 4, 2026; and the carwash rate ÷ 11 (construction rate ÷ 8) × 1 from Oct 5, 2026.");
 });
 
+test('the owner sets the shop overtime rule from a date; earlier days keep theirs', async () => {
+  const worker = await ok(api(OWNER, 'POST', '/employees', { name: 'Shop Rule Worker', role: '', rate_per_day: 1000, construction_rate: 800 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/2028-01-01`, { code: 'P', cw_ot_hours: 2 })); // Sat, before the change
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/2028-01-02`, { code: 'P', cw_ot_hours: 2 })); // Sun, from the change
+  const payOf = async range => (await ok(api(OWNER, 'GET', `/payroll?${range}`)));
+
+  const before = await payOf('start=2028-01-01&end=2028-01-02');
+  assert.deepEqual(before.otRules.map(r => r.effective_from), ['2000-01-01', '2026-10-04', '2026-10-05'], 'the screen gets the rules to edit');
+  assert.equal(before.rows.find(r => r.employee.id === worker.id).pay.otPay, 363.64); // 1000 / 11 × 2, twice
+
+  const rule = { multiplier: 1.25, carwash_hours: 10, construction_hours: 8 };
+  assert.equal((await api(STAFF, 'PUT', '/payroll/ot-rules/2028-01-02', rule)).status, 403, 'owner only');
+  for (const bad of [{ ...rule, multiplier: 0 }, { ...rule, multiplier: 4 }, { ...rule, carwash_hours: 0 }, { ...rule, construction_hours: 30 }, { ...rule, carwash_hours: '' }]) {
+    assert.equal((await api(OWNER, 'PUT', '/payroll/ot-rules/2028-01-02', bad)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await api(OWNER, 'PUT', '/payroll/ot-rules/not-a-date', rule)).status, 400);
+  await ok(api(OWNER, 'PUT', '/payroll/ot-rules/2028-01-02', rule));
+
+  const after = await payOf('start=2028-01-01&end=2028-01-02');
+  assert.equal(after.rows.find(r => r.employee.id === worker.id).pay.otPay, 181.82 + 250); // Sat: 1000/11 × 2 · Sun: 1000/10 × 1.25 × 2
+  assert.equal(after.otRule, 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour up to Jan 1, 2028, and the carwash rate ÷ 10 (construction rate ÷ 8) × 1.25 from Jan 2, 2028.');
+  // Saving the same date again changes that rule instead of adding another.
+  await ok(api(OWNER, 'PUT', '/payroll/ot-rules/2028-01-02', { ...rule, multiplier: 1.5 }));
+  assert.equal((await payOf('start=2028-01-02&end=2028-01-02')).rows.find(r => r.employee.id === worker.id).pay.otPay, 300);
+
+  // The first rule covers every earlier day, so it cannot be deleted; a later one can.
+  assert.equal((await api(OWNER, 'DELETE', '/payroll/ot-rules/2000-01-01')).status, 400);
+  assert.equal((await api(STAFF, 'DELETE', '/payroll/ot-rules/2028-01-02')).status, 403);
+  await ok(api(OWNER, 'DELETE', '/payroll/ot-rules/2028-01-02'));
+  assert.equal((await api(OWNER, 'DELETE', '/payroll/ot-rules/2028-01-02')).status, 404);
+  assert.equal((await payOf('start=2028-01-01&end=2028-01-02')).rows.find(r => r.employee.id === worker.id).pay.otPay, 363.64);
+});
+
+test('an employee can have their own normal hours and OT multiplier from a date (the GM works 8 hours, the crew 11)', async () => {
+  const gm = await ok(api(OWNER, 'POST', '/employees', { name: 'Own Hours GM', role: 'General manager', rate_per_day: 1100, construction_rate: 0 }));
+  assert.equal(gm.carwash_hours, null, 'new employees follow the shop rule');
+  assert.equal(gm.ot_multiplier, null);
+  for (const d of ['2028-02-06', '2028-02-13']) await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/${d}`, { code: 'P', cw_ot_hours: 2 }));
+  const otOn = async d => (await ok(api(OWNER, 'GET', `/payroll?start=${d}&end=${d}`))).rows.find(r => r.employee.id === gm.id).pay.otPay;
+  assert.equal(await otOn('2028-02-06'), 200); // shop rule: 1100 / 11 × 1 × 2
+
+  for (const bad of [{ carwash_hours: 0 }, { carwash_hours: 25 }, { ot_multiplier: 0.5 }, { ot_multiplier: 4 }]) {
+    assert.equal((await api(OWNER, 'PATCH', `/employees/${gm.id}`, { ...bad, effective_from: '2028-02-13' })).status, 400, JSON.stringify(bad));
+  }
+  const saved = await ok(api(OWNER, 'PATCH', `/employees/${gm.id}`, { carwash_hours: 8, ot_multiplier: 1.25, effective_from: '2028-02-13' }));
+  assert.equal(saved.rate_per_day, 1100, 'the rate stays as it was');
+  assert.equal(await otOn('2028-02-06'), 200, 'days before the change keep the shop rule');
+  assert.equal(await otOn('2028-02-13'), 343.75); // own: 1100 / 8 × 1.25 × 2
+  const screen = await ok(api(OWNER, 'GET', '/payroll?start=2028-02-13&end=2028-02-13'));
+  assert.deepEqual(screen.rows.find(r => r.employee.id === gm.id).rates.at(-1),
+    { effective_from: '2028-02-13', rate_per_day: 1100, construction_rate: 0, carwash_hours: 8, ot_multiplier: 1.25 });
+
+  // A later raise keeps their own hours and multiplier.
+  await ok(api(OWNER, 'PATCH', `/employees/${gm.id}`, { rate_per_day: 1200, effective_from: '2028-02-20' }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/2028-02-20`, { code: 'P', cw_ot_hours: 2 }));
+  assert.equal(await otOn('2028-02-20'), 375); // 1200 / 8 × 1.25 × 2
+  // Clearing them (blank) goes back to the shop rule from that date.
+  await ok(api(OWNER, 'PATCH', `/employees/${gm.id}`, { carwash_hours: '', ot_multiplier: '', effective_from: '2028-02-20' }));
+  assert.equal(await otOn('2028-02-20'), 218.18); // 1200 / 11 × 1 × 2
+  assert.equal(await otOn('2028-02-13'), 343.75, 'the week before keeps its own rule');
+});
+
+test('own hours and OT multiplier show next to the rate on the sign-off sheet', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+  const gm = await ok(api(OWNER, 'POST', '/employees', { name: 'Sheet GM', role: 'GM', rate_per_day: 1100, construction_rate: 0 }));
+  const saved = await ok(api(OWNER, 'PATCH', `/employees/${gm.id}`, { carwash_hours: 8, ot_multiplier: 1.25 })); // from today
+  assert.equal(saved.carwash_hours, 8);
+  assert.equal(saved.ot_multiplier, 1.25);
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/${today}`, { code: 'P' }));
+  const pdf = (await pdfLines((await download(OWNER, `/payroll/signoff.pdf?start=${today}&end=${today}`)).body)).flat().join('\n');
+  assert.match(pdf, /GM · ₱1,100 \/ 0 · 8h day · OT × 1\.25/);
+});
+
 test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {
   const names = [];
   for (let i = 1; i <= 30; i++) {

@@ -26,6 +26,17 @@ function money(value, field, { min = 0, allowNull = false } = {}) {
   return Math.round(n * 100) / 100;
 }
 
+// A number from min to max (hours, multipliers). Blank is null when allowNull, otherwise an error.
+function between(value, field, min, max, { allowNull = false } = {}) {
+  if (value === '' || value === null || value === undefined) {
+    if (allowNull) return null;
+    throw bad(`${field} is required`);
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) throw bad(`${field} must be a number from ${min} to ${max}`);
+  return Math.round(n * 100) / 100;
+}
+
 function text(value, field, { max = 200, required = false } = {}) {
   const s = value == null ? '' : String(value).trim();
   if (required && !s) throw bad(`${field} is required`);
@@ -84,4 +95,4 @@ function errorHandler(error, req, res, next) {
   res.status(500).json({ error: 'Something went wrong on the server. Please try again.' });
 }
 
-module.exports = { HttpError, bad, notFound, forbidden, conflict, money, text, date, oneOf, time, id, pick, errorHandler };
+module.exports = { HttpError, bad, notFound, forbidden, conflict, money, between, text, date, oneOf, time, id, pick, errorHandler };

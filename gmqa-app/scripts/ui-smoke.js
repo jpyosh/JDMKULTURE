@@ -948,6 +948,83 @@ async function launch() {
       assert.equal((await row.locator('[data-act="ot"]').textContent()).trim(), '2h');
     });
 
+    await step('payroll: the owner sets the OT rule and an employee\'s own hours on the Payroll tab', async () => {
+      // Asked for: control the OT rate and the working hours (the GM works 8 hours, the crew 11).
+      const note = () => payroll.locator('[data-ot-rule]').textContent();
+      const fmt = n => `₱${(Math.round(n * 100) / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      await setPayrollRange('2027-03-07', '2027-03-13');
+      assert.equal(await note(), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
+
+      // Shop rule from Sun Mar 7, 2027: a 10-hour carwash day at × 1.25.
+      await payroll.locator('[data-ot-settings]').click();
+      assert.equal(await page.locator('#modal [data-rule-row]').count(), 3, 'the rules so far are listed');
+      const today = await page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
+      const sunday = new Date(`${today}T00:00:00Z`);
+      sunday.setUTCDate(sunday.getUTCDate() - sunday.getUTCDay());
+      assert.equal(await page.inputValue('#modal [data-rule="effective_from"]'), sunday.toISOString().slice(0, 10),
+        'a change starts with this pay week by default, like a rate change');
+      await page.fill('#modal [data-rule="effective_from"]', '2027-03-07');
+      assert.equal(await page.inputValue('#modal [data-rule="carwash_hours"]'), '11', 'starts from the rule in effect that day');
+      assert.equal(await page.inputValue('#modal [data-rule="multiplier"]'), '1');
+      await page.fill('#modal [data-rule="carwash_hours"]', '10');
+      await page.fill('#modal [data-rule="multiplier"]', '1.25');
+      assert.match(await page.textContent('#modal [data-rule-note]'), /Mar 7, 2027.*÷ 10.*× 1\.25/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Overtime rule saved/);
+      await page.waitForFunction(() => /÷ 10/.test(document.querySelector('#view-payroll [data-ot-rule]').textContent));
+      assert.equal(await note(), 'OT pays the carwash rate ÷ 10 (construction rate ÷ 8) × 1.25 per hour.');
+
+      // An employee with their own 8-hour day.
+      await payroll.locator('[data-add-employee]').click();
+      await page.fill('#modal [data-n="name"]', 'Own Hours GM');
+      await page.fill('#modal [data-n="role"]', 'GM');
+      await page.fill('#modal [data-n="rate_per_day"]', '1100');
+      await page.fill('#modal [data-n="construction_rate"]', '0');
+      assert.equal(await page.getAttribute('#modal [data-n="carwash_hours"]', 'placeholder'), 'Shop rule');
+      await page.fill('#modal [data-n="carwash_hours"]', '8');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee added/);
+      const row = payroll.locator('tbody tr[data-emp]', { hasText: 'Own Hours GM' });
+      await row.waitFor();
+      assert.match(await row.locator('.employee-cell .muted').textContent(), /GM · ₱1,100\.00 \/ ₱0\.00 · 8h day$/);
+      await row.locator('[data-act="ot"]').click();
+      await page.fill('#modal [data-cw="2027-03-08"]', '2');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Overtime saved/);
+      const otPayIs = want => page.waitForFunction(w => [...document.querySelectorAll('#view-payroll tbody tr[data-emp]')]
+        .find(tr => tr.textContent.includes('Own Hours GM'))?.querySelector('[data-ot-pay]').textContent.trim() === w, want, { timeout: 8000 })
+        .catch(async () => assert.fail(`OT pay ${(await row.locator('[data-ot-pay]').textContent()).trim()}, expected ${want}`));
+      await otPayIs(fmt(1100 / 8 * 1.25 * 2)); // own 8 hours, shop × 1.25
+
+      // Their own multiplier too; then back to the shop rule (blank).
+      await row.locator('[data-act="edit"]').click();
+      assert.equal(await page.inputValue('#modal [data-n="carwash_hours"]'), '8');
+      await page.fill('#modal [data-n="ot_multiplier"]', '1.5');
+      assert.match(await page.textContent('#modal [data-rate-note]'), /OT × 1\.5/, 'the form says what changes');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee saved/);
+      await otPayIs(fmt(1100 / 8 * 1.5 * 2));
+      assert.match(await row.locator('.employee-cell .muted').textContent(), /8h day · OT × 1\.5$/);
+      await row.locator('[data-act="edit"]').click();
+      await page.fill('#modal [data-n="carwash_hours"]', '');
+      await page.fill('#modal [data-n="ot_multiplier"]', '');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Employee saved/);
+      await otPayIs(fmt(1100 / 10 * 1.25 * 2)); // shop rule again
+
+      // Removing the shop rule puts the earlier one back for those days.
+      await payroll.locator('[data-ot-settings]').click();
+      await page.click('#modal [data-rule-row="2027-03-07"] [data-del-rule]');
+      await expectToast(/Overtime rule deleted/);
+      await page.waitForFunction(() => /÷ 11/.test(document.querySelector('#view-payroll [data-ot-rule]').textContent));
+      await otPayIs(fmt(1100 / 11 * 2));
+      await row.locator('[data-act="deactivate"]').click();
+      await expectToast(/removed/);
+      // Back to this week, so the next steps' ranges are never more than 62 days from the one shown.
+      await payroll.locator('[data-preset="this-week"]').click();
+      await page.waitForFunction(s => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === s, sunday.toISOString().slice(0, 10));
+    });
+
     await step('payroll: sign-off sheet downloads as a PDF', async () => {
       await setPayrollRange('2026-09-27', '2026-10-04');
       // Reported: the button was hard to find (it sat below the whole table). It must be on screen
