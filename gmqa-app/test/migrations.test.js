@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -322,6 +322,32 @@ test('005 adds bill funds, set-asides and bill payments', async () => {
     values ($1, '2026-10-25', 8000, 8000, 0, null)`, [meralco]);
 });
 
+test('011 moves the overtime rules into the database and lets an employee have their own hours and OT multiplier', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '010' });
+  const emp = await one(driver, "insert into employees (name) values ('GM') returning id");
+  await driver.query("insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate) values ($1, '2000-01-01', 1100, 0)", [emp.id]);
+
+  assert.deepEqual(await migrate(driver, quiet), ['011']);
+  assert.deepEqual(await all(driver, 'select effective_from, multiplier, carwash_hours, construction_hours from ot_rules order by effective_from'), [
+    { effective_from: '2000-01-01', multiplier: 1.25, carwash_hours: 8, construction_hours: 8 },
+    { effective_from: '2026-10-04', multiplier: 1, carwash_hours: 8, construction_hours: 8 },
+    { effective_from: '2026-10-05', multiplier: 1, carwash_hours: 11, construction_hours: 8 },
+  ], 'the rules the app had in code, unchanged');
+  assert.deepEqual(await one(driver, 'select rate_per_day, carwash_hours, ot_multiplier from employee_rates'),
+    { rate_per_day: 1100, carwash_hours: null, ot_multiplier: null }, 'existing rates follow the shop rule');
+
+  await driver.query("update employee_rates set carwash_hours = 8, ot_multiplier = 1.25");
+  for (const bad of ['carwash_hours = 0', 'carwash_hours = 25', 'ot_multiplier = 0', 'ot_multiplier = 3.5']) {
+    await assert.rejects(driver.query(`update employee_rates set ${bad}`), /check/i, bad);
+  }
+  for (const bad of ['multiplier = 0', 'carwash_hours = 0', 'construction_hours = 25']) {
+    await assert.rejects(driver.query(`update ot_rules set ${bad}`), /check/i, bad);
+  }
+  await driver.query("insert into ot_rules (effective_from, multiplier, carwash_hours, construction_hours) values ('2027-01-03', 1.25, 10, 8)");
+  assert.equal((await one(driver, "select count(*)::int as n from audit_log where table_name = 'ot_rules'")).n, 1, 'changes to the rules are audited');
+});
+
 test('010 lets a part be sold as a set of pieces as well as per piece', async () => {
   const driver = await newDriver();
   await migrate(driver, { ...quiet, to: '009' });
@@ -330,7 +356,7 @@ test('010 lets a part be sold as a set of pieces as well as per piece', async ()
   await driver.query(`insert into job_items (job_id, kind, part_id, name, quantity, price, commission, unit_cost)
     values ($1, 'part', $2, 'Lazertech 2in', 2, 4000, 0, 1200)`, [job.id, part.id]);
 
-  assert.deepEqual(await migrate(driver, quiet), ['010']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '010' }), ['010']);
   assert.deepEqual(await all(driver, 'select quantity, pack_size from job_items'), [{ quantity: 2, pack_size: 1 }], 'existing lines are per piece');
   assert.deepEqual(await one(driver, 'select set_size, set_price, set_commission from parts'), { set_size: null, set_price: null, set_commission: 0 },
     'existing items have no set');

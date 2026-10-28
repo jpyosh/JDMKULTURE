@@ -1,6 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { rateOn, payrollForRange, datesBetween, daySummary, otMultiplierOn, otRuleNote } = require('../lib/calc');
+const { rateOn, payrollForRange: payWith, datesBetween, daySummary, otRuleOn, otRuleNote: noteWith } = require('../lib/calc');
+
+// The shop's overtime rules as migration 011 seeds them (the owner can change them on the Payroll screen).
+const SHOP_RULES = [
+  { effective_from: '2000-01-01', multiplier: 1.25, carwash_hours: 8, construction_hours: 8 },
+  { effective_from: '2026-10-04', multiplier: 1, carwash_hours: 8, construction_hours: 8 },
+  { effective_from: '2026-10-05', multiplier: 1, carwash_hours: 11, construction_hours: 8 },
+];
+const payrollForRange = args => payWith({ otRules: SHOP_RULES, ...args });
+const otRuleNote = (start, end) => noteWith(SHOP_RULES, start, end);
+const otMultiplierOn = date => otRuleOn(SHOP_RULES, date).multiplier;
 
 const rates = [
   { effective_from: '2000-01-01', rate_per_day: 400, construction_rate: 800 },
@@ -100,6 +110,33 @@ test('the overtime note states the rule for the days shown', () => {
   assert.equal(otRuleNote('2026-10-05', '2026-10-11'), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
   assert.equal(otRuleNote('2026-10-01', '2026-10-15'),
     "OT pays the day's rate ÷ 8 × 1.25 per hour up to Oct 3, 2026; the day's rate ÷ 8 × 1 on Oct 4, 2026; and the carwash rate ÷ 11 (construction rate ÷ 8) × 1 from Oct 5, 2026.");
+});
+
+test('an employee can have their own normal hours and OT multiplier, dated like their rate', () => {
+  // The GM works a standard 8-hour day while the crew's carwash day is 11 hours.
+  const rates = [
+    { effective_from: '2000-01-01', rate_per_day: 1100, construction_rate: 800 },
+    { effective_from: '2026-10-05', rate_per_day: 1100, construction_rate: 800, carwash_hours: 8, ot_multiplier: null },
+    { effective_from: '2026-11-01', rate_per_day: 1100, construction_rate: 800, carwash_hours: 8, ot_multiplier: 1.25 },
+  ];
+  const ot = (date, day) => payrollForRange({ dates: [date], rates, days: { [date]: day } }).otPay;
+  assert.equal(ot('2026-10-04', { code: 'P', cw_ot_hours: 2 }), 275);     // before the override: shop rule 1100 / 8 × 1 × 2
+  assert.equal(ot('2026-10-05', { code: 'P', cw_ot_hours: 2 }), 275);     // own 8-hour day, shop multiplier × 1 (crew: ÷ 11)
+  assert.equal(ot('2026-11-01', { code: 'P', cw_ot_hours: 2 }), 343.75);  // own × 1.25: 1100 / 8 × 1.25 × 2
+  assert.equal(ot('2026-11-01', { code: 'CN', cn_ot_hours: 2 }), 250);    // construction keeps the shop hours, own × 1.25
+  // Someone without an override still follows the shop rule.
+  const crew = payrollForRange({ dates: ['2026-11-01'], rates: [{ effective_from: '2000-01-01', rate_per_day: 1100, construction_rate: 0 }],
+    days: { '2026-11-01': { code: 'P', cw_ot_hours: 2 } } });
+  assert.equal(crew.otPay, 200);                                          // 1100 / 11 × 1 × 2
+});
+
+test('the shop overtime rule comes from the rules passed in, so the owner can change it from a date', () => {
+  const rules = [...SHOP_RULES, { effective_from: '2027-01-03', multiplier: 1.25, carwash_hours: 10, construction_hours: 8 }];
+  const rates = [{ effective_from: '2000-01-01', rate_per_day: 1000, construction_rate: 800 }];
+  const ot = date => payWith({ otRules: rules, dates: [date], rates, days: { [date]: { code: 'P', cw_ot_hours: 2 } } }).otPay;
+  assert.equal(ot('2027-01-02'), 181.82); // 1000 / 11 × 1 × 2
+  assert.equal(ot('2027-01-03'), 250);    // 1000 / 10 × 1.25 × 2
+  assert.equal(noteWith(rules, '2027-01-03', '2027-01-09'), 'OT pays the carwash rate ÷ 10 (construction rate ÷ 8) × 1.25 per hour.');
 });
 
 test('payroll paid out of the drawer reduces expected cash/GCash that day', () => {

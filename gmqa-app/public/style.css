@@ -446,6 +446,10 @@ th.num{text-align:right;}
 .ot-grid{display:grid;grid-template-columns:1fr 130px 150px;gap:8px 10px;align-items:center;max-height:55vh;overflow:auto;font-size:14px;}
 .ot-head{font-size:12px;font-weight:600;color:var(--muted);}
 .ot-grid input{min-height:32px;padding:5px 9px;}
+.ot-rules-table{width:100%;font-size:14px;}
+.ot-rules-table th,.ot-rules-table td{padding:7px 10px;white-space:nowrap;}
+.ot-rules-table th{font-size:12px;font-weight:600;color:var(--muted);}
+.ot-rules-table th:not(.num){text-align:left;}
 
 /* help */
 .help-card summary{cursor:pointer;font-size:15px;font-weight:600;list-style-position:inside;}

@@ -64,10 +64,13 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - Payroll works for any date range (a week, 1st–15th, 16th–end...). Attendance and overtime are
   recorded per day; cash advances, bonuses etc. are dated adjustments. Each day is paid at the rate in
   effect that day (rates change from an effective date), so earlier periods never change.
-- Overtime pays the hourly rate × a multiplier, by the rule of the day it was worked (`OT_RULES` in
-  `lib/calc.js`): up to Sun Oct 4, 2026 the day's rate ÷ 8 × 1.25; from Mon Oct 5, 2026 the carwash rate
-  ÷ 11 (an 11-hour carwash day) or the construction rate ÷ 8, × 1. Like rates, a change only applies
-  from its date, so earlier weeks never change.
+- Overtime pays the hourly rate (the day's rate ÷ the normal hours of that kind of day) × the OT
+  multiplier, by the rule of the day it was worked. The owner sets the shop rule in Payroll → **OT
+  settings** (table `ot_rules`): up to Sat Oct 3, 2026 the day's rate ÷ 8 × 1.25; Sun Oct 4 ÷ 8 × 1; from
+  Mon Oct 5, 2026 the carwash rate ÷ 11 (an 11-hour carwash day) or the construction rate ÷ 8, × 1.
+  Someone whose day is different (e.g. the GM on a standard 8-hour day) gets their own carwash hours
+  and/or OT multiplier in Edit; blank follows the shop rule. Like rates, a change only applies from its
+  date, so earlier weeks never change.
 - A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
   expected drawer in EOD.
 - **Sign-off sheet** (Payroll → Download sign-off sheet): a PDF for the selected pay period (up to 16

@@ -9,6 +9,9 @@ let data = null;
 // The rate in effect on a date (same rule as rateOn in lib/calc.js): the latest change on or before it.
 const rateOn = (rates, date) => rates.filter(r => r.effective_from <= date).at(-1) || { rate_per_day: 0, construction_rate: 0 };
 const CODES = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
+// An employee's own normal carwash hours / OT multiplier (null = the shop rule), as on the sign-off sheet.
+const ownOt = r => `${r.carwash_hours != null ? ` · ${Number(r.carwash_hours)}h day` : ''}${r.ot_multiplier != null ? ` · OT × ${Number(r.ot_multiplier)}` : ''}`;
+const optional = value => (value === '' || value == null ? null : Number(value));
 
 function lastDayOfMonth(date) {
   const [y, m] = date.split('-').map(Number);
@@ -55,6 +58,7 @@ function mount(el) {
         <span class="attendance-code construction">CN = Construction</span><span class="attendance-code half">0.5CN = Half construction</span>
         <span class="attendance-code absence">A = Absent</span><span class="attendance-code off">OFF = Day off</span>
         <span class="hint" data-ot-rule></span>
+        <button class="btn ghost small" type="button" data-ot-settings title="Normal hours of a day and the OT multiplier">OT settings</button>
       </div>
       <div class="table-wrap"><table class="payroll-table"><thead data-head></thead><tbody data-body></tbody></table></div>
       <div class="row-line total mt"><span>Total net pay for this range</span><span class="money" data-total></span></div>
@@ -73,6 +77,7 @@ function mount(el) {
   $$('[data-preset]', root).forEach(b => b.addEventListener('click', () => setRange(...presets()[b.dataset.preset])));
   $('[data-add-employee]', root).addEventListener('click', () => employeeModal());
   $('[data-payout]', root).addEventListener('click', payoutModal);
+  $('[data-ot-settings]', root).addEventListener('click', otSettingsModal);
   $('[data-signoff]', root).addEventListener('click', e => busy(e.currentTarget,
     () => apiDownload(`/payroll/signoff.pdf?start=${range.start}&end=${range.end}`)));
 }
@@ -133,7 +138,7 @@ function render() {
     <th class="num">Adjust.</th><th class="num">Net</th><th></th></tr>`;
   $('[data-body]', root).innerHTML = data.rows.length ? data.rows.map(({ employee: e, days, adjustments, pay }) => `
     <tr data-emp="${e.id}" class="${e.active ? '' : 'inactive'}">
-      <td class="employee-cell"><b>${esc(e.name)}</b><div class="muted small">${esc(e.role || '—')} · ${peso(e.rate_per_day)} / ${peso(e.construction_rate)}</div></td>
+      <td class="employee-cell"><b>${esc(e.name)}</b><div class="muted small">${esc(e.role || '—')} · ${peso(e.rate_per_day)} / ${peso(e.construction_rate)}${ownOt(e)}</div></td>
       ${data.dates.map(d => `<td class="attendance-cell"><select data-day="${d}" class="attendance-select code-${(days[d]?.code || 'none').replace('.', '_')}" aria-label="${esc(e.name)} ${d}">
         ${CODES.map(c => `<option value="${c}" ${(days[d]?.code || '') === c ? 'selected' : ''}>${c || '—'}</option>`).join('')}</select>
         ${days[d]?.cw_ot_hours || days[d]?.cn_ot_hours ? `<div class="ot-badge">+${(days[d].cw_ot_hours || 0) + (days[d].cn_ot_hours || 0)}h</div>` : ''}</td>`).join('')}
@@ -244,8 +249,11 @@ function employeeModal(row = null) {
       <div><label>Role</label><input type="text" data-n="role" maxlength="60" placeholder="Detailer" value="${esc(e?.role || '')}"></div>
       <div><label>Carwash rate / day</label><input type="number" min="0" step="0.01" data-n="rate_per_day" value="${e ? e.rate_per_day : 250}"></div>
       <div><label>Construction rate / day</label><input type="number" min="0" step="0.01" data-n="construction_rate" value="${e ? e.construction_rate : 700}"></div>
+      <div><label>Own carwash hours / day</label><input type="number" min="1" max="24" step="0.25" data-n="carwash_hours" placeholder="Shop rule" value="${e?.carwash_hours ?? ''}"></div>
+      <div><label>Own OT multiplier</label><input type="number" min="1" max="3" step="0.05" data-n="ot_multiplier" placeholder="Shop rule" value="${e?.ot_multiplier ?? ''}"></div>
       ${e ? `<div><label>Rate change effective</label><input type="date" data-n="effective_from" value="${sundayOf(todayLocal())}"></div>` : ''}
     </div>
+    <p class="hint">Leave the own hours and OT multiplier blank to follow the shop rule (OT settings). Set them for someone whose day is different, e.g. a manager on a standard 8-hour day.</p>
     ${e ? '<p class="hint" data-rate-note></p>' : ''}
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>${e ? 'Save' : 'Add employee'}</button></div>`,
   card => {
@@ -253,20 +261,27 @@ function employeeModal(row = null) {
     const get = k => $(`[data-n="${k}"]`, card)?.value;
     const rate = () => Number(get('rate_per_day') || 0);
     const cnRate = () => Number(get('construction_rate') || 0);
+    const next = () => ({ rate_per_day: rate(), construction_rate: cnRate(),
+      carwash_hours: optional(get('carwash_hours')), ot_multiplier: optional(get('ot_multiplier')) });
+    const describe = r => `${peso(r.rate_per_day)} / ${peso(r.construction_rate)}${ownOt(r)}`;
     // A change is measured against the rate in effect on the chosen date, not today's: a raise first
     // saved from today can then be moved back to Sunday with the same amount.
     const before = () => rateOn(row.rates, get('effective_from'));
-    const changesRate = () => rate() !== Number(before().rate_per_day) || cnRate() !== Number(before().construction_rate);
+    const changesRate = () => {
+      const b = before();
+      const n = next();
+      return n.rate_per_day !== Number(b.rate_per_day) || n.construction_rate !== Number(b.construction_rate)
+        || n.carwash_hours !== optional(b.carwash_hours) || n.ot_multiplier !== optional(b.ot_multiplier);
+    };
     const showNote = () => {
       const from = get('effective_from');
-      const b = before();
       $('[data-rate-note]', card).textContent = !from ? 'Pick the date the new rate starts.'
-        : !changesRate() ? `No rate change: from ${prettyDate(from)} the rate is already ${peso(b.rate_per_day)} / ${peso(b.construction_rate)}.`
-          : `From ${prettyDate(from)} on: ${peso(b.rate_per_day)} / ${peso(b.construction_rate)} → ${peso(rate())} / ${peso(cnRate())}. `
+        : !changesRate() ? `No rate change: from ${prettyDate(from)} the rate is already ${describe(before())}.`
+          : `From ${prettyDate(from)} on: ${describe(before())} → ${describe(next())}. `
             + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep the rate they had.');
     };
     if (e) {
-      ['rate_per_day', 'construction_rate', 'effective_from'].forEach(k => {
+      ['rate_per_day', 'construction_rate', 'carwash_hours', 'ot_multiplier', 'effective_from'].forEach(k => {
         $(`[data-n="${k}"]`, card).addEventListener('input', showNote);
         $(`[data-n="${k}"]`, card).addEventListener('change', showNote);
       });
@@ -276,16 +291,80 @@ function employeeModal(row = null) {
       if (!get('name').trim()) return toast('Name is required', 'error');
       const body = { name: get('name').trim(), role: get('role').trim() };
       if (!e) {
-        await api('POST', '/employees', { ...body, rate_per_day: rate(), construction_rate: cnRate() });
+        await api('POST', '/employees', { ...body, ...next() });
       } else {
         if (changesRate()) {
           if (!get('effective_from')) return toast('Pick the date the new rate starts', 'error');
-          Object.assign(body, { rate_per_day: rate(), construction_rate: cnRate(), effective_from: get('effective_from') });
+          Object.assign(body, { ...next(), effective_from: get('effective_from') });
         }
         await api('PATCH', `/employees/${e.id}`, body);
       }
       closeModal();
       toast(e ? 'Employee saved' : 'Employee added');
+      await reload();
+    }));
+  });
+}
+
+// The shop's overtime rule: the normal hours of a carwash and a construction day, and the OT multiplier.
+// Dated like rates: a change applies from its date, earlier days keep their rule.
+function otSettingsModal() {
+  const rules = data.otRules;
+  const first = rules[0]?.effective_from;
+  const ruleOn = date => rules.filter(r => r.effective_from <= date).at(-1) || rules[0];
+  const hourly = r => (r.carwash_hours === r.construction_hours ? `the day's rate ÷ ${r.carwash_hours}`
+    : `the carwash rate ÷ ${r.carwash_hours} (construction rate ÷ ${r.construction_hours})`);
+  openModal(`${modalHeader('Overtime settings', 'OT pays the day\'s rate ÷ the normal hours of that kind of day × the OT multiplier. Someone whose day is different (e.g. the GM on 8 hours) can have their own hours or multiplier: Edit next to their name.', 'Payroll')}
+    <div class="table-wrap"><table class="ot-rules-table"><thead><tr><th>From</th><th class="num">Carwash day</th><th class="num">Construction day</th><th class="num">OT multiplier</th><th></th></tr></thead>
+      <tbody>${rules.map(r => `<tr data-rule-row="${r.effective_from}"><td>${r.effective_from === first ? 'The start' : esc(prettyDate(r.effective_from))}</td>
+        <td class="num">${Number(r.carwash_hours)}h</td><td class="num">${Number(r.construction_hours)}h</td><td class="num">× ${Number(r.multiplier)}</td>
+        <td class="row-actions">${r.effective_from === first ? '' : '<button class="icon-btn" type="button" data-del-rule title="Delete this rule">✕</button>'}</td></tr>`).join('')}</tbody></table></div>
+    <h3 class="mt">Change from a date</h3>
+    <div class="form-grid modal-form-grid">
+      <div><label>From</label><input type="date" data-rule="effective_from" value="${sundayOf(todayLocal())}"></div>
+      <div><label>Carwash day (hours)</label><input type="number" min="1" max="24" step="0.25" data-rule="carwash_hours"></div>
+      <div><label>Construction day (hours)</label><input type="number" min="1" max="24" step="0.25" data-rule="construction_hours"></div>
+      <div><label>OT multiplier</label><input type="number" min="1" max="3" step="0.05" data-rule="multiplier"></div>
+    </div>
+    <p class="hint" data-rule-note></p>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Save rule</button></div>`,
+  card => {
+    const field = k => $(`[data-rule="${k}"]`, card);
+    const typed = () => ({ carwash_hours: Number(field('carwash_hours').value), construction_hours: Number(field('construction_hours').value),
+      multiplier: Number(field('multiplier').value) });
+    // Picking a date starts from the rule in effect that day.
+    const fill = () => {
+      const r = ruleOn(field('effective_from').value || first);
+      for (const k of ['carwash_hours', 'construction_hours', 'multiplier']) field(k).value = Number(r[k]);
+    };
+    const showNote = () => {
+      const from = field('effective_from').value;
+      const t = typed();
+      const b = ruleOn(from || first);
+      const same = t.carwash_hours === Number(b.carwash_hours) && t.construction_hours === Number(b.construction_hours) && t.multiplier === Number(b.multiplier);
+      $('[data-rule-note]', card).textContent = !from ? 'Pick the date the rule starts.'
+        : same ? `No change: from ${prettyDate(from)} OT already pays ${hourly(t)} × ${t.multiplier} per hour.`
+          : `From ${prettyDate(from)} on, OT pays ${hourly(t)} × ${t.multiplier} per hour. `
+            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep their rule.');
+    };
+    fill();
+    showNote();
+    field('effective_from').addEventListener('change', () => { fill(); showNote(); });
+    for (const k of ['carwash_hours', 'construction_hours', 'multiplier']) field(k).addEventListener('input', showNote);
+    $$('[data-del-rule]', card).forEach(btn => btn.addEventListener('click', ev => busy(ev.currentTarget, async () => {
+      const from = btn.closest('tr').dataset.ruleRow;
+      if (!window.confirm(`Delete the overtime rule from ${prettyDate(from)}? Those days go back to the rule before it.`)) return;
+      await api('DELETE', `/payroll/ot-rules/${from}`);
+      closeModal();
+      toast('Overtime rule deleted');
+      await reload();
+    })));
+    $('[data-confirm]', card).addEventListener('click', ev => busy(ev.currentTarget, async () => {
+      const from = field('effective_from').value;
+      if (!from) return toast('Pick the date the rule starts', 'error');
+      await api('PUT', `/payroll/ot-rules/${from}`, typed());
+      closeModal();
+      toast('Overtime rule saved');
       await reload();
     }));
   });

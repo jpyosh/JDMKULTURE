@@ -7,13 +7,20 @@ const { db } = require('../lib/db');
 const { ATTENDANCE_CODES, datesBetween } = require('../lib/calc');
 const { loadPayroll, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
 const signoff = require('../lib/signoff-pdf');
-const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
+const { bad, notFound, money, between, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
 router.use(['/employees', '/payroll'], requireOwner);
 
 const MAX_RANGE_DAYS = 62;
 const loadEmployee = (q, employeeId) => q.one(`${EMPLOYEE_SELECT} where e.id = $1`, [employeeId]);
+// Normal hours of a day and the OT multiplier: the shop rule's, or an employee's own (blank = shop rule).
+const hours = (value, field, opts) => between(value, field, 1, 24, opts);
+const multiplier = (value, field, opts) => between(value, field, 1, 3, opts);
+const RATE_UPSERT = `insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate, carwash_hours, ot_multiplier)
+  values ($1, $2, $3, $4, $5, $6)
+  on conflict (employee_id, effective_from) do update set rate_per_day = excluded.rate_per_day, construction_rate = excluded.construction_rate,
+    carwash_hours = excluded.carwash_hours, ot_multiplier = excluded.ot_multiplier`;
 
 router.get('/employees', async (req, res) => {
   res.json(await db.many(`${EMPLOYEE_SELECT} where e.active order by e.id`));
@@ -24,44 +31,45 @@ router.post('/employees', async (req, res) => {
   const role = text(req.body.role, 'Role', { max: 60 }) || '';
   const rate = money(req.body.rate_per_day, 'Carwash rate');
   const cnRate = money(req.body.construction_rate, 'Construction rate');
+  const cwHours = hours(req.body.carwash_hours, 'Carwash hours', { allowNull: true });
+  const otX = multiplier(req.body.ot_multiplier, 'OT multiplier', { allowNull: true });
   const employeeId = await db.tx(req.user.email, async q => {
     // Re-adding someone who was deactivated brings their old record (and history) back.
     const existing = await q.one('select id from employees where lower(name) = lower($1)', [name]);
     if (existing) {
       await q.query('update employees set active = true, role = $2 where id = $1', [existing.id, role]);
-      await q.query(`insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate)
-        values ($1, ${SHOP_TODAY}, $2, $3)
-        on conflict (employee_id, effective_from) do update set rate_per_day = excluded.rate_per_day, construction_rate = excluded.construction_rate`,
-      [existing.id, rate, cnRate]);
+      const today = (await q.one(`select ${SHOP_TODAY} as d`)).d;
+      await q.query(RATE_UPSERT, [existing.id, today, rate, cnRate, cwHours, otX]);
       return existing.id;
     }
     const row = await q.one('insert into employees (name, role) values ($1, $2) returning id', [name, role]);
-    await q.query("insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate) values ($1, '2000-01-01', $2, $3)",
-      [row.id, rate, cnRate]);
+    await q.query(RATE_UPSERT, [row.id, '2000-01-01', rate, cnRate, cwHours, otX]);
     return row.id;
   });
   res.status(201).json(await loadEmployee(db, employeeId));
 });
 
-// Rates change from `effective_from` (default: today); earlier days keep the rate they had.
+// Rates, and the employee's own carwash hours / OT multiplier (blank = shop rule), change from
+// `effective_from` (default: today); earlier days keep what they had.
+const RATE_FIELDS = ['rate_per_day', 'construction_rate', 'carwash_hours', 'ot_multiplier'];
 router.patch('/employees/:id', async (req, res) => {
   const employeeId = id(req.params.id, 'employee');
-  const f = pick(req.body, ['name', 'role', 'rate_per_day', 'construction_rate', 'effective_from']);
+  const f = pick(req.body, ['name', 'role', ...RATE_FIELDS, 'effective_from']);
   await db.tx(req.user.email, async q => {
     if (!(await q.one('select 1 from employees where id = $1', [employeeId]))) throw notFound('Employee');
     if ('name' in f) await q.query('update employees set name = $2 where id = $1', [employeeId, text(f.name, 'Name', { required: true, max: 80 })]);
     if ('role' in f) await q.query('update employees set role = $2 where id = $1', [employeeId, text(f.role, 'Role', { max: 60 }) || '']);
-    if ('rate_per_day' in f || 'construction_rate' in f) {
+    if (RATE_FIELDS.some(k => k in f)) {
       const from = f.effective_from ? date(f.effective_from, 'Effective date')
         : (await q.one(`select ${SHOP_TODAY} as d`)).d;
-      const current = await q.one(`select rate_per_day, construction_rate from employee_rates
+      const current = await q.one(`select rate_per_day, construction_rate, carwash_hours, ot_multiplier from employee_rates
         where employee_id = $1 and effective_from <= $2 order by effective_from desc limit 1`, [employeeId, from])
-        || { rate_per_day: 0, construction_rate: 0 };
+        || { rate_per_day: 0, construction_rate: 0, carwash_hours: null, ot_multiplier: null };
       const rate = 'rate_per_day' in f ? money(f.rate_per_day, 'Carwash rate') : current.rate_per_day;
       const cnRate = 'construction_rate' in f ? money(f.construction_rate, 'Construction rate') : current.construction_rate;
-      await q.query(`insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate) values ($1, $2, $3, $4)
-        on conflict (employee_id, effective_from) do update set rate_per_day = excluded.rate_per_day, construction_rate = excluded.construction_rate`,
-      [employeeId, from, rate, cnRate]);
+      const cwHours = 'carwash_hours' in f ? hours(f.carwash_hours, 'Carwash hours', { allowNull: true }) : current.carwash_hours;
+      const otX = 'ot_multiplier' in f ? multiplier(f.ot_multiplier, 'OT multiplier', { allowNull: true }) : current.ot_multiplier;
+      await q.query(RATE_UPSERT, [employeeId, from, rate, cnRate, cwHours, otX]);
     }
   });
   res.json(await loadEmployee(db, employeeId));
@@ -87,6 +95,32 @@ function cleanRange(query) {
 router.get('/payroll', async (req, res) => {
   const { start, end } = cleanRange(req.query);
   res.json(await loadPayroll(start, end));
+});
+
+// The shop's overtime rule from a date on (the multiplier and the normal hours of a carwash and a
+// construction day). Saving a date that already has a rule changes it; earlier days keep theirs.
+router.put('/payroll/ot-rules/:date', async (req, res) => {
+  const from = date(req.params.date, 'Effective date');
+  const values = [from, multiplier(req.body.multiplier, 'OT multiplier'),
+    hours(req.body.carwash_hours, 'Carwash hours'), hours(req.body.construction_hours, 'Construction hours')];
+  const row = await db.tx(req.user.email, q => q.one(`insert into ot_rules (effective_from, multiplier, carwash_hours, construction_hours)
+    values ($1, $2, $3, $4)
+    on conflict (effective_from) do update set multiplier = excluded.multiplier, carwash_hours = excluded.carwash_hours,
+      construction_hours = excluded.construction_hours
+    returning effective_from, multiplier, carwash_hours, construction_hours`, values));
+  res.json(row);
+});
+
+// The first rule covers every earlier day, so it stays; a later one can be removed (its days then
+// follow the rule before it).
+router.delete('/payroll/ot-rules/:date', async (req, res) => {
+  const from = date(req.params.date, 'Effective date');
+  await db.tx(req.user.email, async q => {
+    const first = await q.one('select min(effective_from) as d from ot_rules');
+    if (first?.d === from) throw bad('The first overtime rule covers all earlier days and cannot be deleted. Change it instead.');
+    if (!(await q.exec('delete from ot_rules where effective_from = $1', [from]))) throw notFound('Overtime rule');
+  });
+  res.json({ ok: true });
 });
 
 // Printable sign-off sheet (PDF) for one pay period, from the same payroll as the screen.
