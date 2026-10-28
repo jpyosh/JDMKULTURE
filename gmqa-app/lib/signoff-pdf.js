@@ -49,7 +49,8 @@ function displayName(name) {
 }
 const roleLabel = role => (role ? `${displayName(role)} · ` : '');
 // An employee's own normal carwash hours / OT multiplier (blank = the shop rule), as on the Payroll screen.
-const ownOtLabel = e => [e.carwash_hours != null && ` · ${plain(e.carwash_hours)}h day`, e.ot_multiplier != null && ` · OT × ${plain(e.ot_multiplier)}`]
+const otPayLabel = m => (Number(m) === 1 ? 'OT at normal rate' : `OT +${plain(Math.round((Number(m) - 1) * 100))}%`);
+const ownOtLabel = e => [e.carwash_hours != null && ` · ${plain(e.carwash_hours)}h day`, e.ot_multiplier != null && ` · ${otPayLabel(e.ot_multiplier)}`]
   .filter(Boolean).join('');
 
 // ---------------------------------------------------------------- rows

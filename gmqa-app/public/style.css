@@ -450,6 +450,22 @@ th.num{text-align:right;}
 .ot-rules-table th,.ot-rules-table td{padding:7px 10px;white-space:nowrap;}
 .ot-rules-table th{font-size:12px;font-weight:600;color:var(--muted);}
 .ot-rules-table th:not(.num){text-align:left;}
+/* Work day & OT: plain choices, a live preview of what changes, and a second confirm for paid weeks. */
+.choice-group{border:0;margin:0 0 14px;padding:0;display:flex;flex-wrap:wrap;gap:4px 18px;min-width:0;}
+.choice-group legend{width:100%;padding:0;margin-bottom:6px;font-size:12px;font-weight:600;color:var(--muted);}
+.choice-group label{display:inline-flex;align-items:center;gap:8px;min-height:36px;font-size:14px;color:var(--text);cursor:pointer;}
+.choice-group input[type="radio"]{width:18px;height:18px;margin:0;accent-color:var(--accent);}
+.choice-group .choice-other{width:84px;min-height:32px;padding:4px 8px;}
+.choice-group input[type="date"].choice-other{width:auto;}
+.ot-preview{margin:4px 0 12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface-alt);font-size:14px;}
+.ot-preview [data-example]{margin:0 0 6px;font-weight:600;}
+.ot-preview p{margin:0 0 6px;}
+.ot-change-list{margin:0;padding-left:18px;font-size:13px;}
+.ot-paid{margin-top:10px;padding:10px 12px;border-radius:var(--r-sm);background:var(--orange-soft);color:var(--text);}
+.ot-paid label{display:flex;align-items:center;gap:8px;min-height:36px;font-weight:600;cursor:pointer;}
+.ot-paid input[type="checkbox"]{width:18px;height:18px;margin:0;accent-color:var(--accent);}
+.ot-history{margin:4px 0 8px;font-size:14px;}
+.ot-history summary{cursor:pointer;color:var(--muted);min-height:32px;display:flex;align-items:center;}
 
 /* help */
 .help-card summary{cursor:pointer;font-size:15px;font-weight:600;list-style-position:inside;}

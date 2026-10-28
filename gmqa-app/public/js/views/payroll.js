@@ -10,8 +10,12 @@ let data = null;
 const rateOn = (rates, date) => rates.filter(r => r.effective_from <= date).at(-1) || { rate_per_day: 0, construction_rate: 0 };
 const CODES = ['', 'P', '0.5P', 'CN', '0.5CN', 'A', 'OFF'];
 // An employee's own normal carwash hours / OT multiplier (null = the shop rule), as on the sign-off sheet.
-const ownOt = r => `${r.carwash_hours != null ? ` · ${Number(r.carwash_hours)}h day` : ''}${r.ot_multiplier != null ? ` · OT × ${Number(r.ot_multiplier)}` : ''}`;
+const otPayLabel = m => (Number(m) === 1 ? 'OT at normal rate' : `OT +${Math.round((Number(m) - 1) * 100)}%`);
+const ownOt = r => `${r.carwash_hours != null ? ` · ${Number(r.carwash_hours)}h day` : ''}${r.ot_multiplier != null ? ` · ${otPayLabel(r.ot_multiplier)}` : ''}`;
 const optional = value => (value === '' || value == null ? null : Number(value));
+// The shop's overtime setting in effect on a date (same rule as otRuleOn in lib/calc.js).
+const ruleOn = date => data.otRules.filter(r => r.effective_from <= date).at(-1) || data.otRules[0];
+const amount = n => `₱${Number(n).toLocaleString('en-PH', { maximumFractionDigits: 2 })}`;
 
 function lastDayOfMonth(date) {
   const [y, m] = date.split('-').map(Number);
@@ -241,62 +245,188 @@ function adjustModal({ employee, adjustments }) {
   });
 }
 
+// ---------------------------------------------------------------- work day & OT choices
+
+// A set of plain choices; `other` adds "Other [number]" for a value not in the list.
+function choiceGroup(name, legend, options, current, other = null) {
+  const known = options.some(o => o.value === String(current));
+  const otherOn = Boolean(other) && !known && current != null && current !== '';
+  return `<fieldset class="choice-group"><legend>${esc(legend)}</legend>
+    ${options.map(o => `<label><input type="radio" name="${name}" value="${o.value}" ${o.value === String(current) ? 'checked' : ''}> ${esc(o.label)}</label>`).join('')}
+    ${other ? `<label><input type="radio" name="${name}" value="other" ${otherOn ? 'checked' : ''}> Other
+      <input type="number" class="choice-other" data-other="${name}" min="${other.min}" max="${other.max}" step="${other.step}" value="${otherOn ? Number(current) : ''}" aria-label="${esc(legend)}: other"> ${other.unit}</label>` : ''}
+  </fieldset>`;
+}
+// The chosen value: null for "same as shop", a number, or NaN when "Other" is empty or out of range.
+function choiceValue(card, name, min, max) {
+  const v = $(`input[name="${name}"]:checked`, card)?.value;
+  if (v === 'shop') return null;
+  const n = Number(v === 'other' ? $(`[data-other="${name}"]`, card).value || NaN : v);
+  return n >= min && n <= max ? n : NaN;
+}
+function setChoice(card, name, value) {
+  const radio = $(`input[name="${name}"][value="${String(value)}"]`, card) || $(`input[name="${name}"][value="other"]`, card);
+  if (!radio) return;
+  radio.checked = true;
+  const other = $(`[data-other="${name}"]`, card);
+  if (other) other.value = radio.value === 'other' ? Number(value) : '';
+}
+
+// When a change starts: this pay week (the default), next pay week, or another date.
+function startsChoice() {
+  const sunday = sundayOf(todayLocal());
+  return `<fieldset class="choice-group"><legend>Starts</legend>
+    <label><input type="radio" name="starts" value="this" checked> This pay week (${esc(prettyDate(sunday))})</label>
+    <label><input type="radio" name="starts" value="next"> Next pay week (${esc(prettyDate(addDays(sunday, 7)))})</label>
+    <label><input type="radio" name="starts" value="date"> Another date <input type="date" class="choice-other" data-starts-date aria-label="Start date"></label>
+  </fieldset>`;
+}
+function startsValue(card) {
+  const sunday = sundayOf(todayLocal());
+  const v = $('input[name="starts"]:checked', card)?.value;
+  return v === 'this' ? sunday : v === 'next' ? addDays(sunday, 7) : $('[data-starts-date]', card).value;
+}
+
+// Starts with placeholder lines the size of the usual answer, so Save does not jump when it arrives.
+const PREVIEW_PANEL = `<div class="ot-preview" aria-live="polite"><p data-example>Working out what one OT hour pays…</p>
+  <div data-changes><p class="muted small">Checking whose pay changes…</p></div><div class="ot-paid" data-paid hidden></div></div>`;
+
+// Shows what the change on the form would do (asked of the server, which computes pay), and keeps Save
+// disabled while the form is incomplete, the answer is pending, or a paid-out week would change
+// without the second confirm. build() returns { body } for /payroll/preview, or { error }.
+function livePreview(card, build, exampleText) {
+  const save = $('[data-confirm]', card);
+  let seq = 0;
+  let timer = null;
+  let state = 'pending';
+  const confirmBox = () => $('[data-confirm-paid]', card);
+  card.addEventListener('input', ev => {
+    if (ev.target.matches('.choice-other')) ev.target.closest('label').querySelector('input[type="radio"]').checked = true;
+  });
+  const sync = () => { save.disabled = state !== 'ready' || Boolean(confirmBox() && !confirmBox().checked); };
+  const show = p => {
+    $('[data-example]', card).textContent = p.example ? exampleText(p.example) : '';
+    const list = p.changes;
+    const line = c => `${esc(c.name)}: ${c.before.otPay !== c.after.otPay ? `OT pay ${peso(c.before.otPay)} → ${peso(c.after.otPay)} · ` : ''}total ${peso(c.before.gross)} → ${peso(c.after.gross)}`;
+    $('[data-changes]', card).innerHTML = !list.length
+      ? `<p class="muted small">No recorded pay changes. Days from ${esc(prettyDate(p.from))} on will use this.</p>`
+      : `<p class="small"><b>Pay that changes</b> (from ${esc(prettyDate(p.from))}${p.until ? ` to ${esc(prettyDate(p.until))}` : ''})</p>
+        <ul class="ot-change-list">${list.slice(0, 8).map(c => `<li>${line(c)}</li>`).join('')}${list.length > 8 ? `<li class="muted">and ${list.length - 8} more</li>` : ''}</ul>`;
+    const paid = $('[data-paid]', card);
+    paid.hidden = !p.paidOut.length;
+    paid.innerHTML = p.paidOut.length
+      ? `<p>⚠ Wages for ${p.paidOut.map(x => `${esc(prettyDate(x.period_start))} – ${esc(prettyDate(x.period_end))}`).join(', ')} are already paid out.
+          Saving changes what those weeks should have paid; any difference is not added or taken back automatically.</p>
+        <label><input type="checkbox" data-confirm-paid> Yes, change pay for weeks already paid out</label>`
+      : '';
+    confirmBox()?.addEventListener('change', sync);
+  };
+  // The values last asked about: a `change` that only repeats them (it fires when a field loses focus,
+  // e.g. on the mouse-down of a click on Save) must not disable Save again and swallow the click.
+  let asked = null;
+  const run = ev => {
+    if (ev?.target?.matches?.('[data-confirm-paid]')) return;
+    const built = build();
+    const key = JSON.stringify(built);
+    if (key === asked) return;
+    asked = key;
+    clearTimeout(timer);
+    const mine = ++seq;
+    if (built.error) {
+      state = 'invalid';
+      $('[data-example]', card).textContent = built.error;
+      $('[data-changes]', card).innerHTML = '';
+      $('[data-paid]', card).innerHTML = '';
+      $('[data-paid]', card).hidden = true;
+      return sync();
+    }
+    state = 'pending';
+    sync();
+    timer = setTimeout(async () => {
+      let p;
+      try { p = await api('POST', '/payroll/preview', built.body, { quiet: true }); } catch { asked = null; return; }
+      if (mine !== seq) return; // the form changed while this was loading
+      show(p);
+      state = 'ready';
+      sync();
+    }, 200);
+  };
+  card.addEventListener('input', run);
+  card.addEventListener('change', run);
+  run();
+  return { confirmedPaid: () => Boolean(confirmBox()?.checked) };
+}
+
+const exampleLine = ex => `day rate ${amount(ex.rate)} ÷ ${ex.hours} h × ${ex.multiplier} = ${peso(ex.perHour)} per OT hour`;
+const otPayWords = m => (Number(m) === 1 ? 'Normal hourly rate' : Number(m) === 1.25 ? 'Normal + 25%' : `× ${Number(m)}`);
+
 function employeeModal(row = null) {
   const e = row?.employee;
-  openModal(`${modalHeader(e ? `Edit ${e.name}` : 'Add employee', e ? 'A rate change applies from its effective date (default: the start of this pay week); earlier days keep the old rate.' : 'Re-adding a former employee brings their record back.', 'Team')}
+  const shopNow = ruleOn(sundayOf(todayLocal()));
+  const mult = e?.ot_multiplier;
+  openModal(`<div data-ot-form>${modalHeader(e ? `Edit ${e.name}` : 'Add employee', e ? 'Changes start on the date you choose below; earlier days keep what they had.' : 'Re-adding a former employee brings their record back.', 'Team')}
     <div class="form-grid modal-form-grid">
       <div><label>Name</label><input type="text" data-n="name" maxlength="80" value="${esc(e?.name || '')}"></div>
       <div><label>Role</label><input type="text" data-n="role" maxlength="60" placeholder="Detailer" value="${esc(e?.role || '')}"></div>
       <div><label>Carwash rate / day</label><input type="number" min="0" step="0.01" data-n="rate_per_day" value="${e ? e.rate_per_day : 250}"></div>
       <div><label>Construction rate / day</label><input type="number" min="0" step="0.01" data-n="construction_rate" value="${e ? e.construction_rate : 700}"></div>
-      <div><label>Own carwash hours / day</label><input type="number" min="1" max="24" step="0.25" data-n="carwash_hours" placeholder="Shop rule" value="${e?.carwash_hours ?? ''}"></div>
-      <div><label>Own OT multiplier</label><input type="number" min="1" max="3" step="0.05" data-n="ot_multiplier" placeholder="Shop rule" value="${e?.ot_multiplier ?? ''}"></div>
-      ${e ? `<div><label>Rate change effective</label><input type="date" data-n="effective_from" value="${sundayOf(todayLocal())}"></div>` : ''}
     </div>
-    <p class="hint">Leave the own hours and OT multiplier blank to follow the shop rule (OT settings). Set them for someone whose day is different, e.g. a manager on a standard 8-hour day.</p>
+    <h3 class="mt">Work day &amp; OT</h3>
+    ${choiceGroup('work-day', 'Carwash work day', [{ value: 'shop', label: `Same as shop (${Number(shopNow.carwash_hours)} h)` }, { value: '8', label: '8-hour day' }],
+    e?.carwash_hours ?? 'shop', { min: 1, max: 24, step: 0.25, unit: 'hours' })}
+    ${choiceGroup('emp-ot', 'OT pay', [{ value: 'shop', label: `Same as shop (${otPayWords(shopNow.multiplier).toLowerCase()})` },
+    { value: '1', label: 'Normal hourly rate' }, { value: '1.25', label: 'Normal + 25%' }],
+    mult ?? 'shop', mult != null && ![1, 1.25].includes(Number(mult)) ? { min: 1, max: 3, step: 0.05, unit: '× hourly' } : null)}
+    ${e ? startsChoice() : ''}
     ${e ? '<p class="hint" data-rate-note></p>' : ''}
-    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>${e ? 'Save' : 'Add employee'}</button></div>`,
-  card => {
+    ${PREVIEW_PANEL}
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>${e ? 'Save' : 'Add employee'}</button></div></div>`,
+  modalCard => {
+    const card = $('[data-ot-form]', modalCard);
     $('[data-n="name"]', card).focus();
     const get = k => $(`[data-n="${k}"]`, card)?.value;
-    const rate = () => Number(get('rate_per_day') || 0);
-    const cnRate = () => Number(get('construction_rate') || 0);
-    const next = () => ({ rate_per_day: rate(), construction_rate: cnRate(),
-      carwash_hours: optional(get('carwash_hours')), ot_multiplier: optional(get('ot_multiplier')) });
+    const next = () => ({ rate_per_day: Number(get('rate_per_day') || 0), construction_rate: Number(get('construction_rate') || 0),
+      carwash_hours: choiceValue(card, 'work-day', 1, 24), ot_multiplier: choiceValue(card, 'emp-ot', 1, 3) });
     const describe = r => `${peso(r.rate_per_day)} / ${peso(r.construction_rate)}${ownOt(r)}`;
-    // A change is measured against the rate in effect on the chosen date, not today's: a raise first
-    // saved from today can then be moved back to Sunday with the same amount.
-    const before = () => rateOn(row.rates, get('effective_from'));
+    // A change is measured against what is in effect on its start date, not today: a raise first saved
+    // from today can then be moved back to Sunday with the same amount.
+    const before = () => rateOn(row.rates, startsValue(card));
     const changesRate = () => {
       const b = before();
       const n = next();
       return n.rate_per_day !== Number(b.rate_per_day) || n.construction_rate !== Number(b.construction_rate)
         || n.carwash_hours !== optional(b.carwash_hours) || n.ot_multiplier !== optional(b.ot_multiplier);
     };
+    const build = () => {
+      const n = next();
+      if (Number.isNaN(n.carwash_hours)) return { error: 'Enter the hours of their work day (1 to 24).' };
+      if (Number.isNaN(n.ot_multiplier)) return { error: 'Enter their OT multiplier (1 to 3).' };
+      const from = e ? startsValue(card) : undefined;
+      if (e && !from) return { error: 'Pick the date the change starts.' };
+      return { body: { kind: 'employee', employee_id: e?.id, name: get('name').trim(), effective_from: from, ...n } };
+    };
     const showNote = () => {
-      const from = get('effective_from');
-      $('[data-rate-note]', card).textContent = !from ? 'Pick the date the new rate starts.'
-        : !changesRate() ? `No rate change: from ${prettyDate(from)} the rate is already ${describe(before())}.`
+      const from = startsValue(card);
+      $('[data-rate-note]', card).textContent = !from ? 'Pick the date the change starts.'
+        : !changesRate() ? `No change: from ${prettyDate(from)} it is already ${describe(before())}.`
           : `From ${prettyDate(from)} on: ${describe(before())} → ${describe(next())}. `
-            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep the rate they had.');
+            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep what they had.');
     };
     if (e) {
-      ['rate_per_day', 'construction_rate', 'carwash_hours', 'ot_multiplier', 'effective_from'].forEach(k => {
-        $(`[data-n="${k}"]`, card).addEventListener('input', showNote);
-        $(`[data-n="${k}"]`, card).addEventListener('change', showNote);
-      });
+      card.addEventListener('input', showNote);
+      card.addEventListener('change', showNote);
       showNote();
     }
+    const preview = livePreview(card, build, ex => `${ex.name}'s OT: ${exampleLine(ex)}`);
     $('[data-confirm]', card).addEventListener('click', ev => busy(ev.currentTarget, async () => {
       if (!get('name').trim()) return toast('Name is required', 'error');
+      const built = build();
+      if (built.error) return toast(built.error, 'error');
       const body = { name: get('name').trim(), role: get('role').trim() };
       if (!e) {
         await api('POST', '/employees', { ...body, ...next() });
       } else {
-        if (changesRate()) {
-          if (!get('effective_from')) return toast('Pick the date the new rate starts', 'error');
-          Object.assign(body, { ...next(), effective_from: get('effective_from') });
-        }
+        if (changesRate()) Object.assign(body, { ...next(), effective_from: startsValue(card), confirm_paid: preview.confirmedPaid() });
         await api('PATCH', `/employees/${e.id}`, body);
       }
       closeModal();
@@ -306,65 +436,70 @@ function employeeModal(row = null) {
   });
 }
 
-// The shop's overtime rule: the normal hours of a carwash and a construction day, and the OT multiplier.
-// Dated like rates: a change applies from its date, earlier days keep their rule.
+// How overtime is paid for everyone: the hours of a carwash and a construction day and the OT pay,
+// from a start date (earlier days keep theirs). Someone with a different work day is set in Edit.
 function otSettingsModal() {
   const rules = data.otRules;
   const first = rules[0]?.effective_from;
-  const ruleOn = date => rules.filter(r => r.effective_from <= date).at(-1) || rules[0];
-  const hourly = r => (r.carwash_hours === r.construction_hours ? `the day's rate ÷ ${r.carwash_hours}`
-    : `the carwash rate ÷ ${r.carwash_hours} (construction rate ÷ ${r.construction_hours})`);
-  openModal(`${modalHeader('Overtime settings', 'OT pays the day\'s rate ÷ the normal hours of that kind of day × the OT multiplier. Someone whose day is different (e.g. the GM on 8 hours) can have their own hours or multiplier: Edit next to their name.', 'Payroll')}
-    <div class="table-wrap"><table class="ot-rules-table"><thead><tr><th>From</th><th class="num">Carwash day</th><th class="num">Construction day</th><th class="num">OT multiplier</th><th></th></tr></thead>
-      <tbody>${rules.map(r => `<tr data-rule-row="${r.effective_from}"><td>${r.effective_from === first ? 'The start' : esc(prettyDate(r.effective_from))}</td>
-        <td class="num">${Number(r.carwash_hours)}h</td><td class="num">${Number(r.construction_hours)}h</td><td class="num">× ${Number(r.multiplier)}</td>
-        <td class="row-actions">${r.effective_from === first ? '' : '<button class="icon-btn" type="button" data-del-rule title="Delete this rule">✕</button>'}</td></tr>`).join('')}</tbody></table></div>
-    <h3 class="mt">Change from a date</h3>
-    <div class="form-grid modal-form-grid">
-      <div><label>From</label><input type="date" data-rule="effective_from" value="${sundayOf(todayLocal())}"></div>
-      <div><label>Carwash day (hours)</label><input type="number" min="1" max="24" step="0.25" data-rule="carwash_hours"></div>
-      <div><label>Construction day (hours)</label><input type="number" min="1" max="24" step="0.25" data-rule="construction_hours"></div>
-      <div><label>OT multiplier</label><input type="number" min="1" max="3" step="0.05" data-rule="multiplier"></div>
-    </div>
-    <p class="hint" data-rule-note></p>
-    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Save rule</button></div>`,
-  card => {
-    const field = k => $(`[data-rule="${k}"]`, card);
-    const typed = () => ({ carwash_hours: Number(field('carwash_hours').value), construction_hours: Number(field('construction_hours').value),
-      multiplier: Number(field('multiplier').value) });
-    // Picking a date starts from the rule in effect that day.
-    const fill = () => {
-      const r = ruleOn(field('effective_from').value || first);
-      for (const k of ['carwash_hours', 'construction_hours', 'multiplier']) field(k).value = Number(r[k]);
+  const now = ruleOn(sundayOf(todayLocal()));
+  const extra = m => (![1, 1.25].includes(Number(m)) ? { min: 1, max: 3, step: 0.05, unit: '× hourly' } : null);
+  openModal(`<div data-ot-form>${modalHeader('Overtime settings', 'How overtime is paid for everyone. Someone with a different work day (e.g. the GM on 8 hours) is set with Edit next to their name.', 'Payroll')}
+    ${choiceGroup('cw-hours', 'Carwash work day', [{ value: '8', label: '8 hours' }, { value: '11', label: '11 hours' }], Number(now.carwash_hours),
+    { min: 1, max: 24, step: 0.25, unit: 'hours' })}
+    ${choiceGroup('cn-hours', 'Construction work day', [{ value: '8', label: '8 hours' }], Number(now.construction_hours),
+    { min: 1, max: 24, step: 0.25, unit: 'hours' })}
+    ${choiceGroup('ot-pay', 'OT pay per hour', [{ value: '1', label: 'Same as the normal hourly rate' }, { value: '1.25', label: 'Normal + 25% (Labor Code)' }],
+    Number(now.multiplier), extra(now.multiplier))}
+    ${startsChoice()}
+    ${PREVIEW_PANEL}
+    <details class="ot-history" data-history><summary>Earlier changes (${rules.length})</summary>
+      <div class="table-wrap"><table class="ot-rules-table"><thead><tr><th>From</th><th class="num">Carwash day</th><th class="num">Construction day</th><th>OT pay</th><th></th></tr></thead>
+        <tbody>${rules.map(r => `<tr data-rule-row="${r.effective_from}"><td>${r.effective_from === first ? 'The start' : esc(prettyDate(r.effective_from))}</td>
+          <td class="num">${Number(r.carwash_hours)} h</td><td class="num">${Number(r.construction_hours)} h</td><td>${otPayWords(r.multiplier)}</td>
+          <td class="row-actions">${r.effective_from === first ? '' : '<button class="btn ghost small" type="button" data-del-rule>Undo</button>'}</td></tr>`).join('')}</tbody></table></div>
+    </details>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Save</button></div></div>`,
+  modalCard => {
+    const card = $('[data-ot-form]', modalCard);
+    // Until a choice is touched, picking another start date shows the setting in effect on that date.
+    let touched = false;
+    card.addEventListener('change', ev => {
+      if (ev.target.matches('[name="cw-hours"], [name="cn-hours"], [name="ot-pay"], [data-other]')) touched = true;
+      if (!touched && ev.target.matches('[name="starts"], [data-starts-date]') && startsValue(card)) {
+        const r = ruleOn(startsValue(card));
+        setChoice(card, 'cw-hours', Number(r.carwash_hours));
+        setChoice(card, 'cn-hours', Number(r.construction_hours));
+        setChoice(card, 'ot-pay', Number(r.multiplier));
+      }
+    });
+    const build = () => {
+      const from = startsValue(card);
+      if (!from) return { error: 'Pick the date the change starts.' };
+      const cw = choiceValue(card, 'cw-hours', 1, 24);
+      const cn = choiceValue(card, 'cn-hours', 1, 24);
+      const m = choiceValue(card, 'ot-pay', 1, 3);
+      if (Number.isNaN(cw) || Number.isNaN(cn)) return { error: 'Enter the hours of a work day (1 to 24).' };
+      if (Number.isNaN(m)) return { error: 'Enter the OT multiplier (1 to 3).' };
+      return { body: { kind: 'ot-rule', effective_from: from, carwash_hours: cw, construction_hours: cn, multiplier: m } };
     };
-    const showNote = () => {
-      const from = field('effective_from').value;
-      const t = typed();
-      const b = ruleOn(from || first);
-      const same = t.carwash_hours === Number(b.carwash_hours) && t.construction_hours === Number(b.construction_hours) && t.multiplier === Number(b.multiplier);
-      $('[data-rule-note]', card).textContent = !from ? 'Pick the date the rule starts.'
-        : same ? `No change: from ${prettyDate(from)} OT already pays ${hourly(t)} × ${t.multiplier} per hour.`
-          : `From ${prettyDate(from)} on, OT pays ${hourly(t)} × ${t.multiplier} per hour. `
-            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep their rule.');
-    };
-    fill();
-    showNote();
-    field('effective_from').addEventListener('change', () => { fill(); showNote(); });
-    for (const k of ['carwash_hours', 'construction_hours', 'multiplier']) field(k).addEventListener('input', showNote);
+    const preview = livePreview(card, build, ex => `Example, ${ex.name}: ${exampleLine(ex)}`);
     $$('[data-del-rule]', card).forEach(btn => btn.addEventListener('click', ev => busy(ev.currentTarget, async () => {
       const from = btn.closest('tr').dataset.ruleRow;
-      if (!window.confirm(`Delete the overtime rule from ${prettyDate(from)}? Those days go back to the rule before it.`)) return;
-      await api('DELETE', `/payroll/ot-rules/${from}`);
+      const p = await api('POST', '/payroll/preview', { kind: 'ot-rule', effective_from: from, remove: true });
+      const paid = p.paidOut.length ? `\n\nWages for ${p.paidOut.map(x => `${prettyDate(x.period_start)} – ${prettyDate(x.period_end)}`).join(', ')} are already paid out and would change.` : '';
+      if (!window.confirm(`Undo the overtime change from ${prettyDate(from)}? Those days go back to the setting before it.${paid}`)) return;
+      await api('DELETE', `/payroll/ot-rules/${from}${p.paidOut.length ? '?confirm_paid=1' : ''}`);
       closeModal();
-      toast('Overtime rule deleted');
+      toast('Overtime change undone');
       await reload();
     })));
     $('[data-confirm]', card).addEventListener('click', ev => busy(ev.currentTarget, async () => {
-      const from = field('effective_from').value;
-      if (!from) return toast('Pick the date the rule starts', 'error');
-      await api('PUT', `/payroll/ot-rules/${from}`, typed());
+      const built = build();
+      if (built.error) return toast(built.error, 'error');
+      const { effective_from: from, carwash_hours, construction_hours, multiplier } = built.body;
+      await api('PUT', `/payroll/ot-rules/${from}`, { carwash_hours, construction_hours, multiplier, confirm_paid: preview.confirmedPaid() });
       closeModal();
-      toast('Overtime rule saved');
+      toast('Overtime settings saved');
       await reload();
     }));
   });

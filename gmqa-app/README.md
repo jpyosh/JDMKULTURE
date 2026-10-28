@@ -71,6 +71,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   Someone whose day is different (e.g. the GM on a standard 8-hour day) gets their own carwash hours
   and/or OT multiplier in Edit; blank follows the shop rule. Like rates, a change only applies from its
   date, so earlier weeks never change.
+- Both forms are plain choices (8 / 11 hours, normal rate / +25%, starts this or next pay week) with a
+  live preview from the server (`POST /payroll/preview`, `previewChange` in `lib/payroll-data.js`): what
+  one OT hour pays, whose recorded pay changes, and any payout already made for a week whose pay would
+  change. Such a change needs a second confirm (`confirm_paid`); the server refuses it otherwise (409).
 - A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
   expected drawer in EOD.
 - **Sign-off sheet** (Payroll → Download sign-off sheet): a PDF for the selected pay period (up to 16

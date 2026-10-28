@@ -5,9 +5,9 @@ const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { ATTENDANCE_CODES, datesBetween } = require('../lib/calc');
-const { loadPayroll, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
+const { loadPayroll, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
 const signoff = require('../lib/signoff-pdf');
-const { bad, notFound, money, between, text, date, oneOf, id, pick } = require('../lib/http');
+const { bad, notFound, conflict, money, between, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
 router.use(['/employees', '/payroll'], requireOwner);
@@ -21,6 +21,26 @@ const RATE_UPSERT = `insert into employee_rates (employee_id, effective_from, ra
   values ($1, $2, $3, $4, $5, $6)
   on conflict (employee_id, effective_from) do update set rate_per_day = excluded.rate_per_day, construction_rate = excluded.construction_rate,
     carwash_hours = excluded.carwash_hours, ot_multiplier = excluded.ot_multiplier`;
+const shopToday = async q => (await q.one(`select ${SHOP_TODAY} as d`)).d;
+
+// The rate fields present in a body, cleaned (absent = unchanged; blank own hours / multiplier = shop rule).
+function cleanRateFields(f) {
+  const out = {};
+  if ('rate_per_day' in f) out.rate_per_day = money(f.rate_per_day, 'Carwash rate');
+  if ('construction_rate' in f) out.construction_rate = money(f.construction_rate, 'Construction rate');
+  if ('carwash_hours' in f) out.carwash_hours = hours(f.carwash_hours, 'Carwash hours', { allowNull: true });
+  if ('ot_multiplier' in f) out.ot_multiplier = multiplier(f.ot_multiplier, 'OT multiplier', { allowNull: true });
+  return out;
+}
+const cleanRule = body => ({ multiplier: multiplier(body.multiplier, 'OT multiplier'),
+  carwash_hours: hours(body.carwash_hours, 'Carwash hours'), construction_hours: hours(body.construction_hours, 'Construction hours') });
+
+// A change that alters pay inside a week already paid out needs confirm_paid (the screen asks twice).
+async function guardPaidOut(q, change, confirm) {
+  if (confirm === true || confirm === 'true' || confirm === '1') return;
+  const { paidOut } = await previewChange(change, q);
+  if (paidOut.length) throw conflict(paidOutMessage(paidOut));
+}
 
 router.get('/employees', async (req, res) => {
   res.json(await db.many(`${EMPLOYEE_SELECT} where e.active order by e.id`));
@@ -29,17 +49,14 @@ router.get('/employees', async (req, res) => {
 router.post('/employees', async (req, res) => {
   const name = text(req.body.name, 'Name', { required: true, max: 80 });
   const role = text(req.body.role, 'Role', { max: 60 }) || '';
-  const rate = money(req.body.rate_per_day, 'Carwash rate');
-  const cnRate = money(req.body.construction_rate, 'Construction rate');
-  const cwHours = hours(req.body.carwash_hours, 'Carwash hours', { allowNull: true });
-  const otX = multiplier(req.body.ot_multiplier, 'OT multiplier', { allowNull: true });
+  const { rate_per_day: rate = 0, construction_rate: cnRate = 0, carwash_hours: cwHours = null, ot_multiplier: otX = null } =
+    cleanRateFields(pick(req.body, RATE_FIELDS));
   const employeeId = await db.tx(req.user.email, async q => {
     // Re-adding someone who was deactivated brings their old record (and history) back.
     const existing = await q.one('select id from employees where lower(name) = lower($1)', [name]);
     if (existing) {
       await q.query('update employees set active = true, role = $2 where id = $1', [existing.id, role]);
-      const today = (await q.one(`select ${SHOP_TODAY} as d`)).d;
-      await q.query(RATE_UPSERT, [existing.id, today, rate, cnRate, cwHours, otX]);
+      await q.query(RATE_UPSERT, [existing.id, await shopToday(q), rate, cnRate, cwHours, otX]);
       return existing.id;
     }
     const row = await q.one('insert into employees (name, role) values ($1, $2) returning id', [name, role]);
@@ -51,7 +68,6 @@ router.post('/employees', async (req, res) => {
 
 // Rates, and the employee's own carwash hours / OT multiplier (blank = shop rule), change from
 // `effective_from` (default: today); earlier days keep what they had.
-const RATE_FIELDS = ['rate_per_day', 'construction_rate', 'carwash_hours', 'ot_multiplier'];
 router.patch('/employees/:id', async (req, res) => {
   const employeeId = id(req.params.id, 'employee');
   const f = pick(req.body, ['name', 'role', ...RATE_FIELDS, 'effective_from']);
@@ -60,16 +76,13 @@ router.patch('/employees/:id', async (req, res) => {
     if ('name' in f) await q.query('update employees set name = $2 where id = $1', [employeeId, text(f.name, 'Name', { required: true, max: 80 })]);
     if ('role' in f) await q.query('update employees set role = $2 where id = $1', [employeeId, text(f.role, 'Role', { max: 60 }) || '']);
     if (RATE_FIELDS.some(k => k in f)) {
-      const from = f.effective_from ? date(f.effective_from, 'Effective date')
-        : (await q.one(`select ${SHOP_TODAY} as d`)).d;
+      const from = f.effective_from ? date(f.effective_from, 'Effective date') : await shopToday(q);
+      const fields = cleanRateFields(f);
+      await guardPaidOut(q, { kind: 'employee', employee_id: employeeId, effective_from: from, ...fields }, req.body.confirm_paid);
       const current = await q.one(`select rate_per_day, construction_rate, carwash_hours, ot_multiplier from employee_rates
-        where employee_id = $1 and effective_from <= $2 order by effective_from desc limit 1`, [employeeId, from])
-        || { rate_per_day: 0, construction_rate: 0, carwash_hours: null, ot_multiplier: null };
-      const rate = 'rate_per_day' in f ? money(f.rate_per_day, 'Carwash rate') : current.rate_per_day;
-      const cnRate = 'construction_rate' in f ? money(f.construction_rate, 'Construction rate') : current.construction_rate;
-      const cwHours = 'carwash_hours' in f ? hours(f.carwash_hours, 'Carwash hours', { allowNull: true }) : current.carwash_hours;
-      const otX = 'ot_multiplier' in f ? multiplier(f.ot_multiplier, 'OT multiplier', { allowNull: true }) : current.ot_multiplier;
-      await q.query(RATE_UPSERT, [employeeId, from, rate, cnRate, cwHours, otX]);
+        where employee_id = $1 and effective_from <= $2 order by effective_from desc limit 1`, [employeeId, from]) || {};
+      const row = rateRowFrom(current, fields, from);
+      await q.query(RATE_UPSERT, [employeeId, from, row.rate_per_day, row.construction_rate, row.carwash_hours, row.ot_multiplier]);
     }
   });
   res.json(await loadEmployee(db, employeeId));
@@ -101,13 +114,16 @@ router.get('/payroll', async (req, res) => {
 // construction day). Saving a date that already has a rule changes it; earlier days keep theirs.
 router.put('/payroll/ot-rules/:date', async (req, res) => {
   const from = date(req.params.date, 'Effective date');
-  const values = [from, multiplier(req.body.multiplier, 'OT multiplier'),
-    hours(req.body.carwash_hours, 'Carwash hours'), hours(req.body.construction_hours, 'Construction hours')];
-  const row = await db.tx(req.user.email, q => q.one(`insert into ot_rules (effective_from, multiplier, carwash_hours, construction_hours)
+  const rule = cleanRule(req.body);
+  const values = [from, rule.multiplier, rule.carwash_hours, rule.construction_hours];
+  const row = await db.tx(req.user.email, async q => {
+    await guardPaidOut(q, { kind: 'ot-rule', effective_from: from, ...rule }, req.body.confirm_paid);
+    return q.one(`insert into ot_rules (effective_from, multiplier, carwash_hours, construction_hours)
     values ($1, $2, $3, $4)
     on conflict (effective_from) do update set multiplier = excluded.multiplier, carwash_hours = excluded.carwash_hours,
       construction_hours = excluded.construction_hours
-    returning effective_from, multiplier, carwash_hours, construction_hours`, values));
+    returning effective_from, multiplier, carwash_hours, construction_hours`, values);
+  });
   res.json(row);
 });
 
@@ -118,9 +134,22 @@ router.delete('/payroll/ot-rules/:date', async (req, res) => {
   await db.tx(req.user.email, async q => {
     const first = await q.one('select min(effective_from) as d from ot_rules');
     if (first?.d === from) throw bad('The first overtime rule covers all earlier days and cannot be deleted. Change it instead.');
+    if (!(await q.one('select 1 from ot_rules where effective_from = $1', [from]))) throw notFound('Overtime rule');
+    await guardPaidOut(q, { kind: 'ot-rule', effective_from: from, remove: true }, req.query.confirm_paid);
     if (!(await q.exec('delete from ot_rules where effective_from = $1', [from]))) throw notFound('Overtime rule');
   });
   res.json({ ok: true });
+});
+
+// What an OT rule or employee rate / work-day change would do, before it is saved (see previewChange).
+router.post('/payroll/preview', async (req, res) => {
+  const kind = oneOf(req.body.kind, ['ot-rule', 'employee'], 'Change');
+  const from = req.body.effective_from ? date(req.body.effective_from, 'Effective date') : await shopToday(db);
+  const change = kind === 'ot-rule' ? { kind, effective_from: from, ...(req.body.remove ? { remove: true } : cleanRule(req.body)) } : {
+    kind, effective_from: from, employee_id: req.body.employee_id ? id(req.body.employee_id, 'employee') : null,
+    name: text(req.body.name, 'Name', { max: 80 }), ...cleanRateFields(pick(req.body, RATE_FIELDS)),
+  };
+  res.json(await previewChange(change));
 });
 
 // Printable sign-off sheet (PDF) for one pay period, from the same payroll as the screen.
