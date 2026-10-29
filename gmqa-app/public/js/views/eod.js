@@ -13,6 +13,7 @@ function mount(el) {
         <input type="date" data-date>
         <button class="btn ghost" type="button" data-shift="1" aria-label="Next day">›</button>
         <button class="btn ghost" type="button" data-today>Today</button>
+        <button class="btn" type="button" data-sales-report title="The day's sales report, ready to paste in the group chat">Copy sales report</button>
       </div>
     </div>
     <div data-status></div>
@@ -75,6 +76,7 @@ function mount(el) {
   $$('[data-m]', root).forEach(el => el.addEventListener('input', renderMath));
   $('[data-save]', root).addEventListener('click', e => busy(e.currentTarget, save));
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
+  $('[data-sales-report]', root).addEventListener('click', e => busy(e.currentTarget, copySalesReport));
   $('[data-e="side"]', root).addEventListener('change', renderFundHint);
 }
 
@@ -357,6 +359,27 @@ async function closeDay() {
   current.day = await api('POST', `/days/${current.date}/close`, { tips_later: tips === 'later' });
   toast('Day closed');
   render();
+}
+
+// The day's sales report in the boss's format (lib/calc.js salesReport), copied for the group chat and
+// shown, so it can also be copied by hand where the browser does not allow copying.
+async function copySalesReport() {
+  if (!locked()) {
+    current.day = await api('PUT', `/days/${current.date}`, metaPayload()); // with the numbers on screen
+    render();
+  }
+  const text = current.day.report.text;
+  let copied = false;
+  try { await navigator.clipboard.writeText(text); copied = true; } catch { /* shown below to copy by hand */ }
+  openModal(`${modalHeader('Sales report', copied ? 'Copied. Paste it in the group chat.' : 'Select the text and copy it.', prettyDate(current.date))}
+    <textarea class="report-text" data-report-text readonly rows="9">${esc(text)}</textarea>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Close</button>
+      <button class="btn" type="button" data-copy-again>Copy again</button></div>`, card => {
+    $('[data-copy-again]', card).addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(text); toast('Sales report copied'); } catch { $('[data-report-text]', card).select(); }
+    });
+  });
+  toast(copied ? 'Sales report copied' : 'Select the text and copy it', copied ? 'success' : 'error');
 }
 
 async function addExpense() {

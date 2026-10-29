@@ -473,6 +473,24 @@ async function launch() {
       assert.equal(await reminder.count(), 0);
     });
 
+    await step('EOD: one button copies the daily sales report for the group chat', async () => {
+      // The boss wants this every day in the group chat, in his format.
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      // 2027-03-03 (closed in the step above): one ₱300 GCash car, with a ₱30 tip that is not in the report.
+      await eod.locator('[data-date]').fill('2027-03-03');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-eod [data-date]').value === '2027-03-03'
+        && /Closed by/.test(document.querySelector('#view-eod [data-status]').textContent));
+      await eod.locator('[data-sales-report]').click();
+      await expectToast(/copied/i);
+      const want = 'March 3, 2027\nTotal of cars - 1\nTotal sales - 300\nLess comms - 0\nLess expenses - 0\nTotal net = 300\n\nCash - 0\nGcash - 300';
+      assert.equal(await page.inputValue('#modal[open] [data-report-text]'), want, 'shown, so it can also be copied by hand');
+      // The Windows clipboard hands line breaks back as \r\n.
+      assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n'), want);
+      await shot('06b-sales-report');
+      await page.click('#modal [data-close]');
+    });
+
     await step('calendar: our own sleek date picker (Sunday first, Today, keyboard, Escape)', async () => {
       const input = eod.locator('[data-date]');
       await input.fill('2026-09-14');

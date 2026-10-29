@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, DEPARTMENTS } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -170,4 +170,32 @@ test('GCash tips: kept in GCash until given to the crew, and carried over until 
   assert.equal(legacy.tipsToGive, 0);
   assert.equal(legacy.expectedGcash, 500);
   assert.equal(tipsOwed({ jobs: [tipJob(old, 50)], metas: [], before: day1 }), 0, 'old tips are never owed');
+});
+
+test('daily sales report for the group chat: the boss\'s format, matching Oct 29, 2026', () => {
+  const date = '2026-10-29';
+  const paid = (method, price, commission) => job({ job_date: date, payment_received: true, payment_method: method, items: [line(price, commission)] });
+  const jobs = [
+    // The 19 paid cars of Oct 29 (after the Cash/GCash fix): ₱7,750 cash and ₱3,850 GCash, ₱1,520 commission.
+    ...[[800, 150], [350, 0], [500, 0], [300, 0], [400, 0], [450, 0], [1500, 300], [300, 0], [850, 150], [300, 0], [850, 170], [850, 150], [300, 0]]
+      .map(([p, c]) => paid('Cash', p, c)),
+    ...[[250, 0], [850, 150], [700, 130], [800, 150], [850, 170]].map(([p, c]) => paid('GCash', p, c)),
+    job({ job_date: date, payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [line(400, 0)] }), // the tip is not in the report
+    // Not paid yet: counts as a car, not as a sale.
+    job({ job_date: date, items: [line(300, 0)] }),
+  ];
+  const s = daySummary({
+    date, jobs,
+    expenses: [{ side: 'cash', amount: 100 }, { side: 'gcash', amount: 1509 }, { side: 'cash', amount: 100 }, { side: 'cash', amount: 150 },
+      { side: 'cash', amount: 1000 }, { side: 'fund', amount: 400 }], // the abono is not in the report
+    meta: { cash_float: 1000, gcash_tips_passed: 50 },
+    outflows: { payrollPayouts: [{ side: 'cash', amount: 2000 }] }, // payouts are not in the report
+  });
+  const r = salesReport({ date, summary: s });
+  assert.deepEqual(r, { cars: 20, sales: 11600, commission: 1520, expenses: 2859, net: 7221, cash: 4880, gcash: 2341,
+    text: 'October 29, 2026\nTotal of cars - 20\nTotal sales - 11,600\nLess comms - 1,520\nLess expenses - 2,859\nTotal net = 7,221\n\nCash - 4880\nGcash - 2341' });
+
+  // Centavos are shown only when there are any; commission paid via GCash comes off GCash.
+  const odd = salesReport({ date, summary: daySummary({ date, jobs: [paid('GCash', 1000.5, 100)], meta: { commission_gcash_paid: 100 } }) });
+  assert.equal(odd.text, 'October 29, 2026\nTotal of cars - 1\nTotal sales - 1,000.50\nLess comms - 100\nLess expenses - 0\nTotal net = 900.50\n\nCash - 0\nGcash - 900.50');
 });

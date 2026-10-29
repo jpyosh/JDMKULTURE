@@ -338,9 +338,42 @@ function joPrefix(date, prefix = 'JO') {
   return `${prefix}-${m}${d}${y.slice(2)}-`;
 }
 
+// ---------------------------------------------------------------- daily sales report (group chat)
+
+// The day's numbers in the boss's format (agreed 2026-10-29): cars = every car of the day, paid or not;
+// sales = paid sales; expenses = paid from the drawer (cash and GCash, not the cash fund); Cash / GCash =
+// what each side brought in less the commission and expenses paid from it. Float, tips and payouts are left out.
+const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function salesReport({ date, summary: s }) {
+  const r = {
+    cars: s.vehicles,
+    sales: s.collected,
+    commission: s.commission,
+    expenses: round2(s.cashExpenses + s.gcashExpenses),
+    net: round2(s.collected - s.commission - s.cashExpenses - s.gcashExpenses),
+    cash: round2(s.cashReceived - s.commissionCash - s.cashExpenses),
+    gcash: round2(s.gcashReceived - s.commissionGcash - s.gcashExpenses),
+  };
+  // Centavos only when there are any; the Cash and Gcash lines are written without a thousands comma.
+  const num = (n, comma = true) => n.toLocaleString('en-US', { useGrouping: comma, minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+  const [y, m, d] = date.split('-').map(Number);
+  r.text = [
+    `${FULL_MONTHS[m - 1]} ${d}, ${y}`,
+    `Total of cars - ${r.cars}`,
+    `Total sales - ${num(r.sales)}`,
+    `Less comms - ${num(r.commission)}`,
+    `Less expenses - ${num(r.expenses)}`,
+    `Total net = ${num(r.net)}`,
+    '',
+    `Cash - ${num(r.cash, false)}`,
+    `Gcash - ${num(r.gcash, false)}`,
+  ].join('\n');
+  return r;
+}
+
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
-  round2, jobTotals, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed,
+  round2, jobTotals, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,

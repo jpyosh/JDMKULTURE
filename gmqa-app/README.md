@@ -57,6 +57,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   reminder's **Mark given** button). Tips not given out carry over: the next days' EOD keeps reminding until
   they are. Closing a day with tips still owed asks first: **Given out, close day** or **Close, give it later**.
   Days before Thu Oct 29, 2026 keep the old rule (tips given out the same day), so their numbers do not change.
+- **Copy sales report** (EOD) copies the day's report for the group chat in the boss's format: date, total of cars
+  (paid or not), total sales (paid), less comms, less expenses (drawer cash + GCash, not the cash fund), total net,
+  then Cash and Gcash (each side's money in less the commission and expenses paid from it). Float, tips and payroll
+  payouts are left out (`salesReport` in `lib/calc.js`).
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
 - Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
