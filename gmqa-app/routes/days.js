@@ -2,7 +2,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { daySummary, tipsOwed, TIPS_TRACKED_FROM } = require('../lib/calc');
+const { daySummary, tipsOwed, salesReport, TIPS_TRACKED_FROM } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { bad, notFound, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
@@ -31,9 +31,10 @@ async function loadDay(day, q = db) {
       and (gcash_tips_to_distribute > 0 or gcash_tips_passed > 0)`, [TIPS_TRACKED_FROM, day]),
   ]);
   const m = { ...EMPTY_META, ...meta, job_date: day };
-  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps,
-    summary: daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
-      tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) }) };
+  const summary = daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
+    tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) });
+  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, summary,
+    report: salesReport({ date: day, summary }) };
 }
 
 router.get('/days/:date', async (req, res) => {

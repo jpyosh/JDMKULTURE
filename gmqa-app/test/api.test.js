@@ -1140,3 +1140,15 @@ test('GCash tips: closing a day with tips not given to the crew needs a decision
   assert.ok((await ok(api(STAFF, 'POST', `/days/${day2}/close`))).meta.closed_at, 'nothing owed: closes as before');
   assert.equal((await ok(api(STAFF, 'GET', '/days/2027-02-03'))).summary.tipsToGive, 0);
 });
+
+test('EOD gives the daily sales report for the group chat, for staff and owner', async () => {
+  const day = '2027-02-15';
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: day, vehicle_class: 'S', payment_received: true, items: [{ name: 'Wash', price: 800, commission: 150 }] }));
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: day, vehicle_class: 'S', payment_method: 'GCash', payment_received: true, items: [{ name: 'Wash', price: 1200, commission: 0 }] }));
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: day, vehicle_class: 'S', items: [{ name: 'Wash', price: 300, commission: 0 }] }));
+  await ok(api(STAFF, 'POST', `/days/${day}/expenses`, { side: 'cash', description: 'Soap', amount: 100 }));
+  for (const who of [STAFF, OWNER]) {
+    const { report } = await ok(api(who, 'GET', `/days/${day}`));
+    assert.equal(report.text, 'February 15, 2027\nTotal of cars - 3\nTotal sales - 2,000\nLess comms - 150\nLess expenses - 100\nTotal net = 1,750\n\nCash - 550\nGcash - 1200');
+  }
+});
