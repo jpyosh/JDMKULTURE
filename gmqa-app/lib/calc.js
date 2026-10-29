@@ -61,21 +61,45 @@ function salesFigures(jobs) {
   };
 }
 
+// Money in on `date`: paid carwash/parts jobs of that day + running jobs paid that day (finished or not).
+const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j)
+  && (isRunning(j) ? j.paid_on === date : saleDate(j) === date && j.payment_received));
+
+// GCash tips stay in GCash until someone gives them to the crew (daily_meta.gcash_tips_passed); what is
+// not given out is carried over to the next days until it is. Before this date tips were taken as given
+// out the same day, so earlier EODs keep the numbers they had.
+const TIPS_TRACKED_FROM = '2026-10-29';
+const tipsReceivedOn = (jobs, date, meta = {}) => round2(sum(receivedOn(jobs, date), j => j.tip_gcash) + round2(meta.gcash_tips_to_distribute));
+const tipsGivenOn = (date, tips, meta = {}) => (date < TIPS_TRACKED_FROM ? tips : round2(meta.gcash_tips_passed));
+
+// GCash tips received before `before` and not yet given to the crew. jobs: jobs with tips (any days);
+// metas: daily_meta rows. Giving out more than was owed is not kept as credit for later tips.
+function tipsOwed({ jobs, metas = [], before }) {
+  const metaOn = new Map(metas.map(m => [m.job_date, m]));
+  const dates = new Set(metas.map(m => m.job_date));
+  for (const j of jobs) dates.add(isRunning(j) ? j.paid_on : saleDate(j));
+  let owed = 0;
+  for (const date of [...dates].filter(d => d && d >= TIPS_TRACKED_FROM && d < before).sort()) {
+    const tips = tipsReceivedOn(jobs, date, metaOn.get(date));
+    owed = Math.max(0, round2(owed + tips - tipsGivenOn(date, tips, metaOn.get(date))));
+  }
+  return owed;
+}
+
 // The business day `date`: sales booked that day (by department) and money received that day.
 // `jobs` may contain any jobs; only the ones relevant to `date` are used. Jobs carry .totals.
 // outflows: money that leaves the drawer for reasons other than expenses/commission, each a list of
 // { side: 'cash' | 'gcash', amount }: payrollPayouts, setAsides (to bill funds), billTopUps (the part
-// of a bill its fund could not cover).
-function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
+// of a bill its fund could not cover). tipsOwedBefore: GCash tips from earlier days not yet given out (tipsOwed).
+function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsOwedBefore = 0 }) {
   const live = jobs.filter(isCounted);
   const sales = live.filter(j => saleDate(j) === date);
   const departments = Object.fromEntries(DEPARTMENTS.map(d =>
     [d.key, salesFigures(sales.filter(j => (j.department || 'carwash') === d.key))]));
   const { collected, receivables, commission } = salesFigures(sales);
 
-  // Money in today: paid carwash jobs of today + running jobs paid today (finished or not).
   const runningPaidToday = live.filter(j => isRunning(j) && j.paid_on === date);
-  const received = [...sales.filter(j => !isRunning(j) && j.payment_received), ...runningPaidToday];
+  const received = receivedOn(jobs, date);
   const cashReceived = sum(received.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
   const gcashReceived = round2(sum(received, j => j.totals.total) - cashReceived);
   const paidInAdvance = sum(runningPaidToday.filter(j => saleDate(j) !== date), j => j.totals.total);
@@ -91,7 +115,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
   const partsBoughtDrawer = sum(resale.filter(e => e.side !== 'fund'), e => e.amount);
   const partsBoughtFund = sum(resale.filter(e => e.side === 'fund'), e => e.amount);
 
-  // Tips arrive in GCash and are passed on to the crew, so they net to zero in the GCash count.
+  // Tips arrive in GCash and leave it when given to the crew (see TIPS_TRACKED_FROM).
   const jobTips = sum(received, j => j.tip_gcash);
 
   // Parts sold in today's paid sales (any department), and what they cost.
@@ -100,6 +124,10 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
   const partsCost = sum(paidSales, j => j.totals.cost);
   const otherTips = round2(meta.gcash_tips_to_distribute);
   const tips = round2(jobTips + otherTips);
+  const tipsTracked = date >= TIPS_TRACKED_FROM;
+  const tipsGiven = tipsGivenOn(date, tips, meta);
+  const owedBefore = tipsTracked ? round2(tipsOwedBefore) : 0;
+  const tipsToGive = Math.max(0, round2(owedBefore + tips - tipsGiven));
 
   const commissionGcash = Math.min(round2(meta.commission_gcash_paid), commission);
   const commissionCash = round2(commission - commissionGcash);
@@ -115,7 +143,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
 
   const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses
     - payrollCash - setAsideCash - billTopUpCash);
-  const expectedGcash = round2(gcashReceived + tips - commissionGcash - gcashExpenses - tips
+  const expectedGcash = round2(gcashReceived + tips - tipsGiven - commissionGcash - gcashExpenses
     - payrollGcash - setAsideGcash - billTopUpGcash);
   const actualCash = meta.actual_cash ?? null;
   const actualGcash = meta.actual_gcash ?? null;
@@ -130,7 +158,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {} }) {
     cashReceived, gcashReceived, paidInAdvance, paidEarlier,
     cashExpenses, gcashExpenses, fundExpenses, drawerExpenses, expenses: round2(drawerExpenses + fundExpenses),
     partsBoughtDrawer, partsBoughtFund,
-    jobTips, otherTips, tips,
+    jobTips, otherTips, tips, tipsTracked, tipsGiven, tipsOwedBefore: owedBefore, tipsToGive,
     cashFloat, commissionCash, commissionGcash, payrollCash, payrollGcash,
     setAsideCash, setAsideGcash, billTopUpCash, billTopUpGcash,
     expectedCash, expectedGcash, expectedTotal: round2(expectedCash + expectedGcash),
@@ -312,7 +340,7 @@ function joPrefix(date, prefix = 'JO') {
 
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
-  round2, jobTotals, isCounted, daySummary,
+  round2, jobTotals, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,

@@ -1,4 +1,4 @@
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, prettyTime, isOwner, DEPARTMENTS } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, prettyTime, isOwner, DEPARTMENTS, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
 let current = { date: todayLocal(), day: null };
@@ -16,6 +16,7 @@ function mount(el) {
       </div>
     </div>
     <div data-status></div>
+    <div data-tips></div>
     <div class="metrics-row" data-metrics></div>
     <div class="card"><h2>Sales by department</h2><div class="table-wrap"><table class="simple-table dept-table" data-departments></table></div></div>
     <div class="card envelopes" data-envelopes>
@@ -37,6 +38,7 @@ function mount(el) {
             <div><label>Cash float</label><input type="number" min="0" step="0.01" data-m="cash_float"></div>
             <div><label>Commission paid via GCash</label><input type="number" min="0" step="0.01" data-m="commission_gcash_paid"></div>
             <div><label>Other GCash tips</label><input type="number" min="0" step="0.01" data-m="gcash_tips_to_distribute"></div>
+            <div><label>GCash tips given to crew</label><input type="number" min="0" step="0.01" data-m="gcash_tips_passed"></div>
           </div>
           <h2 class="mt">Actual count</h2>
           <div class="form-grid">
@@ -127,6 +129,9 @@ function render() {
     el.value = value ?? (el.type === 'number' && !['actual_cash', 'actual_gcash'].includes(el.dataset.m) ? 0 : '');
     el.disabled = locked();
   }
+  // Before tips were tracked, a day's tips were taken as given out that same day.
+  const given = $('[data-m="gcash_tips_passed"]', root);
+  if (!s.tipsTracked) { given.value = s.tipsGiven; given.disabled = true; given.title = 'Days before Oct 29, 2026: tips were given out the same day'; }
   $('[data-save]', root).disabled = locked();
   $$('.expense-form [data-e], [data-add-expense]', root).forEach(el => { el.disabled = locked(); });
 
@@ -230,10 +235,13 @@ function renderMath() {
   const num = key => Number(val(key) || 0);
   const commissionGcash = Math.min(num('commission_gcash_paid'), s.commission);
   const commissionCash = s.commission - commissionGcash;
-  const tips = s.jobTips + num('gcash_tips_to_distribute');
+  const tips = round2(s.jobTips + num('gcash_tips_to_distribute'));
+  // Same rule as lib/calc.js: tips stay in GCash until given to the crew; what is not given carries over.
+  const tipsGiven = s.tipsTracked ? num('gcash_tips_passed') : tips;
+  const tipsToGive = Math.max(0, round2(s.tipsOwedBefore + tips - tipsGiven));
   const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses
     - s.payrollCash - s.setAsideCash - s.billTopUpCash;
-  const expectedGcash = s.gcashReceived + tips - commissionGcash - s.gcashExpenses - tips
+  const expectedGcash = s.gcashReceived + tips - tipsGiven - commissionGcash - s.gcashExpenses
     - s.payrollGcash - s.setAsideGcash - s.billTopUpGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
 
@@ -249,13 +257,15 @@ function renderMath() {
   $('[data-gcash]', root).innerHTML =
     line('GCash received today', peso(s.gcashReceived))
     + line('+ Tips received', peso(tips))
-    + line('− Tips passed to crew', peso(tips))
+    + line('− Tips given to crew', peso(tipsGiven))
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
     + (s.payrollGcash ? line('− Payroll paid out', peso(s.payrollGcash)) : '')
     + (s.setAsideGcash ? line('− Put aside for bills (envelopes)', peso(s.setAsideGcash)) : '')
     + (s.billTopUpGcash ? line('− Bill shortfall from GCash', peso(s.billTopUpGcash)) : '')
-    + line('Expected GCash', peso(expectedGcash), 'total');
+    + line('Expected GCash', peso(expectedGcash), 'total')
+    + (tipsToGive ? `<div class="hint mt">${peso(tipsToGive)} in tips is still in GCash until it is given to the crew.</div>` : '');
+  renderTipsReminder(tipsToGive, tipsGiven);
   const notes = [];
   if (s.paidInAdvance) notes.push(`${peso(s.paidInAdvance)} received today is for running jobs that are not done yet. It is in today's count but becomes a sale when the job is done.`);
   if (s.paidEarlier) notes.push(`${peso(s.paidEarlier)} of today's sales were paid on an earlier day, so that money is not in today's count.`);
@@ -270,6 +280,40 @@ function renderMath() {
     <div class="row-line"><span class="k">Cash</span>${variance('actual_cash', expectedCash)}</div>
     <div class="row-line"><span class="k">GCash</span>${variance('actual_gcash', expectedGcash)}</div>
     ${s.unpaidJobs ? `<div class="hint">${s.unpaidJobs} unpaid job${s.unpaidJobs === 1 ? '' : 's'} (${peso(s.receivables)}) are not in the expected amounts.</div>` : ''}`;
+}
+
+const round2 = n => Math.round(n * 100) / 100;
+
+// A reminder at the top of EOD while any GCash tip (today's or an earlier day's) has not been given out.
+function renderTipsReminder(toGive, given) {
+  const box = $('[data-tips]', root);
+  if (!toGive) { box.innerHTML = ''; return; }
+  const earlier = Math.min(current.day.summary.tipsOwedBefore, toGive);
+  box.innerHTML = `<div class="banner tips-reminder" data-tips-reminder>
+    <span><b>${peso(toGive)} in GCash tips</b> still to give to the crew${earlier ? ` (${peso(earlier)} from earlier days)` : ''}.</span>
+    ${locked() ? '' : `<button class="btn small" type="button" data-give-tips>Mark ${peso(toGive)} given</button>`}</div>`;
+  $('[data-give-tips]', box)?.addEventListener('click', e => busy(e.currentTarget, async () => {
+    $('[data-m="gcash_tips_passed"]', root).value = round2(given + toGive);
+    current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+    toast(`${peso(toGive)} in tips given to the crew`);
+    render();
+  }));
+}
+
+// Asks what to do with GCash tips not given out yet: 'give' (given now), 'later' (carry over) or null (cancel).
+function askAboutTips(toGive) {
+  return new Promise(resolve => {
+    let answer = null;
+    const dialog = openModal(`${modalHeader('Give out the GCash tips?', `${peso(toGive)} in GCash tips has not been given to the crew yet.`, 'Before closing')}
+      <p class="hint">Give it to the crew now, or close the day and it will be on the next day's EOD as a reminder.</p>
+      <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button>
+        <button class="btn ghost" type="button" data-tips-later>Close, give it later</button>
+        <button class="btn" type="button" data-tips-give-close>Given out ${peso(toGive)}, close day</button></div>`, card => {
+      $('[data-tips-later]', card).addEventListener('click', () => { answer = 'later'; closeModal(); });
+      $('[data-tips-give-close]', card).addEventListener('click', () => { answer = 'give'; closeModal(); });
+    });
+    dialog.addEventListener('close', () => resolve(answer), { once: true });
+  });
 }
 
 function metaPayload() {
@@ -291,6 +335,17 @@ async function closeDay() {
   // Save whatever is typed first so the day is closed with the numbers on screen.
   current.day = await api('PUT', `/days/${current.date}`, metaPayload());
   render();
+  let tips = null;
+  if (current.day.summary.tipsToGive > 0) {
+    tips = await askAboutTips(current.day.summary.tipsToGive);
+    if (!tips) return;
+    if (tips === 'give') {
+      const s = current.day.summary;
+      $('[data-m="gcash_tips_passed"]', root).value = round2(s.tipsGiven + s.tipsToGive);
+      current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+      render();
+    }
+  }
   const fresh = current.day.summary;
   const s = fresh;
   const warnings = [];
@@ -299,7 +354,7 @@ async function closeDay() {
   if (s.unpaidJobs) warnings.push(`${s.unpaidJobs} job(s) are still unpaid`);
   const msg = `Close ${current.date}? ${isOwner() ? '' : 'Staff will not be able to change it afterwards.'}${warnings.length ? `\n\nHeads up: ${warnings.join('; ')}.` : ''}`;
   if (!window.confirm(msg)) return;
-  current.day = await api('POST', `/days/${current.date}/close`);
+  current.day = await api('POST', `/days/${current.date}/close`, { tips_later: tips === 'later' });
   toast('Day closed');
   render();
 }

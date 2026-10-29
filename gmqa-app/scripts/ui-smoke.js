@@ -419,6 +419,60 @@ async function launch() {
       await page.waitForSelector('#view-eod .banner.ok');
     });
 
+    await step('EOD: GCash tips are a reminder until given to the crew, also when closing the day', async () => {
+      // Reported: the GCash card showed a tip as "passed to crew" although nobody had given it out yet.
+      const tipJob = (date, tip) => page.evaluate(([d, t]) => fetch('/api/jobs', { method: 'POST',
+        headers: { Authorization: 'Bearer owner@sandbox', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_date: d, vehicle_class: 'S', payment_method: 'GCash', payment_received: true, tip_gcash: t,
+          items: [{ name: 'Tip test wash', price: 300, commission: 0 }] }) }).then(r => r.status), [date, tip]);
+      const openDay = async date => {
+        await eod.locator('[data-date]').fill(date);
+        await eod.locator('[data-date]').dispatchEvent('change');
+        await page.waitForFunction(d => document.querySelector('#view-eod [data-date]').value === d
+          && /is open|Closed by/.test(document.querySelector('#view-eod [data-status]').textContent), date);
+      };
+      const reminder = eod.locator('[data-tips-reminder]');
+      const gcashLine = async label => (await eod.locator('[data-gcash] .row-line', { hasText: label }).locator('.money').textContent()).trim();
+      assert.equal(await tipJob('2027-03-01', 50), 201);
+      assert.equal(await tipJob('2027-03-03', 30), 201);
+
+      // Day 1: the tip is still to be given; closing asks first. "Later" closes and carries it over.
+      await openDay('2027-03-01');
+      await reminder.waitFor();
+      assert.match(await reminder.textContent(), /₱50\.00/);
+      assert.equal(await gcashLine('Tips given to crew'), '₱0.00');
+      assert.equal(await gcashLine('Expected GCash'), '₱350.00', 'the tip is still in GCash');
+      await eod.locator('[data-close-day]').click();
+      const modal = page.locator('#modal[open]');
+      await modal.locator('[data-tips-later]').waitFor();
+      assert.match(await modal.textContent(), /₱50\.00/);
+      await modal.locator('[data-tips-later]').click();
+      await expectToast(/Day closed/);
+      await page.waitForSelector('#view-eod .banner.ok');
+
+      // Day 2: yesterday's tip is still a reminder until it is marked given.
+      await openDay('2027-03-02');
+      await reminder.waitFor();
+      assert.match(await reminder.textContent(), /₱50\.00/);
+      assert.match(await reminder.textContent(), /earlier/i);
+      await reminder.locator('[data-give-tips]').click();
+      await expectToast(/given/i);
+      await page.waitForFunction(() => !document.querySelector('#view-eod [data-tips-reminder]'));
+      assert.equal(await gcashLine('Tips given to crew'), '₱50.00');
+      await eod.locator('[data-close-day]').click();
+      await expectToast(/Day closed/);
+
+      // Day 3: "Given out, close day" records the tips and closes in one go.
+      await openDay('2027-03-03');
+      await reminder.waitFor();
+      await eod.locator('[data-close-day]').click();
+      await modal.locator('[data-tips-give-close]').click();
+      await expectToast(/Day closed/);
+      await page.waitForSelector('#view-eod .banner.ok');
+      assert.equal(await gcashLine('Tips given to crew'), '₱30.00');
+      assert.equal(await reminder.count(), 0);
+    });
+
     await step('calendar: our own sleek date picker (Sunday first, Today, keyboard, Escape)', async () => {
       const input = eod.locator('[data-date]');
       await input.fill('2026-09-14');

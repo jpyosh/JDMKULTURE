@@ -52,7 +52,11 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Commission** = every counted job (detailers are paid at EOD either way).
 - **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.
-- Expected GCash = GCash collected + tips − tips passed on − commission via GCash − GCash expenses.
+- Expected GCash = GCash collected + tips − tips given to the crew − commission via GCash − GCash expenses.
+- **GCash tips** stay in GCash until someone gives them to the crew (EOD → "GCash tips given to crew", or the
+  reminder's **Mark given** button). Tips not given out carry over: the next days' EOD keeps reminding until
+  they are. Closing a day with tips still owed asks first: **Given out, close day** or **Close, give it later**.
+  Days before Thu Oct 29, 2026 keep the old rule (tips given out the same day), so their numbers do not change.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
 - Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →

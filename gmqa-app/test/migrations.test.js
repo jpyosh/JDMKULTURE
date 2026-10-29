@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -328,7 +328,7 @@ test('011 moves the overtime rules into the database and lets an employee have t
   const emp = await one(driver, "insert into employees (name) values ('GM') returning id");
   await driver.query("insert into employee_rates (employee_id, effective_from, rate_per_day, construction_rate) values ($1, '2000-01-01', 1100, 0)", [emp.id]);
 
-  assert.deepEqual(await migrate(driver, quiet), ['011']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '011' }), ['011']);
   assert.deepEqual(await all(driver, 'select effective_from, multiplier, carwash_hours, construction_hours from ot_rules order by effective_from'), [
     { effective_from: '2000-01-01', multiplier: 1.25, carwash_hours: 8, construction_hours: 8 },
     { effective_from: '2026-10-04', multiplier: 1, carwash_hours: 8, construction_hours: 8 },
@@ -431,4 +431,19 @@ test('006 adds parts inventory, part line items and the parts counter department
     values ($1, 'part', $2, 'Wiper blade 18in', 2, 900, 0, 300)`, [counter.id, part.id]);
   await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price) values ($1, 'part', 'No part id', 1)", [counter.id]), /check/i);
   await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price, quantity) values ($1, 'custom', 'x', 1, 0)", [counter.id]), /check/i);
+});
+
+test('012 records the GCash tips given to the crew each day, leaving earlier days as they were', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '011' });
+  await driver.query("insert into daily_meta (job_date, gcash_tips_to_distribute, closed_at) values ('2026-10-27', 40, now())");
+
+  assert.deepEqual(await migrate(driver, quiet), ['012']);
+  assert.deepEqual(await one(driver, 'select gcash_tips_to_distribute, gcash_tips_passed from daily_meta'),
+    { gcash_tips_to_distribute: 40, gcash_tips_passed: 0 }, 'existing days: nothing recorded (they follow the old rule in lib/calc.js)');
+  await driver.query("insert into daily_meta (job_date) values ('2026-11-02')");
+  assert.equal((await one(driver, "select gcash_tips_passed from daily_meta where job_date = '2026-11-02'")).gcash_tips_passed, 0);
+  await assert.rejects(driver.query('update daily_meta set gcash_tips_passed = -1'), /check/i);
+  await driver.query("update daily_meta set gcash_tips_passed = 25 where job_date = '2026-11-02'");
+  assert.ok((await one(driver, "select count(*)::int as n from audit_log where table_name = 'daily_meta' and (new_row->>'gcash_tips_passed')::numeric = 25")).n >= 1, 'audited');
 });

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, DEPARTMENTS } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, DEPARTMENTS } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -130,4 +130,44 @@ test('a running job not yet done and not paid does not touch any day', () => {
   const s = daySummary({ date: '2026-10-05', jobs: [open] });
   assert.equal(s.vehicles, 0);
   assert.equal(s.collected + s.receivables + s.commission + s.cashReceived + s.gcashReceived, 0);
+});
+
+test('GCash tips: kept in GCash until given to the crew, and carried over until they are', () => {
+  assert.equal(TIPS_TRACKED_FROM, '2026-10-29');
+  const tipJob = (date, tip) => job({ job_date: date, payment_received: true, payment_method: 'GCash', tip_gcash: tip, items: [line(500, 0)] });
+  const day1 = '2026-11-02';
+  const day2 = '2026-11-03';
+  const jobs = [tipJob(day1, 50), tipJob(day2, 20)];
+
+  // Day 1: a ₱50 tip came in and has not been given out yet: it is still in GCash and still owed.
+  const held = daySummary({ date: day1, jobs, meta: { gcash_tips_to_distribute: 30 } });
+  assert.equal(held.tips, 80, 'job tips + other tips');
+  assert.equal(held.tipsGiven, 0);
+  assert.equal(held.tipsToGive, 80);
+  assert.equal(held.expectedGcash, 500 + 80);
+  // Given out: it leaves GCash and nothing is owed.
+  const given = daySummary({ date: day1, jobs, meta: { gcash_tips_to_distribute: 30, gcash_tips_passed: 80 } });
+  assert.equal(given.tipsToGive, 0);
+  assert.equal(given.expectedGcash, 500);
+
+  // Day 1 closed with ₱50 of the ₱80 given: ₱30 is still owed on day 2.
+  const metas = [{ job_date: day1, gcash_tips_to_distribute: 30, gcash_tips_passed: 50 }];
+  assert.equal(tipsOwed({ jobs, metas, before: day1 }), 0);
+  assert.equal(tipsOwed({ jobs, metas, before: day2 }), 30);
+  const next = daySummary({ date: day2, jobs, meta: {}, tipsOwedBefore: 30 });
+  assert.equal(next.tipsOwedBefore, 30);
+  assert.equal(next.tipsToGive, 30 + 20);
+  const paidOut = daySummary({ date: day2, jobs, meta: { gcash_tips_passed: 50 }, tipsOwedBefore: 30 });
+  assert.equal(paidOut.tipsToGive, 0);
+  assert.equal(paidOut.expectedGcash, 500 + 20 - 50, 'giving out earlier tips takes them out of today\'s GCash');
+  // Giving out more than was owed is not a credit for later tips.
+  assert.equal(tipsOwed({ jobs, metas: [{ job_date: day1, gcash_tips_passed: 500 }], before: '2026-11-04' }), 20);
+
+  // Days before tracking started keep the old rule: tips were given out the same day.
+  const old = '2026-10-08';
+  const legacy = daySummary({ date: old, jobs: [tipJob(old, 50)], meta: { gcash_tips_passed: 0 } });
+  assert.equal(legacy.tipsGiven, 50);
+  assert.equal(legacy.tipsToGive, 0);
+  assert.equal(legacy.expectedGcash, 500);
+  assert.equal(tipsOwed({ jobs: [tipJob(old, 50)], metas: [], before: day1 }), 0, 'old tips are never owed');
 });
