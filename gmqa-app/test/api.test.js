@@ -1108,3 +1108,35 @@ test('sets: stock is counted in pieces; a part sells per piece or as a set', asy
   const cleared = await ok(api(OWNER, 'PATCH', `/inventory/${bulb.id}`, { set_size: null, set_price: null }));
   assert.deepEqual([cleared.set_size, cleared.set_price], [null, null]);
 });
+
+test('GCash tips: closing a day with tips not given to the crew needs a decision, and what is left carries over', async () => {
+  const premium = await catalogItem('Premium Wash');
+  const day1 = '2027-02-01';
+  const day2 = '2027-02-02';
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: day1, vehicle_class: 'S', payment_method: 'GCash', payment_received: true, tip_gcash: 50, items: [{ catalog_item_id: premium.id }] }));
+
+  let s = (await ok(api(STAFF, 'GET', `/days/${day1}`))).summary;
+  assert.deepEqual([s.tips, s.tipsGiven, s.tipsOwedBefore, s.tipsToGive], [50, 0, 0, 50]);
+  assert.equal(s.expectedGcash, 600 + 50, 'a tip not given out yet is still in GCash');
+
+  // Closing is refused until the tips are given out or the closer says they will be given later.
+  const refused = await api(STAFF, 'POST', `/days/${day1}/close`);
+  assert.equal(refused.status, 409);
+  assert.match(refused.data.error, /₱50\.00.*tips/i);
+  assert.equal((await ok(api(STAFF, 'GET', `/days/${day1}`))).meta.closed_at, null);
+
+  // Part given out, the rest later: the day closes and ₱20 shows up on the next day.
+  s = (await ok(api(STAFF, 'PUT', `/days/${day1}`, { gcash_tips_passed: 30 }))).summary;
+  assert.deepEqual([s.tipsGiven, s.tipsToGive, s.expectedGcash], [30, 20, 600 + 20]);
+  assert.equal((await api(STAFF, 'POST', `/days/${day1}/close`)).status, 409);
+  assert.ok((await ok(api(STAFF, 'POST', `/days/${day1}/close`, { tips_later: true }))).meta.closed_at);
+
+  s = (await ok(api(STAFF, 'GET', `/days/${day2}`))).summary;
+  assert.deepEqual([s.tips, s.tipsOwedBefore, s.tipsToGive], [0, 20, 20]);
+  assert.equal(s.expectedGcash, 0);
+  assert.equal((await api(STAFF, 'PUT', `/days/${day2}`, { gcash_tips_passed: -5 })).status, 400);
+  s = (await ok(api(STAFF, 'PUT', `/days/${day2}`, { gcash_tips_passed: 20 }))).summary;
+  assert.deepEqual([s.tipsToGive, s.expectedGcash], [0, -20], 'tips from yesterday given out today leave today\'s GCash');
+  assert.ok((await ok(api(STAFF, 'POST', `/days/${day2}/close`))).meta.closed_at, 'nothing owed: closes as before');
+  assert.equal((await ok(api(STAFF, 'GET', '/days/2027-02-03'))).summary.tipsToGive, 0);
+});

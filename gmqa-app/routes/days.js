@@ -2,17 +2,17 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { daySummary } = require('../lib/calc');
+const { daySummary, tipsOwed, TIPS_TRACKED_FROM } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
-const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
+const { bad, notFound, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
 
 const router = express.Router();
 const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null,
-  gcash_tips_to_distribute: 0, commission_gcash_paid: 0, closed_at: null, closed_by: null };
+  gcash_tips_to_distribute: 0, gcash_tips_passed: 0, commission_gcash_paid: 0, closed_at: null, closed_by: null };
 
 async function loadDay(day, q = db) {
-  const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps] = await Promise.all([
+  const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps, tipJobs, tipMetas] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
     // from_stock: recorded by Inventory → Receive (undone from there, not here).
     q.many(`select e.id, e.side, e.description, e.amount, e.topup_id, e.for_resale, e.created_by, e.created_at,
@@ -25,10 +25,15 @@ async function loadDay(day, q = db) {
       where s.entry_date = $1 order by s.id`, [day]),
     q.many(`select b.id, f.name, b.drawer_side as side, b.from_drawer as amount from bill_payments b join funds f on f.id = b.fund_id
       where b.paid_on = $1 and b.from_drawer > 0 order by b.id`, [day]),
+    // GCash tips of earlier days that may not have been given to the crew yet.
+    loadJobs('tip_gcash > 0 and voided_at is null and (job_date >= $1 or paid_on >= $1) and (job_date < $2 or paid_on < $2)', [TIPS_TRACKED_FROM, day], q),
+    q.many(`select job_date, gcash_tips_to_distribute, gcash_tips_passed from daily_meta where job_date >= $1 and job_date < $2
+      and (gcash_tips_to_distribute > 0 or gcash_tips_passed > 0)`, [TIPS_TRACKED_FROM, day]),
   ]);
   const m = { ...EMPTY_META, ...meta, job_date: day };
   return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps,
-    summary: daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps } }) };
+    summary: daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
+      tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) }) };
 }
 
 router.get('/days/:date', async (req, res) => {
@@ -37,10 +42,10 @@ router.get('/days/:date', async (req, res) => {
 
 router.put('/days/:date', async (req, res) => {
   const day = date(req.params.date);
-  const f = pick(req.body, ['supervisor', 'cash_float', 'gcash_tips_to_distribute', 'commission_gcash_paid', 'actual_cash', 'actual_gcash']);
+  const f = pick(req.body, ['supervisor', 'cash_float', 'gcash_tips_to_distribute', 'gcash_tips_passed', 'commission_gcash_paid', 'actual_cash', 'actual_gcash']);
   const clean = {};
   if ('supervisor' in f) clean.supervisor = text(f.supervisor, 'Supervisor', { max: 80 }) || '';
-  for (const key of ['cash_float', 'gcash_tips_to_distribute', 'commission_gcash_paid']) {
+  for (const key of ['cash_float', 'gcash_tips_to_distribute', 'gcash_tips_passed', 'commission_gcash_paid']) {
     if (key in f) clean[key] = money(f[key], key.replace(/_/g, ' '));
   }
   for (const key of ['actual_cash', 'actual_gcash']) {
@@ -57,8 +62,14 @@ router.put('/days/:date', async (req, res) => {
   res.json(await loadDay(day));
 });
 
+// GCash tips not given to the crew yet stop the close until they are given out, or until whoever closes
+// says they will be given later (tips_later); then they are carried over to the next day's EOD.
 router.post('/days/:date/close', async (req, res) => {
   const day = date(req.params.date);
+  const { meta, summary } = await loadDay(day);
+  if (!meta.closed_at && summary.tipsToGive > 0 && req.body?.tips_later !== true) {
+    throw conflict(`₱${summary.tipsToGive.toFixed(2)} in GCash tips has not been given to the crew yet. Give it out first, or close and give it later.`);
+  }
   await db.tx(req.user.email, q => q.query(`insert into daily_meta (job_date, closed_at, closed_by) values ($1, now(), $2)
     on conflict (job_date) do update set closed_at = coalesce(daily_meta.closed_at, now()), closed_by = coalesce(daily_meta.closed_by, $2)`,
   [day, req.user.email]));
