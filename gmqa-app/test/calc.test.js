@@ -45,6 +45,21 @@ test('parts: line cost is frozen per unit; cost and parts sales are counted with
   assert.equal(s.partsCost, 600 + 300, 'cost of parts sold (paid only)');
 });
 
+test('parts counter money goes to the drawer or GCash it was paid with, and EOD shows each', () => {
+  const partLine = { kind: 'part', name: 'Wiper blade', quantity: 1, price: 450, commission: 20, unit_cost: 300 };
+  const counter = fields => job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', items: [partLine], ...fields });
+  const s = daySummary({ date: '2026-12-01', meta: { cash_float: 1000 }, jobs: [
+    counter({ payment_received: true, payment_method: 'Cash' }),
+    counter({ payment_received: true, payment_method: 'GCash' }),
+    counter({ payment_received: true, payment_method: 'GCash' }),
+    counter({ payment_received: false, payment_method: 'Cash' }),
+    job({ job_date: '2026-12-01', payment_received: true, payment_method: 'Cash', items: [line(600, 0)] }),
+  ] });
+  assert.deepEqual([s.partsCashReceived, s.partsGcashReceived], [450, 900], 'paid counter sales only, by how they were paid');
+  assert.deepEqual([s.cashReceived, s.gcashReceived], [450 + 600, 900], 'still part of the drawer and GCash totals');
+  assert.equal(s.expectedCash, 1000 + 1050 - s.commissionCash);
+});
+
 test('saleDate: carwash counts on its job date; running jobs when both closed and paid', () => {
   assert.equal(saleDate(job({ job_date: '2026-10-05' })), '2026-10-05');
   const running = { department: 'detailing', job_date: '2026-10-05' };

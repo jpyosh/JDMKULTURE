@@ -156,6 +156,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   only as **cost of parts sold** when it sells, so it is never counted twice.
 - Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
   counter on the Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
+  A paid counter sale must say **Cash or GCash** (nothing is picked for them; the server refuses a paid sale
+  without one). EOD's Cash drawer and GCash cards then show "from parts counter" on its own line.
 - **Sets**: a part can also sell as a set (e.g. one bulb ₱2,000, a pair ₱3,500). Count stock in **pieces**
   (unit `pc`) and fill **Set of** (pieces per set) and **Set price** (and commission per set). "+ Add part"
   then offers both; a set line takes its pieces from the same stock, and removing, voiding or restoring it

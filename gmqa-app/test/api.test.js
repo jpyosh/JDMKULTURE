@@ -921,6 +921,11 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 17);
   assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', items: [{ catalog_item_id: premium.id }] })).status, 400,
     'services are not sold at the parts counter');
+  // A paid counter sale must say how it was paid: Cash or GCash, never a silent default.
+  const noMethod = await api(STAFF, 'POST', '/jobs', { job_date: '2026-12-03', department: 'parts', payment_received: true, items: [{ part_id: part.id, quantity: 1 }] });
+  assert.equal(noMethod.status, 400);
+  assert.match(noMethod.data.error, /Cash or GCash/);
+  assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 17, 'nothing was sold');
 
   // Stock count, with a reason; can never go below zero.
   assert.equal((await api(OWNER, 'POST', `/inventory/${part.id}/count`, { date: '2026-12-04', counted: 16 })).status, 400, 'reason required');
@@ -934,6 +939,7 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   const eod = (await ok(api(OWNER, 'GET', '/days/2026-12-03'))).summary;
   assert.equal(eod.departments.parts.collected, 1350);
   assert.equal(eod.gcashReceived, 1350);
+  assert.deepEqual([eod.partsCashReceived, eod.partsGcashReceived], [0, 1350], 'EOD shows the counter sale under GCash');
   const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-12-01&end=2026-12-31'));
   assert.equal(f.income.partsSales, 1350);
   assert.equal(f.income.partsCost, 690);
@@ -1065,7 +1071,7 @@ test('sets: stock is counted in pieces; a part sells per piece or as a set', asy
 
   // One set (2 pieces at the set price) and one piece, from the same stock.
   const sale = await ok(api(STAFF, 'POST', '/jobs', {
-    job_date: D, department: 'parts', payment_received: true,
+    job_date: D, department: 'parts', payment_received: true, payment_method: 'Cash',
     items: [{ part_id: bulb.id, quantity: 1, as_set: true }, { part_id: bulb.id, quantity: 1 }],
   }));
   const [setLine, pieceLine] = sale.items;

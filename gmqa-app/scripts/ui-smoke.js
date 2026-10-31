@@ -700,11 +700,19 @@ async function launch() {
       await page.selectOption('#modal [data-add="part"]', { index: 1 });
       await page.fill('#modal [data-l="quantity"]', '2');
       assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱1,100\.00/);
+      // The counter asks how the customer paid; nothing is picked for them.
+      const payChoice = page.locator('#modal [data-pay-choice]');
+      assert.match(await payChoice.textContent(), /Cash[\s\S]*GCash/);
+      assert.equal(await payChoice.locator('input:checked').count(), 0, 'no payment method is picked by default');
+      await page.click('#modal [data-save]');
+      await expectToast(/Cash or GCash/);
+      await payChoice.locator('input[value="GCash"]').check();
       await page.click('#modal [data-save]');
       await expectToast(/PC-092126-001 added/);
       const sale = parts.locator('[data-counter] tr', { hasText: 'PC-092126-001' });
       await sale.waitFor();
       assert.match(await sale.textContent(), /Paid/, 'counter sales default to paid (cash-and-carry)');
+      assert.match(await sale.textContent(), /GCash/);
       assert.doesNotMatch(await sale.textContent(), /Unpaid/);
       await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
         .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('10'));
@@ -717,11 +725,23 @@ async function launch() {
       await page.selectOption('#modal [data-add="part"]', setOption);
       assert.match(await page.textContent('#modal [data-lines]'), /set of 4/);
       assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱2,000\.00/);
+      await page.locator('#modal [data-pay-choice] input[value="Cash"]').check();
       await page.click('#modal [data-save]');
       await expectToast(/PC-092126-002 added/);
       await page.waitForFunction(() => [...document.querySelectorAll('#view-parts [data-parts] tr')]
         .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith('6'));
       await shot('07c-parts');
+
+      // EOD puts each counter sale in the drawer or GCash it was paid with, on its own line.
+      await page.click('#nav [data-view="eod"]');
+      const eodView = page.locator('#view-eod');
+      await eodView.locator('[data-date]').fill('2026-09-21');
+      await eodView.locator('[data-date]').dispatchEvent('change');
+      const partsLine = side => eodView.locator(`[data-${side}] .row-line`, { hasText: 'parts counter' }).locator('.money');
+      await partsLine('cash').waitFor();
+      assert.equal((await partsLine('cash').textContent()).trim(), '₱2,000.00');
+      assert.equal((await partsLine('gcash').textContent()).trim(), '₱1,100.00');
+      await page.click('#nav [data-view="parts"]');
     });
 
     await step('sales report', async () => {

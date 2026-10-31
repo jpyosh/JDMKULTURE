@@ -246,10 +246,15 @@ function renderMath() {
   const expectedGcash = s.gcashReceived + tips - tipsGiven - commissionGcash - s.gcashExpenses
     - s.payrollGcash - s.setAsideGcash - s.billTopUpGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
+  // On a day with parts counter sales, money received is split into job orders and the parts counter.
+  const counter = s.partsCashReceived || s.partsGcashReceived;
+  const received = (sign, label, total, parts) => (counter
+    ? line(`${sign}${label} from job orders`, peso(round2(total - parts))) + line(`+ ${label} from parts counter`, peso(parts))
+    : line(`${sign}${label} received today`, peso(total)));
 
   $('[data-cash]', root).innerHTML =
     line('Cash float', peso(num('cash_float')))
-    + line('+ Cash received today', peso(s.cashReceived))
+    + received('+ ', 'Cash', s.cashReceived, s.partsCashReceived)
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
     + (s.payrollCash ? line('− Payroll paid out', peso(s.payrollCash)) : '')
@@ -257,7 +262,7 @@ function renderMath() {
     + (s.billTopUpCash ? line('− Bill shortfall from drawer', peso(s.billTopUpCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
-    line('GCash received today', peso(s.gcashReceived))
+    received('', 'GCash', s.gcashReceived, s.partsGcashReceived)
     + line('+ Tips received', peso(tips))
     + line('− Tips given to crew', peso(tipsGiven))
     + line('− Commission paid via GCash', peso(commissionGcash))

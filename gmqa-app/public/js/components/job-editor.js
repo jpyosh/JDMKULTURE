@@ -33,6 +33,9 @@ export function createJobEditor(root, { job = null, department = job?.department
   const packOf = line => (line.as_set ? partOf(line.part_id)?.set_size || 1 : 1);
   const unitPrice = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_price || 0 : p?.price || 0; };
   const unitCommission = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_commission || 0 : p?.commission || 0; };
+  // The parts counter asks Cash or GCash every sale (nothing picked for them), so the money lands in the right count at EOD.
+  const askPayment = !dept.catalog;
+  const uid = Math.random().toString(36).slice(2);
 
   root.innerHTML = `
     <div class="job-editor">
@@ -43,8 +46,10 @@ export function createJobEditor(root, { job = null, department = job?.department
         <div><label>${dept.catalog ? 'Detailer' : 'Sold by'}</label><input type="text" data-f="detailer" value="${v('detailer')}" placeholder="Name" maxlength="80"></div>
         ${dept.catalog ? `<div><label>Time in</label><input type="time" data-f="time_in" value="${v('time_in')}"></div>` : ''}
         ${job && dept.catalog ? `<div><label>Time out</label><input type="time" data-f="time_out" value="${v('time_out')}"></div>` : ''}
-        ${running ? '' : `<div><label>Payment</label><select data-f="payment_method">
-          ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+        ${running ? '' : `${askPayment ? `<fieldset class="choice-group pay-choice" data-pay-choice><legend>Paid with</legend>
+          ${['Cash', 'GCash'].map(p => `<label><input type="radio" name="pay-method-${uid}" data-f="payment_method" value="${p}" ${p === job?.payment_method ? 'checked' : ''}> ${p}</label>`).join('')}</fieldset>`
+        : `<div><label>Payment</label><select data-f="payment_method">
+          ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>`}
         <div class="check-cell"><label class="check"><input type="checkbox" data-f="payment_received" ${(job ? job.payment_received : !dept.catalog) ? 'checked' : ''}> Customer paid</label></div>`}
       </div>
 
@@ -209,6 +214,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       $$('[data-f]', root).forEach(el => {
         const key = el.dataset.f;
         if (locked && LOCKED_FIELDS.includes(key)) return;
+        if (el.type === 'radio') { if (el.checked) out[key] = el.value; return; }
         out[key] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value || 0) : el.value.trim();
       });
       if (!locked) {
@@ -228,6 +234,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       if (editor.lines.some(l => l.kind === 'custom' && !l.id && !String(l.name).trim())) return 'Give each custom item a name';
       if (editor.lines.some(l => l.kind === 'part' && !l.id && !(Number(l.quantity) > 0))) return 'Enter a quantity for each part';
       if (totals().total < 0) return 'Discount cannot be more than the subtotal';
+      if (askPayment && field('payment_received').checked && !$('[data-pay-choice] input:checked', root)) return 'Choose how the customer paid: Cash or GCash';
       return null;
     },
   };
