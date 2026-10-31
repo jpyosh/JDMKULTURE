@@ -177,6 +177,7 @@ router.post('/jobs', async (req, res) => {
     const fields = await cleanJobFields(q, req.body);
     if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
     if (running && fields.payment_received) throw bad('Record payment for this job with "Mark paid" once the customer pays');
+    if (dept === 'parts' && fields.payment_received && !fields.payment_method) throw bad('Choose how the customer paid: Cash or GCash');
     const lines = await buildLines(q, req.body.items || [], fields.vehicle_class, dept);
     if (!lines.length) throw bad('Add at least one service, add-on or custom item');
     assertDiscount(fields.discount || 0, lines);

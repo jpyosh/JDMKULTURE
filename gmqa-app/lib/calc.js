@@ -102,6 +102,10 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   const received = receivedOn(jobs, date);
   const cashReceived = sum(received.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
   const gcashReceived = round2(sum(received, j => j.totals.total) - cashReceived);
+  // The parts counter's share of each, shown on its own line in EOD.
+  const counterReceived = received.filter(j => j.department === 'parts');
+  const partsCashReceived = sum(counterReceived.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
+  const partsGcashReceived = round2(sum(counterReceived, j => j.totals.total) - partsCashReceived);
   const paidInAdvance = sum(runningPaidToday.filter(j => saleDate(j) !== date), j => j.totals.total);
   const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on !== date), j => j.totals.total);
 
@@ -155,7 +159,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
     departments,
     collected, receivables, commission, partsSales, partsCost,
     net: round2(collected - commission),
-    cashReceived, gcashReceived, paidInAdvance, paidEarlier,
+    cashReceived, gcashReceived, partsCashReceived, partsGcashReceived, paidInAdvance, paidEarlier,
     cashExpenses, gcashExpenses, fundExpenses, drawerExpenses, expenses: round2(drawerExpenses + fundExpenses),
     partsBoughtDrawer, partsBoughtFund,
     jobTips, otherTips, tips, tipsTracked, tipsGiven, tipsOwedBefore: owedBefore, tipsToGive,

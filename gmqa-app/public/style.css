@@ -459,6 +459,10 @@ th.num{text-align:right;}
 .choice-group input[type="radio"]{width:18px;height:18px;margin:0;accent-color:var(--accent);}
 .choice-group .choice-other{width:84px;min-height:32px;padding:4px 8px;}
 .choice-group input[type="date"].choice-other{width:auto;}
+/* Parts counter "Paid with" Cash / GCash: lines up with the inputs beside it in the entry grid. */
+.entry-grid .pay-choice{margin:0;column-gap:18px;}
+.entry-grid .pay-choice legend{font-weight:500;margin-bottom:6px;}
+.entry-grid .pay-choice label{margin:0;min-height:var(--control);}
 .ot-preview{margin:4px 0 12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface-alt);font-size:14px;}
 .ot-preview [data-example]{margin:0 0 6px;font-weight:600;}
 .ot-preview p{margin:0 0 6px;}
