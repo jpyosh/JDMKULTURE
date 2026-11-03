@@ -117,10 +117,11 @@ function open(input) {
   el.className = 'datepicker';
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-label', 'Choose a date');
-  // A popover sits in the top layer, so the calendar also shows above open dialogs (modals).
+  // A popover sits in the top layer, so the calendar also shows above open dialogs (modals). It must still live
+  // inside the dialog: a modal dialog makes everything outside it inert, so the days could not be clicked.
   const popover = typeof el.showPopover === 'function';
   if (popover) el.setAttribute('popover', 'manual');
-  (popover ? document.body : input.closest('dialog') || document.body).append(el);
+  (input.closest('dialog') || document.body).append(el);
   const pair = [...(input.closest('.date-range-picker')?.querySelectorAll('input[type=date]') || [])];
   const role = pair.length === 2 ? (pair[0] === input ? 'start' : 'end') : null;
   picker = { el, input, role, partner: role ? pair.find(p => p !== input) : null, preview: null };

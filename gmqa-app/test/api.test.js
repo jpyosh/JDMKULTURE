@@ -482,6 +482,8 @@ test('own hours and OT multiplier show next to the rate on the sign-off sheet', 
   await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/${today}`, { code: 'P' }));
   const pdf = (await pdfLines((await download(OWNER, `/payroll/signoff.pdf?start=${today}&end=${today}`)).body)).flat().join('\n');
   assert.match(pdf, /GM · ₱1,100 \/ 0 · 8h day · OT \+25%/);
+  // Today moves with the clock: clear the day so it never lands in another test's fixed period.
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${gm.id}/${today}`, { code: '' }));
 });
 
 test('payroll sign-off sheet: long lists continue on more pages with the header repeated', async () => {

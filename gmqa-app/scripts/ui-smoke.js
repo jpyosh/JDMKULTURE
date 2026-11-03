@@ -795,7 +795,11 @@ async function launch() {
       await expectToast(/Fund saved/);
 
       await fin.locator('[data-funds-table] tr', { hasText: 'Meralco' }).locator('[data-act="pay-bill"]').click();
-      await page.fill('#modal [data-bill-date]', '2026-09-25');
+      // The calendar works inside a modal too: picking a day sets the payment date.
+      await page.fill('#modal [data-bill-date]', '2026-09-01');
+      await page.click('#modal [data-bill-date]');
+      await page.locator('.datepicker .dp-day:not(.dp-outside)', { hasText: /^25$/ }).click({ timeout: 3000 });
+      await page.waitForFunction(() => document.querySelector('#modal [data-bill-date]').value === '2026-09-25' && !document.querySelector('.datepicker'));
       await page.fill('#modal [data-bill-amount]', '3000');
       await page.selectOption('#modal [data-bill-side]', 'cash');
       await page.click('#modal [data-confirm]');
