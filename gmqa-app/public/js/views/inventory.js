@@ -42,7 +42,8 @@ const editable = col => col.edit === 'count' || (col.edit === 'owner' && isOwner
 const PAID_FROM = [['cash', 'Drawer cash'], ['gcash', 'GCash'], ['fund', 'Cash fund (abono)'], ['none', 'Already paid / opening stock']];
 const COUNT_REASONS = [['used', 'Used'], ['damaged', 'Damaged'], ['lost', 'Lost'], ['recount', 'Recount (correct the number)']];
 const MOVE_LABEL = { receive: 'Received', sale: 'Sold', return: 'Returned', adjust: 'Adjusted', use: 'Used' };
-const TAG_COLORS = ['slate', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'];
+// Same list and order as the server (routes/inventory.js); new tags get the first colour no other tag has.
+const TAG_COLORS = ['red', 'blue', 'amber', 'green', 'violet', 'orange', 'teal', 'pink', 'lime', 'indigo', 'coral', 'mint', 'grape', 'sky', 'brown', 'rose', 'olive', 'slate'];
 
 const qty = n => String(Math.round(Number(n || 0) * 100) / 100);
 const valueOf = item => Math.round(Number(item.stock) * Number(item.avg_cost || 0) * 100) / 100;
@@ -459,12 +460,19 @@ async function historyModal(item) {
 }
 
 function tagsModal() {
+  // Swatches: a colour another tag already uses is marked (still allowed), so it is easy to keep them unique.
+  const swatches = t => TAG_COLORS.map(c => {
+    const usedBy = tags.find(o => o.id !== t.id && o.color === c);
+    return `<label class="swatch c-${c} ${usedBy ? 'used' : ''}" data-swatch="${c}" title="${c}${usedBy ? ` (used by ${esc(usedBy.name)})` : ''}">
+      <input type="radio" name="tag-color-${t.id}" value="${c}" ${c === t.color ? 'checked' : ''} aria-label="${c}"><span></span></label>`;
+  }).join('');
   const row = t => `<div class="tag-row" data-tag-row="${t.id}">
-      <input type="text" data-t="name" maxlength="40" value="${esc(t.name)}" aria-label="Tag name">
-      <select data-t="color" aria-label="Colour">${TAG_COLORS.map(c => `<option value="${c}" ${c === t.color ? 'selected' : ''}>${c}</option>`).join('')}</select>
-      <button class="btn ghost small" type="button" data-t-save>Save</button>
-      ${t.system_key ? '<span class="muted small">built in</span>' : '<button class="icon-btn" type="button" data-t-delete title="Delete tag">✕</button>'}</div>`;
-  openModal(`${modalHeader('Tags', 'Group items any way you like. Deleting a tag only removes the label from its items.')}
+      <div class="tag-row-head"><span class="tag-chip c-${esc(t.color)}" data-t-preview>${esc(t.name)}</span>
+        <input type="text" data-t="name" maxlength="40" value="${esc(t.name)}" aria-label="Tag name">
+        <button class="btn ghost small" type="button" data-t-save>Save</button>
+        ${t.system_key ? '<span class="muted small">built in</span>' : '<button class="icon-btn" type="button" data-t-delete title="Delete tag">✕</button>'}</div>
+      <div class="swatches" role="radiogroup" aria-label="Colour for ${esc(t.name)}">${swatches(t)}</div></div>`;
+  openModal(`${modalHeader('Tags', 'Group items any way you like. Each new tag gets its own colour; click a swatch to change it. Deleting a tag only removes the label from its items.')}
     <div class="tag-rows">${tags.map(row).join('')}</div>
     <div class="tag-row"><input type="text" data-new-tag maxlength="40" placeholder="New tag, e.g. Wax & sealants" aria-label="New tag">
       <button class="btn small" type="button" data-add-tag>+ Add tag</button></div>
@@ -473,10 +481,15 @@ function tagsModal() {
     $$('[data-tag-row]', card).forEach(r => {
       const tagId = Number(r.dataset.tagRow);
       $('[data-t-save]', r).addEventListener('click', e => busy(e.currentTarget, async () => {
-        await api('PATCH', `/tags/${tagId}`, { name: $('[data-t="name"]', r).value.trim(), color: $('[data-t="color"]', r).value });
+        const color = $('[data-swatch] input:checked', r)?.value;
+        await api('PATCH', `/tags/${tagId}`, { name: $('[data-t="name"]', r).value.trim(), ...(color ? { color } : {}) });
         toast('Tag saved');
         await reload();
       }));
+      // The preview chip follows the picked colour and the typed name.
+      const preview = $('[data-t-preview]', r);
+      $$('[data-swatch] input', r).forEach(i => i.addEventListener('change', () => { preview.className = `tag-chip c-${i.value}`; }));
+      $('[data-t="name"]', r).addEventListener('input', e => { preview.textContent = e.target.value || ' '; });
       $('[data-t-delete]', r)?.addEventListener('click', e => busy(e.currentTarget, async () => {
         if (!window.confirm(`Delete the tag ${tagOf(tagId).name}? Its items stay; only the label goes.`)) return;
         await api('DELETE', `/tags/${tagId}`);
@@ -487,7 +500,7 @@ function tagsModal() {
     $('[data-add-tag]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
       const name = $('[data-new-tag]', card).value.trim();
       if (!name) return toast('Name the tag', 'error');
-      await api('POST', '/tags', { name, color: TAG_COLORS[tags.length % TAG_COLORS.length] });
+      await api('POST', '/tags', { name });
       await reload();
       tagsModal();
     }));

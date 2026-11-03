@@ -113,3 +113,35 @@ test('theme stylesheets are fully scoped, and every theme is wired up', () => {
     for (const name of animations) assert.ok(name.startsWith(key === 'telemetry' ? 'tele-' : 'ed-'), `${name}: keyframes are named per theme`);
   }
 });
+
+// Tag colours: the server, the screen and both stylesheets agree on one palette; every colour has an ink
+// for the dark themes and for Editorial (light), readable on its own tint (4.5:1 or better), and no two
+// colours share an ink, so every tag can look different.
+test('tag colours: one palette everywhere, each readable in every theme', () => {
+  const listIn = file => JSON.parse(fs.readFileSync(file, 'utf8').match(/const TAG_COLORS = (\[[^\]]*\]);/)[1].replace(/'/g, '"'));
+  const server = listIn(path.join(__dirname, '..', 'routes', 'inventory.js'));
+  const screen = listIn(path.join(root, 'views', 'inventory.js'));
+  assert.deepEqual(screen, server, 'the screen offers the colours the server accepts');
+  assert.ok(server.length >= 18, `at least 18 colours (got ${server.length})`);
+  assert.equal(server[0], 'red', 'red first: the Auto Parts colour');
+
+  const publicDir = path.join(__dirname, '..', 'public');
+  const inks = (css, prefix) => Object.fromEntries([...css.matchAll(new RegExp(prefix + String.raw`\.c-([a-z]+)\{--tag:(#[0-9a-f]{6});\}`, 'gi'))]
+    .map(m => [m[1], m[2].toLowerCase()]));
+  const dark = inks(fs.readFileSync(path.join(publicDir, 'style.css'), 'utf8'), '');
+  const light = inks(fs.readFileSync(path.join(publicDir, 'themes', 'editorial.css'), 'utf8'), String.raw`:root\[data-theme="editorial"\] `);
+  const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const tint = (ink, surface) => rgb(ink).map((v, i) => v * 0.16 + rgb(surface)[i] * 0.84);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  for (const [theme, set, surfaces] of [['dark', dark, ['#1c1c1e', '#121212']], ['editorial', light, ['#ffffff']]]) {
+    for (const color of server) {
+      assert.ok(set[color], `${theme}: .c-${color} has no ink`);
+      for (const s of surfaces) {
+        const r = ratio(rgb(set[color]), tint(set[color], s));
+        assert.ok(r >= 4.5, `${theme}: ${color} ${set[color]} on ${s} is ${r.toFixed(2)}:1`);
+      }
+    }
+    assert.equal(new Set(server.map(c => set[c])).size, server.length, `${theme}: two colours share an ink`);
+  }
+});
