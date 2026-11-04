@@ -1,7 +1,7 @@
-// Inventory: everything the shop stocks (parts for sale, chemicals, mitts, towels, machines) in a
-// spreadsheet-style sheet, or cards on a phone. Tags group items; the ones tagged Auto Parts are for sale
-// (Parts tab and job orders). Everyone can record a stock count (the difference is what was used); the
-// owner edits items and tags, receives deliveries, and sees costs and history.
+// Inventory: everything the shop stocks (parts for sale, chemicals, mitts, towels, machines) as one simple
+// list: name and tags, price, stock. Tap an item for its details and what can be done with it. Tags group
+// items; the ones tagged Auto Parts are for sale (Parts tab and job orders). Everyone can record a stock count
+// (the difference is what was used); the owner edits items and tags, receives deliveries, and sees costs and history.
 import { $, $$, api, esc, peso, toast, busy, todayLocal, openModal, closeModal, modalHeader, isOwner, loadCatalog } from '../ui.js';
 import { toCsv, parsePasted, importRows } from '../components/sheet-io.js';
 
@@ -9,35 +9,6 @@ let root;
 let items = [];
 let tags = [];
 const filter = { tag: '', search: '' };
-const sort = { field: 'name', dir: 1 };
-let editing = null;
-
-const MODE_KEY = 'inventory-mode';
-// Sheet or cards: the viewer's own choice on this device; until they choose, cards on a phone.
-let mode = (() => {
-  let saved = null;
-  try { saved = localStorage.getItem(MODE_KEY); } catch { /* private window */ }
-  return saved === 'sheet' || saved === 'cards' ? saved : window.matchMedia('(max-width: 700px)').matches ? 'cards' : 'sheet';
-})();
-
-// edit: 'owner' = the owner edits the item field in place; 'count' = anyone, records a stock count.
-const COLUMNS = [
-  { field: 'sku', label: 'SKU', type: 'text', edit: 'owner', max: 40 },
-  { field: 'name', label: 'Item', type: 'text', edit: 'owner', max: 120 },
-  { field: 'unit', label: 'Unit', type: 'text', edit: 'owner', max: 12 },
-  { field: 'tags', label: 'Tags', type: 'tags', edit: 'owner' },
-  { field: 'price', label: 'Price', type: 'money', edit: 'owner' },
-  { field: 'commission', label: 'Comm./unit', type: 'money', edit: 'owner' },
-  // Optional set (e.g. a pair of bulbs): pieces per set and the set's price. Blank = not sold as a set.
-  { field: 'set_size', label: 'Set of', type: 'qty', edit: 'owner', optional: true },
-  { field: 'set_price', label: 'Set price', type: 'money', edit: 'owner', optional: true },
-  { field: 'avg_cost', label: 'Avg cost', type: 'money', ownerOnly: true },
-  { field: 'stock', label: 'Stock', type: 'qty', edit: 'count' },
-  { field: 'reorder_level', label: 'Reorder at', type: 'qty', edit: 'owner' },
-  { field: 'value', label: 'Value', type: 'money', ownerOnly: true },
-];
-const columns = () => COLUMNS.filter(c => !c.ownerOnly || isOwner());
-const editable = col => col.edit === 'count' || (col.edit === 'owner' && isOwner());
 
 const PAID_FROM = [['cash', 'Drawer cash'], ['gcash', 'GCash'], ['fund', 'Cash fund (abono)'], ['none', 'Already paid / opening stock']];
 const COUNT_REASONS = [['used', 'Used'], ['damaged', 'Damaged'], ['lost', 'Lost'], ['recount', 'Recount (correct the number)']];
@@ -46,12 +17,12 @@ const MOVE_LABEL = { receive: 'Received', sale: 'Sold', return: 'Returned', adju
 const TAG_COLORS = ['red', 'blue', 'amber', 'green', 'violet', 'orange', 'teal', 'pink', 'lime', 'indigo', 'coral', 'mint', 'grape', 'sky', 'brown', 'rose', 'olive', 'slate'];
 
 const qty = n => String(Math.round(Number(n || 0) * 100) / 100);
+const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const valueOf = item => Math.round(Number(item.stock) * Number(item.avg_cost || 0) * 100) / 100;
 const tagOf = tagId => tags.find(t => t.id === tagId);
 const tagChip = tag => tag ? `<span class="tag-chip c-${esc(tag.color)}">${esc(tag.name)}</span>` : '';
 const tagChips = item => item.tags.map(t => tagChip(tagOf(t))).join('');
 const hasSet = item => Number(item.set_size) > 1 && Number(item.set_price) > 0;
-const rawValue = (item, field) => (field === 'value' ? valueOf(item) : item[field]);
 
 function mount(el) {
   root = el;
@@ -59,11 +30,9 @@ function mount(el) {
   const owner = isOwner();
   root.innerHTML = `
     <div class="view-header">
-      <div><h1>Inventory</h1><div class="desc">Everything the shop stocks. Tag an item <b>Auto Parts</b> to sell it on the Parts tab and on job orders.
-        Count the shelf to record what was used.</div></div>
+      <div><h1>Inventory</h1><div class="desc">Everything the shop stocks. Tap an item to count${owner ? ', receive or edit' : ''} it.
+        Tag an item <b>Auto Parts</b> to sell it.</div></div>
       <div class="header-actions">
-        <div class="segmented compact" role="group" aria-label="View">
-          <button type="button" data-mode="sheet">Sheet</button><button type="button" data-mode="cards">Cards</button></div>
         <button class="btn ghost" type="button" data-export>Export CSV</button>
         ${owner ? `<button class="btn ghost" type="button" data-paste>Paste from Excel</button>
           <button class="btn ghost" type="button" data-manage-tags>Tags</button>
@@ -71,26 +40,23 @@ function mount(el) {
       </div>
     </div>
     <div data-low></div>
-    <div class="inv-toolbar">
-      <input type="text" data-search placeholder="Search item or SKU" aria-label="Search item or SKU">
+    <div class="list-toolbar">
+      <input type="text" enterkeyhint="search" data-search placeholder="Search item or SKU" aria-label="Search item or SKU">
       <div class="chip-row" data-tag-filters></div>
     </div>
-    <div class="table-wrap sheet-wrap"><table class="sheet-table" data-sheet></table></div>
-    <div class="inv-cards" data-cards hidden></div>`;
-  $$('[data-mode]', root).forEach(b => b.addEventListener('click', () => {
-    mode = b.dataset.mode;
-    try { localStorage.setItem(MODE_KEY, mode); } catch { /* private window: not remembered */ }
-    render();
-  }));
+    <div class="card list-card">
+      <div class="list-head" aria-hidden="true"><span>Item</span><span>Price</span><span>Stock</span></div>
+      <div class="simple-list" data-list></div>
+      <div class="list-foot" data-foot></div>
+    </div>`;
   $('[data-search]', root).addEventListener('input', e => { filter.search = e.target.value.trim().toLowerCase(); render(); });
   $('[data-export]', root).addEventListener('click', exportCsv);
   $('[data-paste]', root)?.addEventListener('click', pasteModal);
   $('[data-manage-tags]', root)?.addEventListener('click', tagsModal);
   $('[data-new-item]', root)?.addEventListener('click', () => itemModal(null));
-  installSheetKeys($('[data-sheet]', root));
-  $('[data-cards]', root).addEventListener('click', e => {
-    const btn = e.target.closest('[data-act]');
-    if (btn) rowAction(btn.dataset.act, items.find(i => i.id === Number(btn.closest('[data-item]').dataset.item)));
+  $('[data-list]', root).addEventListener('click', e => {
+    const row = e.target.closest('[data-item]');
+    if (row) itemPanel(items.find(i => i.id === Number(row.dataset.item)));
   });
 }
 
@@ -105,18 +71,15 @@ async function reload({ catalog = false } = {}) {
   if (catalog) await loadCatalog(true);
 }
 
+// Sorted by name (the API's order), filtered by the tag chip and the search box.
 function visibleItems() {
   const tagId = Number(filter.tag) || null;
-  const list = items.filter(i => (!tagId || i.tags.includes(tagId))
+  return items.filter(i => (!tagId || i.tags.includes(tagId))
     && (!filter.search || i.name.toLowerCase().includes(filter.search) || (i.sku || '').toLowerCase().includes(filter.search)));
-  const col = COLUMNS.find(c => c.field === sort.field);
-  const key = item => (col.type === 'tags' ? item.tags.map(t => tagOf(t)?.name || '').join(', ').toLowerCase()
-    : col.type === 'text' ? String(item[col.field] || '').toLowerCase() : Number(rawValue(item, col.field)) || 0);
-  return list.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * sort.dir);
 }
 
 function render() {
-  editing = null;
+  const owner = isOwner();
   const low = items.filter(i => i.low);
   $('[data-low]', root).innerHTML = low.length
     ? `<div class="banner"><span>Low stock: ${low.map(i => `<b>${esc(i.name)}</b> (${qty(i.stock)} ${esc(i.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
@@ -124,204 +87,45 @@ function render() {
     ...tags.map(t => `<button type="button" class="filter-chip ${Number(filter.tag) === t.id ? 'active' : ''}" data-tag-filter="${t.id}">
       <i class="dot c-${esc(t.color)}"></i>${esc(t.name)} <span>${items.filter(i => i.tags.includes(t.id)).length}</span></button>`)].join('');
   $$('[data-tag-filter]', root).forEach(b => b.addEventListener('click', () => { filter.tag = b.dataset.tagFilter; render(); }));
-  $$('[data-mode]', root).forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-  $('.sheet-wrap', root).hidden = mode !== 'sheet';
-  $('[data-cards]', root).hidden = mode !== 'cards';
-  if (mode === 'sheet') renderSheet(); else renderCards();
-}
-
-function cellHtml(item, col) {
-  const v = rawValue(item, col.field);
-  if (col.type === 'tags') return tagChips(item) || '<span class="muted">—</span>';
-  if (v == null || ((col.field === 'price' || col.field === 'commission' || col.optional) && !Number(v))) return '<span class="muted">—</span>';
-  if (col.type === 'money') return peso(v);
-  if (col.type === 'qty') return col.field === 'stock' && item.low ? `${qty(v)} <span class="status-pill waiting">Low</span>` : qty(v);
-  return v ? esc(v) : '<span class="muted">—</span>';
-}
-
-function renderSheet() {
-  const cols = columns();
   const list = visibleItems();
-  const owner = isOwner();
-  const arrow = f => (sort.field === f ? (sort.dir > 0 ? ' ▲' : ' ▼') : '');
-  $('[data-sheet]', root).innerHTML = `
-    <thead><tr>${cols.map(c => `<th class="${c.type === 'money' || c.type === 'qty' ? 'num' : ''}" data-sort="${c.field}"
-      aria-sort="${sort.field === c.field ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button">${c.label}${arrow(c.field)}</button></th>`).join('')}
-      <th><span class="sr-only">Actions</span></th></tr></thead>
-    <tbody>${list.length ? list.map(item => `<tr data-item="${item.id}">${cols.map(c => `<td data-field="${c.field}" tabindex="-1"
-        class="${c.type === 'money' || c.type === 'qty' ? 'num' : ''} ${editable(c) ? 'editable' : ''} ${c.field === 'sku' ? 'mono' : ''}">${cellHtml(item, c)}</td>`).join('')}
-      <td class="row-actions"><div class="actions">${rowButtons(item)}</div></td></tr>`).join('')
-    : `<tr><td colspan="${cols.length + 1}"><div class="empty-state small">${items.length ? 'Nothing matches.' : `No items yet.${owner ? ' Add one with “+ New item”, or paste your list from Excel.' : ''}`}</div></td></tr>`}</tbody>
-    <tfoot><tr><td colspan="${cols.length + 1}"><span>${list.length} item${list.length === 1 ? '' : 's'}</span>
-      ${owner ? `<span>Stock value <b class="money" data-total-value>${peso(list.reduce((s, i) => s + valueOf(i), 0))}</b></span>` : ''}</td></tr></tfoot>`;
-  const first = $('[data-sheet] tbody td[data-field]', root);
-  if (first) first.tabIndex = 0;
-  $$('[data-sheet] th[data-sort] button', root).forEach(b => b.addEventListener('click', () => {
-    const field = b.closest('th').dataset.sort;
-    sort.dir = sort.field === field ? -sort.dir : 1;
-    sort.field = field;
-    renderSheet();
-  }));
-  $$('[data-sheet] [data-act]', root).forEach(b => b.addEventListener('click', () =>
-    rowAction(b.dataset.act, items.find(i => i.id === Number(b.closest('tr').dataset.item)))));
-}
-
-function rowButtons(item) {
-  return isOwner() ? `<button class="btn small" type="button" data-act="receive">Receive</button>
-      <button class="btn ghost small" type="button" data-act="count">Count</button>
-      <button class="btn ghost small" type="button" data-act="history">History</button>
-      <button class="btn ghost small" type="button" data-act="edit">Edit</button>`
-    : `<button class="btn ghost small" type="button" data-act="count" aria-label="Count ${esc(item.name)}">Count</button>`;
-}
-
-function rowAction(act, item) {
-  ({ receive: receiveModal, count: i => countModal(i), history: historyModal, edit: itemModal })[act](item);
-}
-
-function renderCards() {
-  const list = visibleItems();
-  $('[data-cards]', root).innerHTML = list.length ? list.map(item => `<div class="inv-card" data-item="${item.id}">
-      <div class="inv-card-head"><b>${esc(item.name)}</b>${item.sku ? ` <span class="mono muted small">${esc(item.sku)}</span>` : ''}</div>
-      <div class="inv-card-tags">${tagChips(item)}</div>
-      <div class="inv-card-stock"><span class="big">${qty(item.stock)}</span> ${esc(item.unit)} ${item.low ? '<span class="status-pill waiting">Low</span>' : ''}
-        <span class="muted small">reorder at ${qty(item.reorder_level)}</span></div>
-      ${item.for_sale ? `<div class="muted small">Sells for ${peso(item.price)} per ${esc(item.unit)}${hasSet(item) ? ` · set of ${qty(item.set_size)} ${peso(item.set_price)}` : ''}</div>` : ''}
-      <div class="actions">${rowButtons(item)}</div></div>`).join('')
-    : `<div class="empty-state small">${items.length ? 'Nothing matches.' : 'No items yet.'}</div>`;
-}
-
-// ---------------------------------------------------------------- sheet keyboard (Excel-style)
-// Arrow keys move; Enter / F2 / double-click edits; typing replaces the cell; in a cell being edited,
-// Enter saves and moves down, Tab saves and moves right (Shift: back), Escape cancels.
-
-function cellAt(itemId, field) {
-  return $(`[data-sheet] tr[data-item="${itemId}"] td[data-field="${field}"]`, root);
-}
-
-function focusCell(td) {
-  if (!td) return;
-  $$('[data-sheet] td[tabindex="0"]', root).forEach(c => { c.tabIndex = -1; });
-  td.tabIndex = 0;
-  td.focus();
-}
-
-function position(td) {
-  const rows = $$('[data-sheet] tbody tr[data-item]', root);
-  const fields = columns().map(c => c.field);
-  return { rows, fields, row: rows.indexOf(td.closest('tr')), col: fields.indexOf(td.dataset.field) };
-}
-
-// The cell `dr` rows down and `dc` columns right of td, as { itemId, field } (it survives a re-render).
-function neighbour(td, dr, dc) {
-  const { rows, fields, row, col } = position(td);
-  const r = Math.max(0, Math.min(rows.length - 1, row + dr));
-  const c = Math.max(0, Math.min(fields.length - 1, col + dc));
-  return { itemId: Number(rows[r].dataset.item), field: fields[c] };
-}
-const focusAt = target => target && focusCell(cellAt(target.itemId, target.field));
-
-function installSheetKeys(table) {
-  table.addEventListener('focusin', e => {
-    const td = e.target.closest?.('td[data-field]');
-    if (td && !editing) focusCell(td);
-  });
-  table.addEventListener('dblclick', e => {
-    const td = e.target.closest('td[data-field]');
-    if (td && !editing) startEdit(td);
-  });
-  table.addEventListener('keydown', e => {
-    // Only keys pressed on a cell itself (not ones bubbling up from a cell being edited).
-    if (editing || e.defaultPrevented || !e.target.matches?.('td[data-field]')) return;
-    const td = e.target;
-    const moves = { ArrowDown: [1, 0], ArrowUp: [-1, 0], ArrowRight: [0, 1], ArrowLeft: [0, -1] };
-    if (moves[e.key]) {
-      e.preventDefault();
-      focusAt(neighbour(td, ...moves[e.key]));
-    } else if (e.key === 'Enter' || e.key === 'F2') {
-      e.preventDefault();
-      startEdit(td);
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      e.preventDefault();
-      startEdit(td, e.key);
-    }
-  });
-}
-
-function startEdit(td, typed = null) {
-  const col = COLUMNS.find(c => c.field === td.dataset.field);
-  const item = items.find(i => i.id === Number(td.closest('tr').dataset.item));
-  if (!col || !item || !editable(col)) return;
-  if (col.type === 'tags') return typed == null ? tagsPicker(item) : undefined;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = col.type === 'text' ? 'text' : 'decimal';
-  input.className = 'cell-input';
-  input.setAttribute('aria-label', col.label);
-  input.value = typed ?? String(item[col.field] ?? '');
-  td.replaceChildren(input);
-  editing = { td, input, item, col };
-  input.focus();
-  if (typed == null) input.select();
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(neighbour(td, e.shiftKey ? -1 : 1, 0)); }
-    else if (e.key === 'Tab') { e.preventDefault(); commit(neighbour(td, 0, e.shiftKey ? -1 : 1)); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
-  });
-  input.addEventListener('blur', () => { if (editing?.input === input) commit(null); });
-}
-
-function cancelEdit() {
-  const { item, td } = editing;
-  editing = null;
-  const target = { itemId: item.id, field: td.dataset.field };
-  renderSheet();
-  focusAt(target);
-}
-
-async function commit(target) {
-  const { item, col, input, td } = editing;
-  editing = null;
-  const here = { itemId: item.id, field: col.field };
-  const raw = input.value.trim();
-  const done = () => { renderSheet(); focusAt(target || here); };
-
-  if (col.edit === 'count') {
-    done();
-    if (raw !== '' && Number(raw) !== Number(item.stock)) countModal(item, raw);
-    return;
-  }
-  let value = raw;
-  if (col.type !== 'text' && raw === '' && col.optional) value = null;
-  else if (col.type !== 'text') {
-    value = Number(raw.replace(/₱|,/g, '') || 0);
-    if (!Number.isFinite(value) || value < 0) { toast(`${col.label} must be a number of 0 or more`, 'error'); return done(); }
-  }
-  if (col.field === 'name' && !value) { toast('Name is required', 'error'); return done(); }
-  if (String(value ?? '') === String(item[col.field] ?? '')) return done();
-  td.classList.add('saving');
-  try {
-    const saved = await api('PATCH', `/inventory/${item.id}`, { [col.field]: value });
-    items = items.map(i => (i.id === saved.id ? saved : i));
-    toast('Saved');
-    loadCatalog(true).catch(() => {});
-  } catch { /* the API error is already shown */ }
-  done();
+  $('[data-list]', root).innerHTML = list.length ? list.map(item => `<button type="button" class="list-row" data-item="${item.id}">
+      <span class="list-main"><span class="list-name">${esc(item.name)}</span>
+        <span class="list-sub">${tagChips(item)}${hasSet(item) ? `<span class="muted small">set of ${qty(item.set_size)} · ${peso(item.set_price)}</span>` : ''}</span></span>
+      <span class="list-price" data-price>${item.for_sale ? peso(item.price) : ''}</span>
+      <span class="list-stock"><span data-stock>${qty(item.stock)} ${esc(item.unit)}</span>${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}</span>
+    </button>`).join('')
+    : `<div class="empty-state small">${items.length ? 'Nothing matches.' : `No items yet.${owner ? ' Add one with “+ New item”, or paste your list from Excel.' : ''}`}</div>`;
+  $('[data-foot]', root).innerHTML = `<span>${list.length} item${list.length === 1 ? '' : 's'}</span>
+    ${owner ? `<span>Stock value <b class="money" data-total-value>${peso(list.reduce((s, i) => s + valueOf(i), 0))}</b></span>` : ''}`;
 }
 
 // ---------------------------------------------------------------- modals
 
-function tagsPicker(item) {
-  openModal(`${modalHeader(`Tags for ${item.name}`, 'Auto Parts puts it on the Parts tab and job orders (it needs a selling price).')}
-    <div class="tag-pick-list">${tags.map(t => `<label class="tag-pick" data-tag-pick><input type="checkbox" value="${t.id}" ${item.tags.includes(t.id) ? 'checked' : ''}> ${tagChip(t)}</label>`).join('')}</div>
-    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Save tags</button></div>`,
-  card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
-    const chosen = $$('[data-tag-pick] input:checked', card).map(i => Number(i.value));
-    await api('PATCH', `/inventory/${item.id}`, { tags: chosen });
-    closeModal();
-    toast('Saved');
-    await reload({ catalog: true });
-  })));
+// An item's details with what can be done with it (staff: count only).
+function itemPanel(item) {
+  const owner = isOwner();
+  const row = (label, value) => `<div class="panel-row"><span>${label}</span><b>${value}</b></div>`;
+  openModal(`${modalHeader(item.name)}
+    <div class="panel" data-panel>
+      ${item.sku ? row('SKU', `<span class="mono">${esc(item.sku)}</span>`) : ''}
+      ${row('Stock', `${qty(item.stock)} ${esc(item.unit)}${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}`)}
+      ${row('Reorder at', qty(item.reorder_level))}
+      ${item.for_sale ? row('Price', `${peso(item.price)} per ${esc(item.unit)}`) : ''}
+      ${hasSet(item) ? row('Set', `set of ${qty(item.set_size)} · ${peso(item.set_price)}`) : ''}
+      ${Number(item.commission) ? row('Commission', `${peso(item.commission)} per ${esc(item.unit)}`) : ''}
+      ${owner ? row('Avg cost', peso(item.avg_cost)) + row('Value', peso(valueOf(item))) : ''}
+      ${item.tags.length ? row('Tags', `<span class="panel-tags">${tagChips(item)}</span>`) : ''}
+    </div>
+    <div class="panel-actions">
+      ${owner ? '<button class="btn" type="button" data-act="receive">Receive</button>' : ''}
+      <button class="btn ${owner ? 'ghost' : ''}" type="button" data-act="count">Count</button>
+      ${owner ? `<button class="btn ghost" type="button" data-act="history">History</button>
+        <button class="btn ghost" type="button" data-act="edit">Edit</button>` : ''}
+    </div>`,
+  card => $$('[data-act]', card).forEach(b => b.addEventListener('click', () =>
+    ({ receive: receiveModal, count: countModal, history: historyModal, edit: itemModal })[b.dataset.act](item))));
 }
+
 
 function itemModal(item) {
   const v = k => esc(item?.[k] ?? '');
@@ -402,11 +206,11 @@ function receiveModal(item) {
   });
 }
 
-function countModal(item, counted = '') {
+function countModal(item) {
   openModal(`${modalHeader(`Count ${item.name}`, `On record: ${qty(item.stock)} ${item.unit}. Enter what is on the shelf now.`)}
     <div class="form-grid modal-form-grid">
       <div><label>Date</label><input type="date" data-c="date" value="${todayLocal()}"></div>
-      <div><label>On the shelf (${esc(item.unit)})</label><input type="number" min="0" step="any" data-c="counted" value="${esc(counted)}"></div>
+      <div><label>On the shelf (${esc(item.unit)})</label><input type="number" min="0" step="any" data-c="counted"></div>
       <div class="span-2"><label>The difference is</label><select data-c="reason">${COUNT_REASONS.map(([k, label]) => `<option value="${k}">${label}</option>`).join('')}</select></div>
       <div class="span-2"><label>Note (optional)</label><input type="text" data-c="note" maxlength="160"></div>
     </div>
@@ -447,16 +251,63 @@ async function historyModal(item) {
       <div><span class="kind-pill ${m.quantity > 0 ? 'service' : 'custom'}">${MOVE_LABEL[m.kind]}</span>
         <b>${m.quantity > 0 ? '+' : ''}${qty(m.quantity)} ${esc(item.unit)}</b>${m.unit_cost != null ? ` @ ${peso(m.unit_cost)}` : ''}${paid(m)}
         ${m.jo_number ? ` · ${esc(m.jo_number)}` : ''}${m.supplier ? ` · ${esc(m.supplier)}` : ''}${m.note ? ` · ${esc(m.note)}` : ''}
+        ${m.kind === 'receive' ? `<button class="btn ghost small" type="button" data-correct-cost="${m.id}">Correct cost</button>` : ''}
         ${m === last && m.kind === 'receive' ? `<button class="btn ghost small" type="button" data-undo="${m.id}">Undo</button>` : ''}</div>
     </div>`).join('') || '<div class="empty-state small">No stock changes yet.</div>'}</div>
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Close</button></div>`,
-  card => $('[data-undo]', card)?.addEventListener('click', e => busy(e.currentTarget, async () => {
-    if (!window.confirm('Undo this delivery? Its stock comes off again and what it recorded as paid is removed.')) return;
-    await api('POST', `/inventory/movements/${e.currentTarget.dataset.undo}/undo`);
-    closeModal();
-    toast('Delivery undone');
-    await reload({ catalog: true });
-  })));
+  card => {
+    $$('[data-correct-cost]', card).forEach(b => b.addEventListener('click', () =>
+      correctCostModal(item, moves, moves.find(m => m.id === Number(b.dataset.correctCost)))));
+    $('[data-undo]', card)?.addEventListener('click', e => busy(e.currentTarget, async () => {
+      if (!window.confirm('Undo this delivery? Its stock comes off again and what it recorded as paid is removed.')) return;
+      await api('POST', `/inventory/movements/${e.currentTarget.dataset.undo}/undo`);
+      closeModal();
+      toast('Delivery undone');
+      await reload({ catalog: true });
+    }));
+  });
+}
+
+// Mirrors replayAvgCost in lib/calc.js: the average cost replayed from a delivery on, to preview a correction.
+function replayAvgCost(stock, avg, moves) {
+  for (const m of moves) {
+    const q = Number(m.quantity);
+    if (m.kind === 'receive') avg = stock + q > 0 ? round2((stock * avg + q * Number(m.unit_cost)) / (stock + q)) : round2(m.unit_cost);
+    stock = round2(stock + q);
+  }
+  return avg;
+}
+
+// A delivery entered at the wrong price (e.g. opening stock at ₱0, or a different supplier's price): the owner
+// types the right cost per unit; the average cost and what was paid follow. Sales already made keep their cost.
+function correctCostModal(item, moves, move) {
+  const index = moves.indexOf(move);
+  const stockBefore = moves.slice(0, index).reduce((s, m) => round2(s + Number(m.quantity)), 0);
+  const avgWith = cost => replayAvgCost(stockBefore, Number(move.prev_avg_cost) || 0, [{ ...move, unit_cost: cost }, ...moves.slice(index + 1)]);
+  openModal(`${modalHeader(`Correct cost: ${item.name}`, `Delivery of ${qty(move.quantity)} ${item.unit} on ${move.moved_on}${move.supplier ? ` from ${move.supplier}` : ''}, entered at ${peso(move.unit_cost)} per ${item.unit}.`)}
+    <div class="form-grid modal-form-grid">
+      <div><label>Right cost per ${esc(item.unit)}</label><input type="number" min="0" step="0.01" data-cc="unit_cost" value="${Number(move.unit_cost) || ''}"></div>
+    </div>
+    <p class="hint" data-cc-hint></p>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Save cost</button></div>`,
+  card => {
+    const input = $('[data-cc="unit_cost"]', card);
+    const hint = () => {
+      const cost = Number(input.value || 0);
+      $('[data-cc-hint]', card).textContent = `The average cost becomes ${peso(avgWith(cost))} (now ${peso(item.avg_cost)}).`
+        + (move.paid_from ? ` What was paid becomes ${peso(round2(cost * Number(move.quantity)))} on that day's EOD.` : '')
+        + ' Sales already made keep the cost they were sold at.';
+    };
+    input.addEventListener('input', hint);
+    hint();
+    input.focus();
+    $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
+      await api('POST', `/inventory/movements/${move.id}/cost`, { unit_cost: Number(input.value || 0) });
+      closeModal();
+      toast('Cost corrected');
+      await reload({ catalog: true });
+    }));
+  });
 }
 
 function tagsModal() {

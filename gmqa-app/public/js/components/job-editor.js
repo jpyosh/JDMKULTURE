@@ -2,7 +2,7 @@
 // Used for new jobs (department tabs, parts counter) and for editing existing jobs (modal).
 import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime } from '../ui.js';
 
-const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part' };
+const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part', labor: 'Labor' };
 const round2 = n => Math.round(n * 100) / 100;
 
 // department: which catalog items are offered. Running departments (detailing, tint/PPF) record
@@ -33,8 +33,13 @@ export function createJobEditor(root, { job = null, department = job?.department
   const packOf = line => (line.as_set ? partOf(line.part_id)?.set_size || 1 : 1);
   const unitPrice = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_price || 0 : p?.price || 0; };
   const unitCommission = line => { const p = partOf(line.part_id); return line.as_set ? p?.set_commission || 0 : p?.commission || 0; };
+  // A new part line can be sold above its list price (a harder job); lower goes through the discount.
+  const priceEach = line => (line.unit_price == null ? unitPrice(line) : Number(line.unit_price) || 0);
   // The parts counter asks Cash or GCash every sale (nothing picked for them), so the money lands in the right count at EOD.
+  // A new counter sale also takes labor, typed per sale (easy and hard installs differ): the customer pays it and
+  // all of it is the installer's commission.
   const askPayment = !dept.catalog;
+  const takesLabor = !dept.catalog && !job;
   const uid = Math.random().toString(36).slice(2);
 
   root.innerHTML = `
@@ -70,6 +75,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       </div>
 
       <div class="entry-grid">
+        ${takesLabor ? '<div><label>Labor (to the installer)</label><input type="number" min="0" step="0.01" data-labor placeholder="0.00"></div>' : ''}
         <div><label>Discount</label><input type="number" min="0" step="0.01" data-f="discount" value="${job?.discount || ''}" placeholder="0.00"></div>
         <div class="span-2"><label>Discount reason</label><input type="text" data-f="discount_reason" value="${v('discount_reason')}" placeholder="Optional" maxlength="200"></div>
         ${running ? '' : `<div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>`}
@@ -86,7 +92,7 @@ export function createJobEditor(root, { job = null, department = job?.department
   function linePrice(line) {
     if (line.kind === 'part' && !line.id) {
       const qty = Number(line.quantity) || 0;
-      return { price: round2(unitPrice(line) * qty), commission: round2(unitCommission(line) * qty) };
+      return { price: round2(priceEach(line) * qty), commission: round2(unitCommission(line) * qty) };
     }
     const reprice = line.catalog_item_id && (!line.id || currentClass() !== originalClass);
     if (!reprice) return { price: Number(line.price) || 0, commission: Number(line.commission) || 0 };
@@ -94,10 +100,12 @@ export function createJobEditor(root, { job = null, department = job?.department
     return { price: p?.price || 0, commission: p?.commission || 0 };
   }
 
+  const labor = () => (takesLabor ? Number($('[data-labor]', root).value || 0) : 0);
+
   function totals() {
     const priced = editor.lines.map(linePrice);
-    const subtotal = round2(priced.reduce((s, p) => s + p.price, 0));
-    const commission = round2(priced.reduce((s, p) => s + p.commission, 0));
+    const subtotal = round2(priced.reduce((s, p) => s + p.price, 0) + labor());
+    const commission = round2(priced.reduce((s, p) => s + p.commission, 0) + labor());
     const discount = Number(field('discount').value || 0);
     return { subtotal, commission, discount, total: round2(subtotal - discount) };
   }
@@ -111,7 +119,9 @@ export function createJobEditor(root, { job = null, department = job?.department
     if (line.kind === 'part' && !line.id) {
       const part = partOf(line.part_id);
       return `<span class="line-name">${esc(line.name)} <span class="muted small">${part ? `${part.stock} ${esc(part.unit)} in stock` : ''}</span></span>
-        <span class="qty-cell"><input type="number" min="0.01" step="1" data-l="quantity" value="${line.quantity}" aria-label="${line.as_set ? 'Sets' : 'Quantity'}"> × ${peso(unitPrice(line))}</span>
+        <span class="qty-cell"><input type="number" min="0.01" step="1" data-l="quantity" value="${line.quantity}" aria-label="${line.as_set ? 'Sets' : 'Quantity'}"> ×
+          <input type="number" min="${unitPrice(line)}" step="0.01" data-l="unit_price" value="${priceEach(line)}" aria-label="Price each"
+            title="Price each: ${peso(unitPrice(line))} or more"></span>
         <span class="money">${peso(p.price)}</span>`;
     }
     const qty = line.kind === 'part' ? ` <span class="muted small">× ${line.quantity}</span>` : '';
@@ -134,7 +144,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       $('[data-remove]', row).addEventListener('click', () => { editor.lines.splice(Number(row.dataset.index), 1); renderLines(); });
       $$('[data-l]', row).forEach(input => input.addEventListener('input', () => {
         line[input.dataset.l] = input.dataset.l === 'name' ? input.value : Number(input.value || 0);
-        if (input.dataset.l === 'quantity') {
+        if (input.dataset.l === 'quantity' || input.dataset.l === 'unit_price') {
           const money = row.querySelector('.money');
           if (money) money.textContent = peso(linePrice(line).price);
         }
@@ -182,6 +192,7 @@ export function createJobEditor(root, { job = null, department = job?.department
   });
   field('vehicle_class').addEventListener('change', renderLines);
   field('discount').addEventListener('input', renderTotals);
+  $('[data-labor]', root)?.addEventListener('input', renderTotals);
   renderLines();
 
   // Matches AMOUNT_FIELDS in routes/jobs.js (payment method and tip are not shown for running jobs).
@@ -208,7 +219,8 @@ export function createJobEditor(root, { job = null, department = job?.department
   return {
     syncTime: () => syncTime(),
     totals,
-    lines: () => editor.lines.map(l => ({ ...l, ...linePrice(l) })),
+    lines: () => [...editor.lines.map(l => ({ ...l, ...linePrice(l) })),
+      ...(labor() > 0 ? [{ kind: 'labor', name: 'Labor', price: labor(), commission: labor() }] : [])],
     payload() {
       const out = {};
       $$('[data-f]', root).forEach(el => {
@@ -220,10 +232,14 @@ export function createJobEditor(root, { job = null, department = job?.department
       if (!locked) {
         out.items = editor.lines.map(l => {
           if (l.id) return { id: l.id };
-          if (l.kind === 'part') return { part_id: l.part_id, quantity: Number(l.quantity) || 0, ...(l.as_set ? { as_set: true } : {}) };
+          if (l.kind === 'part') {
+            return { part_id: l.part_id, quantity: Number(l.quantity) || 0, ...(l.as_set ? { as_set: true } : {}),
+              ...(priceEach(l) !== unitPrice(l) ? { unit_price: priceEach(l) } : {}) };
+          }
           if (l.catalog_item_id) return { catalog_item_id: l.catalog_item_id };
           return { name: l.name.trim(), price: Number(l.price) || 0, commission: Number(l.commission) || 0 };
         });
+        if (labor() > 0) out.items.push({ labor: labor() });
       }
       return out;
     },
@@ -233,6 +249,9 @@ export function createJobEditor(root, { job = null, department = job?.department
       if (!editor.lines.length) return 'Add at least one item';
       if (editor.lines.some(l => l.kind === 'custom' && !l.id && !String(l.name).trim())) return 'Give each custom item a name';
       if (editor.lines.some(l => l.kind === 'part' && !l.id && !(Number(l.quantity) > 0))) return 'Enter a quantity for each part';
+      const underpriced = editor.lines.find(l => l.kind === 'part' && !l.id && priceEach(l) < unitPrice(l));
+      if (underpriced) return `${underpriced.name} sells for at least ${peso(unitPrice(underpriced))}. To charge less, use the Discount box.`;
+      if (labor() < 0) return 'Labor cannot be less than ₱0';
       if (totals().total < 0) return 'Discount cannot be more than the subtotal';
       if (askPayment && field('payment_received').checked && !$('[data-pay-choice] input:checked', root)) return 'Choose how the customer paid: Cash or GCash';
       return null;

@@ -6,6 +6,8 @@ const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { FOR_SALE, loadItems, loadPart, receiveStock, countStock, COUNT_REASONS } = require('../lib/inventory');
+const { assertFundCovers } = require('../lib/cash-fund');
+const { replayAvgCost } = require('../lib/calc');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -188,7 +190,7 @@ router.post('/inventory/:id/count', async (req, res) => {
 router.get('/inventory/:id/movements', requireOwner, async (req, res) => {
   const partId = id(req.params.id, 'item');
   await loadPart(db, partId);
-  res.json(await db.many(`select m.id, m.moved_on, m.kind, m.quantity, m.unit_cost, m.supplier, m.note, m.created_by, j.jo_number,
+  res.json(await db.many(`select m.id, m.moved_on, m.kind, m.quantity, m.unit_cost, m.prev_avg_cost, m.supplier, m.note, m.created_by, j.jo_number,
       e.side as paid_from, e.amount as paid_amount
     from stock_movements m left join jobs j on j.id = m.job_id left join expenses e on e.id = m.expense_id
     where m.part_id = $1 order by m.id`, [partId]));
@@ -212,6 +214,42 @@ router.post('/inventory/movements/:id/undo', requireOwner, async (req, res) => {
       if (expense.topup_id) throw bad('This delivery was paid from the cash fund and already replenished. Undo that replenishment (Cash fund tab) first.');
       await q.query('delete from expenses where id = $1', [move.expense_id]);
     }
+    return loadPart(q, move.part_id);
+  }));
+});
+
+// Correct the cost of a delivery entered at the wrong price (any delivery, not only the latest). The average
+// cost is worked out again from that delivery on, as if it had been entered right, so later deliveries keep
+// their weight; each later delivery's average-before is updated too, so Undo still goes back exactly. What
+// was paid follows (that day's expense). Sales already made keep the cost they were sold at.
+router.post('/inventory/movements/:id/cost', requireOwner, async (req, res) => {
+  const movementId = id(req.params.id, 'stock change');
+  const unitCost = money(req.body.unit_cost, 'Cost per unit');
+  res.json(await db.tx(req.user.email, async q => {
+    const move = await q.one('select id, part_id, kind, quantity, expense_id from stock_movements where id = $1', [movementId]);
+    if (!move) throw notFound('Stock change');
+    if (move.kind !== 'receive') throw bad('Only a delivery has a cost to correct.');
+    await lockItem(q, move.part_id);
+    if (move.expense_id) {
+      const amount = Math.round(move.quantity * unitCost * 100) / 100;
+      if (!(amount > 0)) throw bad('This delivery was paid for: enter the cost per unit, so the amount paid stays recorded.');
+      const expense = await q.one('select side, amount, topup_id from expenses where id = $1', [move.expense_id]);
+      if (expense.topup_id) throw bad('This delivery was paid from the cash fund and already replenished. Undo that replenishment (Cash fund tab) first.');
+      if (expense.side === 'fund' && amount > expense.amount) await assertFundCovers(q, Math.round((amount - expense.amount) * 100) / 100);
+      await q.query('update expenses set amount = $2 where id = $1', [move.expense_id, amount]);
+    }
+    await q.query('update stock_movements set unit_cost = $2 where id = $1', [move.id, unitCost]);
+
+    // Replay from the corrected delivery: the stock and the average just before it are where it starts.
+    const later = await q.many(`select id, kind, quantity, unit_cost, prev_avg_cost from stock_movements
+      where part_id = $1 and id >= $2 order by id`, [move.part_id, move.id]);
+    const { stock } = await q.one('select coalesce(sum(quantity), 0) as stock from stock_movements where part_id = $1 and id < $2', [move.part_id, move.id]);
+    const { avg, before } = replayAvgCost(Number(stock), Number(later[0].prev_avg_cost) || 0, later);
+    const prevOf = new Map(later.map(m => [m.id, Number(m.prev_avg_cost)]));
+    for (const b of before.filter(x => prevOf.get(x.id) !== x.avg)) {
+      await q.query('update stock_movements set prev_avg_cost = $2 where id = $1', [b.id, b.avg]);
+    }
+    await q.query('update parts set avg_cost = $2 where id = $1', [move.part_id, avg]);
     return loadPart(q, move.part_id);
   }));
 });

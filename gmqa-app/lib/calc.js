@@ -46,6 +46,23 @@ function jobTotals(job) {
   return { subtotal, discount, total, commission, net: round2(total - commission), cost };
 }
 
+// Inventory average cost replayed over stock changes in order, from the stock and average cost just before the
+// first one (used to correct the cost of a past delivery). A delivery blends its cost with what is on the shelf;
+// sales, counts and returns only move stock. before: the average just before each delivery (what Undo goes back to).
+// public/js/views/inventory.js mirrors this to preview a correction.
+function replayAvgCost(stock, avg, moves) {
+  const before = [];
+  for (const m of moves) {
+    const qty = Number(m.quantity);
+    if (m.kind === 'receive') {
+      before.push({ id: m.id, avg });
+      avg = stock + qty > 0 ? round2((stock * avg + qty * Number(m.unit_cost)) / (stock + qty)) : round2(m.unit_cost);
+    }
+    stock = round2(stock + qty);
+  }
+  return { avg, before };
+}
+
 const isCounted = job => !job.voided_at && Boolean(job.vehicle_class || (job.items && job.items.length));
 
 function salesFigures(jobs) {
@@ -377,7 +394,7 @@ function salesReport({ date, summary: s }) {
 
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
-  round2, jobTotals, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
+  round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,

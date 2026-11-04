@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -213,4 +213,18 @@ test('daily sales report for the group chat: the boss\'s format, matching Oct 29
   // Centavos are shown only when there are any; commission paid via GCash comes off GCash.
   const odd = salesReport({ date, summary: daySummary({ date, jobs: [paid('GCash', 1000.5, 100)], meta: { commission_gcash_paid: 100 } }) });
   assert.equal(odd.text, 'October 29, 2026\nTotal of cars - 1\nTotal sales - 1,000.50\nLess comms - 100\nLess expenses - 0\nTotal net = 900.50\n\nCash - 0\nGcash - 900.50');
+});
+
+test('average cost replayed from a delivery: weighted by what is on the shelf at each delivery; sales and counts only move stock', () => {
+  const moves = [
+    { id: 1, kind: 'receive', quantity: 10, unit_cost: 800 },
+    { id: 2, kind: 'sale', quantity: -3, unit_cost: 0 },
+    { id: 3, kind: 'receive', quantity: 5, unit_cost: 900 },
+    { id: 4, kind: 'use', quantity: -12 },
+    { id: 5, kind: 'receive', quantity: 2, unit_cost: 1000 },
+  ];
+  const { avg, before } = replayAvgCost(0, 0, moves);
+  assert.equal(avg, 1000, 'an empty shelf takes the new cost');
+  assert.deepEqual(before, [{ id: 1, avg: 0 }, { id: 3, avg: 800 }, { id: 5, avg: 841.67 }], 'the average just before each delivery');
+  assert.equal(replayAvgCost(7, 500, moves.slice(2, 3)).avg, 666.67, 'starts from the stock and average before the first change');
 });

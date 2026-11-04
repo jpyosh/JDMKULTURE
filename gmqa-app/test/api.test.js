@@ -1183,3 +1183,75 @@ test('tags: a new tag gets a colour no other tag has; any colour can still be pi
   assert.equal(await colourOf('Seat covers'), 'grape', 'one of the new colours');
   assert.equal((await api(OWNER, 'PATCH', `/tags/${fresh.id}`, { color: 'neon' })).status, 400);
 });
+
+test('parts counter: labor is typed per sale and paid to the installer; a part can sell above its price, never below', async () => {
+  const D = '2027-03-01';
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const mirror = await ok(api(OWNER, 'POST', '/inventory', { name: 'Mirror GR', unit: 'pc', price: 6000, set_size: 2, set_price: 11000, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${mirror.id}/receive`, { date: D, quantity: 6, unit_cost: 4500, paid_from: 'none' }));
+
+  // A hard install: the parts at a raised price plus ₱1,500 labor, all paid by the customer; the labor is the installer's commission.
+  const sale = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: D, department: 'parts', payment_received: true, payment_method: 'Cash',
+    items: [{ part_id: mirror.id, quantity: 2, unit_price: 6500 }, { labor: 1500 }],
+  }));
+  const [partLine, laborLine] = sale.items;
+  assert.deepEqual([partLine.kind, partLine.price, partLine.commission], ['part', 13000, 0]);
+  assert.deepEqual([laborLine.kind, laborLine.name, laborLine.price, laborLine.commission], ['labor', 'Labor', 1500, 1500]);
+  assert.deepEqual([sale.totals.total, sale.totals.commission, sale.totals.net], [14500, 1500, 13000]);
+  const { summary } = await ok(api(OWNER, 'GET', `/days/${D}`));
+  assert.equal(summary.commission, 1500, 'EOD pays the labor out as commission');
+
+  // A set can be raised too; nothing can be sold below its price (the Discount box is for that).
+  const set = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: mirror.id, quantity: 1, as_set: true, unit_price: 11500 }] }));
+  assert.equal(set.items[0].price, 11500);
+  const below = await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: mirror.id, quantity: 1, unit_price: 5999 }] });
+  assert.equal(below.status, 400);
+  assert.match(below.data.error, /Mirror GR sells for at least ₱6,000\.00.*Discount/);
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: mirror.id, quantity: 1, as_set: true, unit_price: 10000 }] })).data.error,
+    /at least ₱11,000\.00/);
+
+  // Labor must be more than ₱0, once per sale; a saved labor line is kept when the job is edited.
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: mirror.id, quantity: 1 }, { labor: 0 }] })).data.error, /Labor/);
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ labor: 100 }, { labor: 200 }] })).data.error, /once/);
+  const kept = await ok(api(STAFF, 'PATCH', `/jobs/${sale.id}`, { items: [{ id: partLine.id }, { id: laborLine.id }] }));
+  assert.deepEqual([kept.totals.total, kept.totals.commission], [14500, 1500]);
+});
+
+test('inventory: the owner corrects the cost of a past delivery; the average cost and what was paid follow', async () => {
+  const D = '2027-03-05';
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const sticker = await ok(api(OWNER, 'POST', '/inventory', { name: 'Holo sticker', unit: 'pc', price: 2000, tags: [autoParts.id] }));
+  // Opening stock entered at ₱0 (cost not known yet), 3 sold, then a delivery paid from the drawer.
+  await ok(api(OWNER, 'POST', `/inventory/${sticker.id}/receive`, { date: D, quantity: 10, unit_cost: 0, paid_from: 'none' }));
+  const sale = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', items: [{ part_id: sticker.id, quantity: 3 }] }));
+  await ok(api(OWNER, 'POST', `/inventory/${sticker.id}/receive`, { date: D, quantity: 5, unit_cost: 900, paid_from: 'cash' }));
+  let moves = await ok(api(OWNER, 'GET', `/inventory/${sticker.id}/movements`));
+  const [opening, sold, paid] = moves;
+  assert.deepEqual(moves.map(m => m.kind), ['receive', 'sale', 'receive']);
+
+  assert.equal((await api(STAFF, 'POST', `/inventory/movements/${opening.id}/cost`, { unit_cost: 800 })).status, 403);
+  assert.match((await api(OWNER, 'POST', `/inventory/movements/${sold.id}/cost`, { unit_cost: 800 })).data.error, /Only a delivery/);
+
+  // ₱800 each for the opening stock: (7 × 800 + 5 × 900) ÷ 12.
+  const fixed = await ok(api(OWNER, 'POST', `/inventory/movements/${opening.id}/cost`, { unit_cost: 800 }));
+  assert.equal(fixed.avg_cost, 841.67);
+  assert.equal(fixed.stock, 12);
+  moves = await ok(api(OWNER, 'GET', `/inventory/${sticker.id}/movements`));
+  assert.equal(moves[0].unit_cost, 800);
+  const owned = (await ok(api(OWNER, 'GET', `/jobs?date=${D}&department=parts`))).find(j => j.id === sale.id);
+  assert.equal(owned.items[0].unit_cost, 0, 'a sale already made keeps its cost');
+
+  // A paid delivery: the amount paid follows (it is that day's expense), and it cannot become ₱0.
+  const repaid = await ok(api(OWNER, 'POST', `/inventory/movements/${paid.id}/cost`, { unit_cost: 1000 }));
+  assert.equal(repaid.avg_cost, 883.33, '(7 × 800 + 5 × 1,000) ÷ 12');
+  moves = await ok(api(OWNER, 'GET', `/inventory/${sticker.id}/movements`));
+  assert.deepEqual([moves[2].unit_cost, moves[2].paid_amount], [1000, 5000]);
+  const day = await ok(api(OWNER, 'GET', `/days/${D}`));
+  assert.ok(day.expenses.some(e => e.amount === 5000 && /Holo sticker/.test(e.description)), 'EOD shows the corrected amount');
+  assert.match((await api(OWNER, 'POST', `/inventory/movements/${paid.id}/cost`, { unit_cost: 0 })).data.error, /cost per unit/);
+
+  // Undo of the latest delivery still goes back to the corrected average.
+  const undone = await ok(api(OWNER, 'POST', `/inventory/movements/${paid.id}/undo`));
+  assert.deepEqual([undone.stock, undone.avg_cost], [7, 800]);
+});

@@ -10,6 +10,7 @@ const { db } = require('../lib/db');
 const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/calc');
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
 const { loadPart, takeStock, returnStock, piecesOf } = require('../lib/inventory');
+const { peso } = require('../lib/cash-fund');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -43,7 +44,7 @@ async function cleanJobFields(q, body) {
 }
 
 // inputs: [{ id }] keeps an existing frozen line, [{ catalog_item_id }] adds a priced catalog line,
-// [{ name, price, commission }] adds a custom line. Order of the list = display order.
+// [{ name, price, commission }] adds a custom line, [{ labor }] the labor line. Order of the list = display order.
 async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
   if (!Array.isArray(inputs)) throw bad('items must be a list');
   if (inputs.length > MAX_LINES) throw bad(`A job can have at most ${MAX_LINES} line items`);
@@ -57,18 +58,31 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
     } else if (input?.part_id != null) {
       // Only items tagged Auto Parts are sold; lines already on a job are kept above whatever their tags now.
       // as_set: sold as a set (set price, takes set_size pieces per set); unit_cost is the cost of what is sold.
+      // unit_price: the price per piece (or set) on this sale, raised above the list price; lower goes through the discount.
       const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true, forSale: true });
       const quantity = money(input.quantity ?? 1, 'Quantity', { min: 0.01 });
       const asSet = Boolean(input.as_set);
       if (asSet && !(part.set_size > 1 && part.set_price > 0)) throw bad(`${part.name} is not sold as a set. Give it a set size and set price in Inventory.`);
       const pack = asSet ? part.set_size : 1;
+      const listPrice = asSet ? part.set_price : part.price;
+      const unitPrice = input.unit_price == null ? listPrice : money(input.unit_price, 'Price');
+      if (unitPrice < listPrice) {
+        throw bad(`${part.name}${asSet ? ` (set of ${pack})` : ''} sells for at least ${peso(listPrice)}. To charge less, use the Discount box.`);
+      }
       lines.push({
         kind: 'part', part_id: part.id, catalog_item_id: null, sort_order: index, quantity, pack_size: pack,
         name: asSet ? `${part.name} (set of ${pack})` : part.name,
-        price: Math.round((asSet ? part.set_price : part.price) * quantity * 100) / 100,
+        price: Math.round(unitPrice * quantity * 100) / 100,
         commission: Math.round((asSet ? part.set_commission : part.commission) * quantity * 100) / 100,
         unit_cost: Math.round(part.avg_cost * pack * 100) / 100,
       });
+    } else if (input?.labor != null) {
+      // Labor is typed per sale (an easy install costs less than a hard one); the customer pays it and all of it
+      // is the installer's commission.
+      if (lines.some(l => l.kind === 'labor')) throw bad('Labor can be added once per sale');
+      const labor = money(input.labor, 'Labor');
+      if (!(labor > 0)) throw bad('Labor must be more than ₱0. Leave it out if there is none.');
+      lines.push({ kind: 'labor', catalog_item_id: null, sort_order: index, name: 'Labor', price: labor, commission: labor });
     } else if (input?.catalog_item_id != null) {
       if (!vehicleClass) throw bad('Choose a vehicle class before adding services or add-ons');
       const row = await q.one(`select i.id, i.kind, i.name, i.department, coalesce(p.price, 0) as price, coalesce(p.commission, 0) as commission

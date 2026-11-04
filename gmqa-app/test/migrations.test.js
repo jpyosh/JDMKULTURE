@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -441,7 +441,7 @@ test('013 offers 18 tag colours and gives every existing tag its own', async () 
     ('Headlight bulbs', 'amber', 80), ('Foglights', 'amber', 90), ('Brackets', 'slate', 110), ('Key covers', 'slate', 160)`);
   const before = await all(driver, 'select id, name, system_key, sort_order from tags order by id');
 
-  assert.deepEqual(await migrate(driver, quiet), ['013']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '013' }), ['013']);
   const after = await all(driver, 'select id, name, system_key, sort_order, color from tags order by id');
   assert.deepEqual(after.map(({ color, ...t }) => t), before, 'only colours change');
   assert.equal(new Set(after.map(t => t.color)).size, after.length, 'every tag has its own colour');
@@ -449,6 +449,19 @@ test('013 offers 18 tag colours and gives every existing tag its own', async () 
 
   await driver.query("insert into tags (name, color) values ('New colour', 'coral')");
   await assert.rejects(driver.query("insert into tags (name, color) values ('Odd', 'neon')"), /check/i);
+});
+
+test('014 lets a job have a labor line (typed per sale, paid to the installer) without changing any job', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '013' });
+  const job = (await all(driver, "insert into jobs (department, jo_number, job_date) values ('parts', 'PC-030127-001', '2027-03-01') returning id"))[0];
+  await driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'custom', 'Wash', 300, 50)", [job.id]);
+  const before = await all(driver, 'select * from job_items order by id');
+
+  assert.deepEqual(await migrate(driver, quiet), ['014']);
+  assert.deepEqual(await all(driver, 'select * from job_items order by id'), before, 'existing lines are unchanged');
+  await driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'labor', 'Labor', 1500, 1500)", [job.id]);
+  await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'tip', 'Odd', 1, 1)", [job.id]), /check/i);
 });
 
 test('012 records the GCash tips given to the crew each day, leaving earlier days as they were', async () => {
