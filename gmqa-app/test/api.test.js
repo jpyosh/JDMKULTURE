@@ -1255,3 +1255,52 @@ test('inventory: the owner corrects the cost of a past delivery; the average cos
   const undone = await ok(api(OWNER, 'POST', `/inventory/movements/${paid.id}/undo`));
   assert.deepEqual([undone.stock, undone.avg_cost], [7, 800]);
 });
+
+test('parts counter: an unpaid sale is marked paid on the day the customer pays, and the money counts that day', async () => {
+  const D1 = '2027-03-10';
+  const D2 = '2027-03-13';
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const horn = await ok(api(OWNER, 'POST', '/inventory', { name: 'Horn pair', unit: 'pc', price: 1000, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D1, quantity: 10, unit_cost: 600, paid_from: 'none' }));
+
+  // Taken on credit on D1 (₱2,000 parts + ₱500 labor); D1 is closed before the customer pays.
+  const sale = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, department: 'parts', items: [{ part_id: horn.id, quantity: 2 }, { labor: 500 }] }));
+  assert.deepEqual([sale.payment_received, sale.paid_on], [false, null]);
+  await ok(api(STAFF, 'POST', `/days/${D1}/close`));
+  let day1 = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([day1.collected, day1.receivables, day1.commission], [0, 2500, 500]);
+  // The Parts tab lists every unpaid counter sale, whatever its day.
+  const owing = await ok(api(STAFF, 'GET', '/jobs?department=parts&unpaid=1'));
+  assert.ok(owing.some(j => j.id === sale.id));
+  assert.ok(owing.every(j => j.department === 'parts' && !j.payment_received && !j.voided_at));
+
+  // Paying goes through Mark paid (with the day and Cash or GCash), not an edit.
+  assert.match((await api(OWNER, 'PATCH', `/jobs/${sale.id}`, { payment_received: true })).data.error, /Mark paid/);
+  assert.match((await api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: '2027-03-09', payment_method: 'Cash' })).data.error, /before/);
+  assert.equal((await api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2 })).status, 400, 'Cash or GCash is required');
+
+  const paid = await ok(api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2, payment_method: 'GCash' }));
+  assert.deepEqual([paid.payment_received, paid.paid_on, paid.payment_method, paid.sale_date], [true, D2, 'GCash', D1]);
+  assert.match((await api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2, payment_method: 'Cash' })).data.error, /Already paid/);
+  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs?department=parts&unpaid=1'))).some(j => j.id === sale.id), 'no longer owing');
+
+  const day2 = (await ok(api(OWNER, 'GET', `/days/${D2}`))).summary;
+  assert.deepEqual([day2.gcashReceived, day2.partsGcashReceived, day2.earlierSalesPaid], [2500, 2500, 2500], 'the money is in D2\'s GCash');
+  assert.deepEqual([day2.collected, day2.commission], [0, 0], 'the sale and its labor stay on D1');
+  day1 = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([day1.collected, day1.receivables, day1.gcashReceived, day1.paidLater], [2500, 0, 0, 2500]);
+
+  // Undo payment while D2 is open; once D2 is closed staff cannot.
+  const undone = await ok(api(STAFF, 'POST', `/jobs/${sale.id}/unpay`));
+  assert.deepEqual([undone.payment_received, undone.paid_on], [false, null]);
+  await ok(api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2, payment_method: 'Cash' }));
+  await ok(api(STAFF, 'POST', `/days/${D2}/close`));
+  assert.equal((await api(STAFF, 'POST', `/jobs/${sale.id}/unpay`)).status, 403);
+
+  // A sale paid when it was made is already paid; a carwash job still uses its Paid checkbox.
+  const D3 = '2027-03-14';
+  const cash = await ok(api(STAFF, 'POST', '/jobs', { job_date: D3, department: 'parts', payment_received: true, payment_method: 'Cash', items: [{ part_id: horn.id, quantity: 1 }] }));
+  assert.match((await api(STAFF, 'POST', `/jobs/${cash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Already paid/);
+  const wash = await ok(api(STAFF, 'POST', '/jobs', { job_date: D3, vehicle_class: 'S', items: [{ name: 'Wash', price: 300, commission: 50 }] }));
+  assert.match((await api(STAFF, 'POST', `/jobs/${wash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Paid checkbox/);
+});

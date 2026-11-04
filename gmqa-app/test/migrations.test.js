@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -458,10 +458,29 @@ test('014 lets a job have a labor line (typed per sale, paid to the installer) w
   await driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'custom', 'Wash', 300, 50)", [job.id]);
   const before = await all(driver, 'select * from job_items order by id');
 
-  assert.deepEqual(await migrate(driver, quiet), ['014']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '014' }), ['014']);
   assert.deepEqual(await all(driver, 'select * from job_items order by id'), before, 'existing lines are unchanged');
   await driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'labor', 'Labor', 1500, 1500)", [job.id]);
   await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price, commission) values ($1, 'tip', 'Odd', 1, 1)", [job.id]), /check/i);
+});
+
+test('015 lets a counter sale record the day it was paid, without changing any job', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '014' });
+  await driver.query(`insert into jobs (department, jo_number, job_date, payment_received, payment_method) values
+    ('parts', 'PC-031027-001', '2027-03-10', false, 'Cash'), ('parts', 'PC-031027-002', '2027-03-10', true, 'GCash'),
+    ('carwash', 'JO-031027-001', '2027-03-10', true, 'Cash')`);
+  const before = await all(driver, 'select * from jobs order by id');
+
+  assert.deepEqual(await migrate(driver, quiet), ['015']);
+  assert.deepEqual(await all(driver, 'select * from jobs order by id'), before, 'existing jobs are unchanged');
+  const [unpaid, , wash] = before;
+  await driver.query("update jobs set payment_received = true, paid_on = '2027-03-13' where id = $1", [unpaid.id]);
+  assert.equal((await one(driver, 'select sale_date from jobs where id = $1', [unpaid.id])).sale_date, '2027-03-10', 'still a sale of its day');
+  await assert.rejects(driver.query("update jobs set paid_on = '2027-03-09' where id = $1", [unpaid.id]), /check/i, 'not before the sale');
+  await assert.rejects(driver.query('update jobs set payment_received = false where id = $1', [unpaid.id]), /check/i, 'a pay day means paid');
+  await assert.rejects(driver.query("update jobs set closed_on = '2027-03-13' where id = $1", [unpaid.id]), /check/i);
+  await assert.rejects(driver.query("update jobs set paid_on = '2027-03-10' where id = $1", [wash.id]), /check/i, 'carwash keeps its Paid checkbox');
 });
 
 test('012 records the GCash tips given to the crew each day, leaving earlier days as they were', async () => {

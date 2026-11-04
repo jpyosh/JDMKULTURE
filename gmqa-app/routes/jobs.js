@@ -149,7 +149,9 @@ function runningDepartment(value) {
 }
 
 // Days whose totals a change to this job would affect (staff cannot touch closed days).
-const affectedDays = job => (isRunning(job) ? [job.sale_date, job.paid_on] : [job.job_date]).filter(Boolean);
+const affectedDays = job => (isRunning(job) ? [job.sale_date, job.paid_on] : [job.job_date, job.paid_on]).filter(Boolean);
+// Detailing / Tint & PPF jobs, and counter sales, are paid with Mark paid (it records the day the money came in).
+const paidWithMarkPaid = job => isRunning(job) || job.department === 'parts';
 
 async function assertDaysOpen(q, days, user) {
   for (const day of new Set(days)) await assertDayOpen(q, day, user);
@@ -158,6 +160,10 @@ async function assertDaysOpen(q, days, user) {
 // ---------------------------------------------------------------- reads
 
 router.get('/jobs', async (req, res) => {
+  // Counter sales still owed, whatever their day (the Parts tab lists them above the day's sales).
+  if (req.query.department === 'parts' && req.query.unpaid) {
+    return res.json(await loadJobs("department = 'parts' and not payment_received and voided_at is null", []));
+  }
   const day = date(req.query.date);
   if (req.query.department) {
     res.json(await loadJobs('job_date = $1 and department = $2', [day, oneOf(req.query.department, DEPARTMENT_KEYS, 'Department')]));
@@ -216,8 +222,10 @@ router.patch('/jobs/:id', async (req, res) => {
     if (job.voided_at) throw bad('This job is voided. Restore it before editing.');
     await assertDaysOpen(q, affectedDays(job), req.user);
     const fields = await cleanJobFields(q, req.body);
-    if (isRunning(job)) {
-      if ('payment_received' in fields) throw bad('Use "Mark paid" / "Undo payment" for detailing and tint/PPF jobs');
+    if (paidWithMarkPaid(job)) {
+      if ('payment_received' in fields) {
+        throw bad(`Use "Mark paid" / "Undo payment" for ${isRunning(job) ? 'detailing and tint/PPF jobs' : 'counter sales'}`);
+      }
       const changesAmount = Array.isArray(req.body.items) || AMOUNT_FIELDS.some(f => f in fields && fields[f] !== job[f]);
       if (job.paid_on && changesAmount) throw bad('This job is already paid, so its amount is locked. Undo the payment first to change it.');
     }
@@ -251,12 +259,13 @@ router.patch('/jobs/:id', async (req, res) => {
 
 // ---------------------------------------------------------------- running jobs: done / paid
 
-async function runningAction(req, fn) {
+// pay / unpay also take counter sales (a sale taken on credit, paid on a later day).
+async function runningAction(req, fn, { counterToo = false } = {}) {
   const jobId = id(req.params.id, 'job');
   await db.tx(req.user.email, async q => {
     const job = await loadJob(jobId, q);
     if (!job) throw notFound('Job');
-    if (!isRunning(job)) throw bad('Carwash jobs are not marked done; use the Paid checkbox');
+    if (!(counterToo ? paidWithMarkPaid(job) : isRunning(job))) throw bad('Carwash jobs are not marked done; use the Paid checkbox');
     if (job.voided_at) throw bad('This job is voided. Restore it first.');
     await fn(q, job);
   });
@@ -285,23 +294,25 @@ router.post('/jobs/:id/reopen', async (req, res) => {
 
 router.post('/jobs/:id/pay', async (req, res) => {
   res.json(await runningAction(req, async (q, job) => {
-    if (job.paid_on) throw bad(`Already paid on ${job.paid_on}`);
+    if (job.payment_received) throw bad(`Already paid${job.paid_on ? ` on ${job.paid_on}` : ''}`);
     const day = date(req.body.date, 'Payment date');
-    if (day < job.job_date) throw bad(`Payment date cannot be before the job was opened (${job.job_date})`);
+    if (day < job.job_date) throw bad(`Payment date cannot be before the ${isRunning(job) ? 'job was opened' : 'sale'} (${job.job_date})`);
     const method = oneOf(req.body.payment_method, PAYMENT_METHODS, 'Payment method');
     const tip = 'tip_gcash' in (req.body || {}) ? money(req.body.tip_gcash, 'GCash tip') : job.tip_gcash;
     await assertDaysOpen(q, [day, later(day, job.closed_on)].filter(Boolean), req.user);
     await q.query('update jobs set paid_on = $2, payment_received = true, payment_method = $3, tip_gcash = $4 where id = $1',
       [job.id, day, method, tip]);
-  }));
+  }, { counterToo: true }));
 });
 
 router.post('/jobs/:id/unpay', async (req, res) => {
   res.json(await runningAction(req, async (q, job) => {
-    if (!job.paid_on) throw bad('This job has no payment recorded');
-    await assertDaysOpen(q, [job.paid_on, job.sale_date].filter(Boolean), req.user);
+    if (!job.payment_received) throw bad('This job has no payment recorded');
+    // A counter sale paid when it was made has its money on its own day.
+    const days = isRunning(job) ? [job.paid_on, job.sale_date] : [job.paid_on || job.job_date];
+    await assertDaysOpen(q, days.filter(Boolean), req.user);
     await q.query('update jobs set paid_on = null, payment_received = false where id = $1', [job.id]);
-  }));
+  }, { counterToo: true }));
 });
 
 // ---------------------------------------------------------------- void / restore (owner)

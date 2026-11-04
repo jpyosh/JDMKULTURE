@@ -13,6 +13,8 @@
 //     sale date = the later of the day the work was closed and the day they were paid in full.
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
 //     cash in that day's drawer, while its sale is booked on the sale date.
+//   * The same for a counter sale taken on credit and marked paid later (agreed 2026-11-04): the sale and
+//     its labor stay on the day it was made; the money counts on the day it was paid (paid_on).
 
 // catalog: whether the department sells Pricing Matrix services/add-ons (the parts counter sells
 // inventory parts only, and needs no vehicle).
@@ -78,9 +80,12 @@ function salesFigures(jobs) {
   };
 }
 
-// Money in on `date`: paid carwash/parts jobs of that day + running jobs paid that day (finished or not).
-const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j)
-  && (isRunning(j) ? j.paid_on === date : saleDate(j) === date && j.payment_received));
+// The day a job's money came in: a running job's payment day; a carwash or counter sale paid when it was
+// made, its own day; a counter sale taken on credit and marked paid later (paid_on), that later day.
+// The sale itself (and its commission) stays on its sale date either way.
+const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? (j.paid_on || saleDate(j)) : null);
+// Money in on `date`.
+const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j) && receivedDate(j) === date);
 
 // GCash tips stay in GCash until someone gives them to the crew (daily_meta.gcash_tips_passed); what is
 // not given out is carried over to the next days until it is. Before this date tips were taken as given
@@ -94,7 +99,7 @@ const tipsGivenOn = (date, tips, meta = {}) => (date < TIPS_TRACKED_FROM ? tips 
 function tipsOwed({ jobs, metas = [], before }) {
   const metaOn = new Map(metas.map(m => [m.job_date, m]));
   const dates = new Set(metas.map(m => m.job_date));
-  for (const j of jobs) dates.add(isRunning(j) ? j.paid_on : saleDate(j));
+  for (const j of jobs) dates.add(receivedDate(j));
   let owed = 0;
   for (const date of [...dates].filter(d => d && d >= TIPS_TRACKED_FROM && d < before).sort()) {
     const tips = tipsReceivedOn(jobs, date, metaOn.get(date));
@@ -125,6 +130,9 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   const partsGcashReceived = round2(sum(counterReceived, j => j.totals.total) - partsCashReceived);
   const paidInAdvance = sum(runningPaidToday.filter(j => saleDate(j) !== date), j => j.totals.total);
   const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on !== date), j => j.totals.total);
+  // Counter sales taken on credit: today's sales paid on a later day, and earlier sales paid today.
+  const paidLater = sum(sales.filter(j => !isRunning(j) && j.payment_received && receivedDate(j) > date), j => j.totals.total);
+  const earlierSalesPaid = sum(received.filter(j => !isRunning(j) && saleDate(j) < date), j => j.totals.total);
 
   const cashExpenses = sum(expenses.filter(e => e.side === 'cash'), e => e.amount);
   const gcashExpenses = sum(expenses.filter(e => e.side === 'gcash'), e => e.amount);
@@ -176,7 +184,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
     departments,
     collected, receivables, commission, partsSales, partsCost,
     net: round2(collected - commission),
-    cashReceived, gcashReceived, partsCashReceived, partsGcashReceived, paidInAdvance, paidEarlier,
+    cashReceived, gcashReceived, partsCashReceived, partsGcashReceived, paidInAdvance, paidEarlier, paidLater, earlierSalesPaid,
     cashExpenses, gcashExpenses, fundExpenses, drawerExpenses, expenses: round2(drawerExpenses + fundExpenses),
     partsBoughtDrawer, partsBoughtFund,
     jobTips, otherTips, tips, tipsTracked, tipsGiven, tipsOwedBefore: owedBefore, tipsToGive,

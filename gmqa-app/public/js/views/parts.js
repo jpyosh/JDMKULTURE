@@ -8,8 +8,10 @@ import { receipt, voidJob, restoreJob, showHistory } from '../components/job-act
 let root;
 let counterDate = todayLocal();
 let counterJobs = [];
+let owingJobs = []; // unpaid counter sales of other days
 let search = '';
 
+const dayLabel = d => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const qty = n => String(Math.round(Number(n || 0) * 100) / 100);
 const hasSet = p => p.set_size > 1 && p.set_price > 0;
 const matches = (...texts) => !search || texts.some(t => String(t || '').toLowerCase().includes(search));
@@ -33,6 +35,7 @@ function mount(el) {
       <div class="section-header"><h2>Counter sales</h2>
         <div class="header-actions"><label class="inline-label">On <input type="date" data-counter-date></label>
           <button class="btn" type="button" data-new-sale>+ New counter sale</button></div></div>
+      <div data-owing></div>
       <div class="sale-cards" data-counter></div>
     </div>`;
   $('[data-search]', root).addEventListener('input', e => { search = e.target.value.trim().toLowerCase(); renderParts(); renderCounter(); });
@@ -56,7 +59,12 @@ async function loadParts() {
 }
 
 async function loadCounter() {
-  counterJobs = await api('GET', `/jobs?date=${counterDate}&department=parts`);
+  const [day, owing] = await Promise.all([
+    api('GET', `/jobs?date=${counterDate}&department=parts`),
+    api('GET', '/jobs?department=parts&unpaid=1'),
+  ]);
+  counterJobs = day;
+  owingJobs = owing.filter(j => j.job_date !== counterDate);
   renderCounter();
 }
 
@@ -91,16 +99,22 @@ function partPanel(p) {
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Close</button></div>`);
 }
 
-function renderCounter() {
+// One counter sale, itemized. Unpaid: Mark paid (on the day the customer pays). Paid on a later day: Undo payment.
+function saleCard(j, { showDate = false } = {}) {
   const owner = isOwner();
-  const list = counterJobs.filter(j => matches(j.jo_number, j.detailer, j.plate, j.payment_method, ...j.items.map(i => i.name)));
-  const box = $('[data-counter]', root);
-  box.innerHTML = list.length ? list.map(j => `
+  const paidLater = j.paid_on && j.paid_on !== j.job_date;
+  const status = j.payment_received
+    ? `${esc(j.payment_method)} · Paid${paidLater ? ` ${dayLabel(j.paid_on)}` : ''}`
+    : '<span class="amber-text">Unpaid</span>';
+  const payButton = j.voided_at ? ''
+    : !j.payment_received ? '<button class="btn small" type="button" data-act="pay">Mark paid</button>'
+      : paidLater ? '<button class="btn ghost small" type="button" data-act="unpay">Undo payment</button>' : '';
+  return `
     <div class="sale-card ${j.voided_at ? 'voided' : ''}" data-sale="${j.id}">
       <div class="sale-head">
         <div><b class="jo-number">${esc(j.jo_number)}</b>${j.detailer ? ` <span class="muted small">by ${esc(j.detailer)}</span>` : ''}
-          <div class="small">${esc(j.payment_method)} · ${j.payment_received ? 'Paid' : '<span class="amber-text">Unpaid</span>'}</div></div>
-        <div class="actions">${j.voided_at
+          <div class="small">${showDate ? `Sold ${dayLabel(j.job_date)} · ` : ''}${status}</div></div>
+        <div class="actions">${payButton}${j.voided_at
           ? (owner ? '<button class="btn ghost small" type="button" data-act="restore">Restore</button>' : '')
           : (owner ? '<button class="icon-btn" type="button" data-act="void" title="Void sale">✕</button>' : '')}
           <button class="icon-btn" type="button" data-act="history" title="Change history">⟲</button></div>
@@ -108,13 +122,62 @@ function renderCounter() {
       ${j.voided_at ? `<div class="void-note">VOID · ${esc(j.void_reason)}</div>` : ''}
       ${receipt(j)}
       ${owner ? `<div class="sale-foot muted small">Cost of parts ${peso(j.totals.cost)}</div>` : ''}
-    </div>`).join('')
+    </div>`;
+}
+
+function renderCounter() {
+  const filter = list => list.filter(j => matches(j.jo_number, j.detailer, j.plate, j.payment_method, ...j.items.map(i => i.name)));
+  const list = filter(counterJobs);
+  const owing = filter(owingJobs);
+  const owingBox = $('[data-owing]', root);
+  owingBox.innerHTML = owing.length ? `<div class="owing">
+      <h3>Unpaid from other days <span class="muted small">${owing.length} · ${peso(owing.reduce((t, j) => t + j.totals.total, 0))}</span></h3>
+      <p class="hint">Press <b>Mark paid</b> when the customer pays. The money counts on the day they pay.</p>
+      <div class="sale-cards">${owing.map(j => saleCard(j, { showDate: true })).join('')}</div></div>` : '';
+  const box = $('[data-counter]', root);
+  box.innerHTML = list.length ? list.map(j => saleCard(j)).join('')
     : `<div class="empty-state small">${counterJobs.length ? 'No sales match.' : 'No counter sales on this day.'}</div>`;
   const reloadAll = () => Promise.all([loadParts(), loadCounter()]);
-  $$('[data-act]', box).forEach(btn => btn.addEventListener('click', () => {
-    const job = counterJobs.find(j => j.id === Number(btn.closest('[data-sale]').dataset.sale));
-    ({ void: () => voidJob(job, reloadAll), restore: () => restoreJob(job, reloadAll), history: () => showHistory(job) })[btn.dataset.act]();
+  [owingBox, box].forEach(el => $$('[data-act]', el).forEach(btn => btn.addEventListener('click', () => {
+    const saleId = Number(btn.closest('[data-sale]').dataset.sale);
+    const job = [...counterJobs, ...owingJobs].find(j => j.id === saleId);
+    ({
+      void: () => voidJob(job, reloadAll),
+      restore: () => restoreJob(job, reloadAll),
+      history: () => showHistory(job),
+      pay: () => payModal(job),
+      unpay: () => undoPayment(job),
+    })[btn.dataset.act]();
+  })));
+}
+
+// The customer pays for a sale taken on credit: the money counts in that day's drawer or GCash.
+function payModal(job) {
+  openModal(`${modalHeader(`Mark ${job.jo_number} paid`, `${peso(job.totals.total)} for the sale of ${dayLabel(job.job_date)}. The money counts on the day it is paid.`)}
+    ${receipt(job)}
+    <div class="form-grid modal-form-grid mt">
+      <div><label>Paid on</label><input type="date" data-pay-date value="${counterDate < job.job_date ? job.job_date : counterDate}" min="${job.job_date}"></div>
+      <fieldset class="choice-group pay-choice" data-pay-method><legend>Paid with</legend>
+        ${['Cash', 'GCash'].map(p => `<label><input type="radio" name="counter-pay" value="${p}"> ${p}</label>`).join('')}</fieldset>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Record payment</button></div>`,
+  card => $('[data-confirm]', card).addEventListener('click', e => {
+    const method = $('[data-pay-method] input:checked', card)?.value;
+    if (!method) return toast('Choose Cash or GCash', 'error');
+    busy(e.currentTarget, async () => {
+      await api('POST', `/jobs/${job.id}/pay`, { date: $('[data-pay-date]', card).value, payment_method: method });
+      closeModal();
+      toast(`${job.jo_number} paid`);
+      await loadCounter();
+    });
   }));
+}
+
+async function undoPayment(job) {
+  if (!window.confirm(`Undo the payment for ${job.jo_number}? It goes back to unpaid and its ${peso(job.totals.total)} comes off ${dayLabel(job.paid_on)}.`)) return;
+  await api('POST', `/jobs/${job.id}/unpay`);
+  toast('Payment removed');
+  await loadCounter();
 }
 
 function counterSaleModal() {

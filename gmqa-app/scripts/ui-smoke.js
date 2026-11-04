@@ -788,6 +788,58 @@ async function launch() {
       await page.click('#nav [data-view="parts"]');
     });
 
+    await step('parts: a sale taken on credit is marked paid on the day the customer pays', async () => {
+      const setCounterDate = async d => {
+        await partsView.locator('[data-counter-date]').fill(d);
+        await partsView.locator('[data-counter-date]').dispatchEvent('change');
+      };
+      await setCounterDate('2026-09-22');
+      await partsView.locator('[data-new-sale]').click();
+      await page.waitForSelector('#modal[open] [data-add="part"]');
+      await page.selectOption('#modal [data-add="part"]', { index: 1 });
+      await page.uncheck('#modal [data-f="payment_received"]');
+      await page.click('#modal [data-save]');
+      await expectToast(/PC-092226-001 added/);
+      const sale = saleCard('PC-092226-001');
+      await sale.waitFor();
+      assert.match(await sale.textContent(), /Unpaid/);
+      assert.equal(await sale.locator('[data-act="pay"]').count(), 1, 'an unpaid sale has Mark paid');
+
+      // Three days later the customer pays: the sale is listed as owing whatever day is open.
+      await setCounterDate('2026-09-23');
+      const owing = partsView.locator('[data-owing] [data-sale]', { hasText: 'PC-092226-001' });
+      await owing.waitFor();
+      assert.match(await partsView.locator('[data-owing]').textContent(), /Unpaid[\s\S]*Sep 22[\s\S]*₱550\.00/);
+      await partsView.locator('[data-owing]').scrollIntoViewIfNeeded();
+      await shot('07c-parts-owing');
+      await owing.locator('[data-act="pay"]').click();
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      assert.equal(await page.inputValue('#modal [data-pay-date]'), '2026-09-23', 'the payment day is the day open on the tab');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Choose Cash or GCash/);
+      await page.locator('#modal [data-pay-method] input[value="GCash"]').check();
+      await shot('07c-parts-mark-paid');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/PC-092226-001 paid/);
+      await page.waitForFunction(() => !document.querySelector('#view-parts [data-owing] [data-sale]'));
+
+      await setCounterDate('2026-09-22');
+      await sale.waitFor();
+      assert.match(await sale.textContent(), /GCash · Paid Sep 23/);
+      assert.equal(await sale.locator('[data-act="unpay"]').count(), 1, 'a payment can be undone');
+
+      // The money is in Sep 23's GCash, with a note saying which day's sale it was for.
+      await page.click('#nav [data-view="eod"]');
+      const eodView = page.locator('#view-eod');
+      await eodView.locator('[data-date]').fill('2026-09-23');
+      await eodView.locator('[data-date]').dispatchEvent('change');
+      const partsGcash = eodView.locator('[data-gcash] .row-line', { hasText: 'parts counter' }).locator('.money');
+      await partsGcash.waitFor();
+      assert.equal((await partsGcash.textContent()).trim(), '₱550.00');
+      assert.match(await eodView.locator('[data-cash]').textContent(), /₱550\.00 received today is for counter sales made on earlier days/);
+      await page.click('#nav [data-view="parts"]');
+    });
+
     await step('sales report', async () => {
       await page.click('#nav [data-view="reports"]');
       await page.fill('#view-reports [data-start]', '2026-09-01');

@@ -60,6 +60,30 @@ test('parts counter money goes to the drawer or GCash it was paid with, and EOD 
   assert.equal(s.expectedCash, 1000 + 1050 - s.commissionCash);
 });
 
+test('a counter sale paid on a later day: the sale stays on its day, the money counts on the day it was paid', () => {
+  const partLine = { kind: 'part', name: 'Wiper blade', quantity: 1, price: 2000, commission: 0, unit_cost: 1200 };
+  const labor = { kind: 'labor', name: 'Labor', price: 500, commission: 500 };
+  const sale = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', paid_on: '2026-12-04',
+    payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [partLine, labor] });
+  const sameDay = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-04', paid_on: '2026-12-04',
+    payment_received: true, payment_method: 'Cash', items: [{ ...partLine, price: 1000 }] });
+  const jobs = [sale, sameDay];
+
+  const saleDay = daySummary({ date: '2026-12-01', jobs, meta: { cash_float: 1000 } });
+  assert.deepEqual([saleDay.collected, saleDay.receivables, saleDay.commission], [2500, 0, 500], 'a sale of that day, now paid');
+  assert.deepEqual([saleDay.cashReceived, saleDay.gcashReceived, saleDay.jobTips], [0, 0, 0], 'but no money came in that day');
+  assert.equal(saleDay.paidLater, 2500);
+  assert.equal(saleDay.expectedCash, 1000 - 500);
+
+  const payDay = daySummary({ date: '2026-12-04', jobs, meta: { cash_float: 1000 } });
+  assert.deepEqual([payDay.collected, payDay.commission], [1000, 0], 'the earlier sale is not a sale again');
+  assert.deepEqual([payDay.gcashReceived, payDay.partsGcashReceived, payDay.cashReceived, payDay.jobTips], [2500, 2500, 1000, 50]);
+  assert.equal(payDay.earlierSalesPaid, 2500, 'shown on its own note');
+  assert.equal(payDay.paidLater, 0);
+  assert.equal(payDay.expectedGcash, 2500 + 50);
+  assert.equal(tipsOwed({ jobs, metas: [], before: '2026-12-05' }), 50, 'the tip came in on the day it was paid');
+});
+
 test('saleDate: carwash counts on its job date; running jobs when both closed and paid', () => {
   assert.equal(saleDate(job({ job_date: '2026-10-05' })), '2026-10-05');
   const running = { department: 'detailing', job_date: '2026-10-05' };

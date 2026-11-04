@@ -877,6 +877,10 @@ button.filter-chip:focus-visible{outline:2px solid var(--accent-text);outline-of
 .sale-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;align-items:start;}
 .sale-card{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:var(--r);background:var(--surface-alt);}
 .sale-card.voided{opacity:.6;}
+.owing{margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border);}
+.owing h3{margin:0 0 4px;font-size:15px;color:var(--orange);}
+.owing .hint{margin:0 0 10px;}
+.sale-head .actions{flex-wrap:wrap;justify-content:flex-end;align-items:center;}
 .sale-card.voided .receipt{text-decoration:line-through;}
 .sale-card .void-note{max-width:none;}
 .sale-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}

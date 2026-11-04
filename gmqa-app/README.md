@@ -51,6 +51,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Collected** = totals of paid jobs. **Receivables** = totals of unpaid jobs.
 - **Commission** = every counted job (detailers are paid at EOD either way).
 - **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
+- Money counts in the drawer or GCash on the day it was received: a running job's or a counter sale's
+  payment day (`paid_on`), otherwise the job's own day.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.
 - Expected GCash = GCash collected + tips − tips given to the crew − commission via GCash − GCash expenses.
 - **GCash tips** stay in GCash until someone gives them to the crew (EOD → "GCash tips given to crew", or the
@@ -173,6 +175,12 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Counter sales** show one box per sale, itemized: each item with its price (quantity × price each), labor,
   any discount, then the total; the box is as tall as the sale. The Parts tab's search box covers the parts
   list and the day's sales (JO#, items, sold by).
+- **Sold on credit** (Customer paid unticked): the sale shows **Unpaid** with a **Mark paid** button, and is
+  listed under "Unpaid from other days" whatever day the Parts tab is on. Mark paid asks the day and Cash or
+  GCash. The sale and its labor stay on the day it was made (Receivable there until paid, Collected after); the
+  money counts in the drawer or GCash on the **day it was paid** (`jobs.paid_on`), where EOD notes it as money
+  for earlier counter sales. **Undo payment** takes it back off that day. Same closed-day rules as other jobs.
+  Migration 015 lets a counter sale have `paid_on` (agreed 2026-11-04).
 - **Sets**: a part can also sell as a set (e.g. one bulb ₱2,000, a pair ₱3,500). Count stock in **pieces**
   (unit `pc`) and fill **Set of** (pieces per set) and **Set price** (and commission per set). "+ Add part"
   then offers both; a set line takes its pieces from the same stock, and removing, voiding or restoring it
