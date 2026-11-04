@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -433,12 +433,30 @@ test('006 adds parts inventory, part line items and the parts counter department
   await assert.rejects(driver.query("insert into job_items (job_id, kind, name, price, quantity) values ($1, 'custom', 'x', 1, 0)", [counter.id]), /check/i);
 });
 
+test('013 offers 18 tag colours and gives every existing tag its own', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '012' });
+  // Tags added by hand before 013, several sharing a colour (as in production).
+  await driver.query(`insert into tags (name, color, sort_order) values
+    ('Headlight bulbs', 'amber', 80), ('Foglights', 'amber', 90), ('Brackets', 'slate', 110), ('Key covers', 'slate', 160)`);
+  const before = await all(driver, 'select id, name, system_key, sort_order from tags order by id');
+
+  assert.deepEqual(await migrate(driver, quiet), ['013']);
+  const after = await all(driver, 'select id, name, system_key, sort_order, color from tags order by id');
+  assert.deepEqual(after.map(({ color, ...t }) => t), before, 'only colours change');
+  assert.equal(new Set(after.map(t => t.color)).size, after.length, 'every tag has its own colour');
+  assert.equal(after.find(t => t.system_key === 'auto_parts').color, 'red', 'Auto Parts stays red');
+
+  await driver.query("insert into tags (name, color) values ('New colour', 'coral')");
+  await assert.rejects(driver.query("insert into tags (name, color) values ('Odd', 'neon')"), /check/i);
+});
+
 test('012 records the GCash tips given to the crew each day, leaving earlier days as they were', async () => {
   const driver = await newDriver();
   await migrate(driver, { ...quiet, to: '011' });
   await driver.query("insert into daily_meta (job_date, gcash_tips_to_distribute, closed_at) values ('2026-10-27', 40, now())");
 
-  assert.deepEqual(await migrate(driver, quiet), ['012']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '012' }), ['012']);
   assert.deepEqual(await one(driver, 'select gcash_tips_to_distribute, gcash_tips_passed from daily_meta'),
     { gcash_tips_to_distribute: 40, gcash_tips_passed: 0 }, 'existing days: nothing recorded (they follow the old rule in lib/calc.js)');
   await driver.query("insert into daily_meta (job_date) values ('2026-11-02')");

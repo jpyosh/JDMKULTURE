@@ -1160,3 +1160,26 @@ test('EOD gives the daily sales report for the group chat, for staff and owner',
     assert.equal(report.text, 'February 15, 2027\nTotal of cars - 3\nTotal sales - 2,000\nLess comms - 150\nLess expenses - 100\nTotal net = 1,750\n\nCash - 550\nGcash - 1200');
   }
 });
+
+test('tags: a new tag gets a colour no other tag has; any colour can still be picked', async () => {
+  const colourOf = async name => (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.name === name).color;
+  const shared = async name => {
+    const tags = await ok(api(OWNER, 'GET', '/tags'));
+    const colour = tags.find(t => t.name === name).color;
+    return tags.filter(t => t.color === colour).length;
+  };
+
+  const fresh = await ok(api(OWNER, 'POST', '/tags', { name: 'Seat covers' }));
+  assert.equal(await shared('Seat covers'), 1, `${fresh.color} is used by another tag`);
+  const imported = await ok(api(OWNER, 'POST', '/inventory/import', { date: '2026-12-21', rows: [{ name: 'Plate holder', tags: ['Plate holders'] }] }));
+  assert.equal(imported.created, 1);
+  assert.equal(await shared('Plate holders'), 1, 'a tag created by a paste gets its own colour too');
+
+  // The owner can still choose any colour, even one another tag uses.
+  const autoColour = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').color;
+  await ok(api(OWNER, 'PATCH', `/tags/${fresh.id}`, { color: autoColour }));
+  assert.equal(await colourOf('Seat covers'), autoColour);
+  await ok(api(OWNER, 'PATCH', `/tags/${fresh.id}`, { color: 'grape' }));
+  assert.equal(await colourOf('Seat covers'), 'grape', 'one of the new colours');
+  assert.equal((await api(OWNER, 'PATCH', `/tags/${fresh.id}`, { color: 'neon' })).status, 400);
+});

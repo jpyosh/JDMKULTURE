@@ -9,7 +9,8 @@ const { FOR_SALE, loadItems, loadPart, receiveStock, countStock, COUNT_REASONS }
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
-const TAG_COLORS = ['slate', 'red', 'orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'];
+// Same order as migrations/013: new tags get the first colour no other tag has (red first, for Auto Parts).
+const TAG_COLORS = ['red', 'blue', 'amber', 'green', 'violet', 'orange', 'teal', 'pink', 'lime', 'indigo', 'coral', 'mint', 'grape', 'sky', 'brown', 'rose', 'olive', 'slate'];
 const PAID_FROM = ['cash', 'gcash', 'fund', 'none'];
 const MAX_IMPORT_ROWS = 500;
 
@@ -34,11 +35,17 @@ function cleanTag(body, partial) {
 
 const nextTagOrder = async q => (await q.one('select coalesce(max(sort_order), 0) + 10 as n from tags')).n;
 
+// The least-used colour (an unused one while any is left), so every tag can look different.
+async function freeColor(q) {
+  const counts = new Map((await q.many('select color, count(*)::int as n from tags group by color')).map(r => [r.color, r.n]));
+  return TAG_COLORS.reduce((best, c) => ((counts.get(c) || 0) < (counts.get(best) || 0) ? c : best), TAG_COLORS[0]);
+}
+
 router.post('/tags', requireOwner, async (req, res) => {
   const tag = cleanTag(req.body, false);
   const row = await db.tx(req.user.email, async q => q.one(
     'insert into tags (name, color, sort_order) values ($1, $2, $3) returning id, name, color, system_key, sort_order',
-    [tag.name, tag.color || 'slate', await nextTagOrder(q)]));
+    [tag.name, tag.color || await freeColor(q), await nextTagOrder(q)]));
   res.status(201).json(row);
 });
 
@@ -249,7 +256,7 @@ router.post('/inventory/import', requireOwner, async (req, res) => {
     const tagByName = new Map((await loadTags(q)).map(t => [t.name.toLowerCase(), t.id]));
     for (const name of new Set(rows.flatMap(r => r.tags))) {
       if (tagByName.has(name.toLowerCase())) continue;
-      const tag = await q.one('insert into tags (name, sort_order) values ($1, $2) returning id', [name, await nextTagOrder(q)]);
+      const tag = await q.one('insert into tags (name, color, sort_order) values ($1, $2, $3) returning id', [name, await freeColor(q), await nextTagOrder(q)]);
       tagByName.set(name.toLowerCase(), tag.id);
     }
 

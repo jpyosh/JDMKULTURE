@@ -198,12 +198,21 @@
 }
 
 /* Inventory tag colours: darker inks so tag names stay readable on white paper (4.5:1 or better). */
-:root[data-theme="editorial"] .c-slate{--tag:#56565a;}
 :root[data-theme="editorial"] .c-red{--tag:#b0262d;}
-:root[data-theme="editorial"] .c-orange{--tag:#9a4b05;}
+:root[data-theme="editorial"] .c-blue{--tag:#1f56b0;}
 :root[data-theme="editorial"] .c-amber{--tag:#7a5c00;}
 :root[data-theme="editorial"] .c-green{--tag:#1d6b34;}
-:root[data-theme="editorial"] .c-teal{--tag:#0b6577;}
-:root[data-theme="editorial"] .c-blue{--tag:#1f56b0;}
 :root[data-theme="editorial"] .c-violet{--tag:#6236b0;}
+:root[data-theme="editorial"] .c-orange{--tag:#9a4b05;}
+:root[data-theme="editorial"] .c-teal{--tag:#0b6577;}
 :root[data-theme="editorial"] .c-pink{--tag:#a3285f;}
+:root[data-theme="editorial"] .c-lime{--tag:#4d6b00;}
+:root[data-theme="editorial"] .c-indigo{--tag:#3a45b5;}
+:root[data-theme="editorial"] .c-coral{--tag:#a3401c;}
+:root[data-theme="editorial"] .c-mint{--tag:#0f6e52;}
+:root[data-theme="editorial"] .c-grape{--tag:#8a2aa8;}
+:root[data-theme="editorial"] .c-sky{--tag:#0a5f8a;}
+:root[data-theme="editorial"] .c-brown{--tag:#7a4e22;}
+:root[data-theme="editorial"] .c-rose{--tag:#a8233f;}
+:root[data-theme="editorial"] .c-olive{--tag:#5c5c10;}
+:root[data-theme="editorial"] .c-slate{--tag:#56565a;}

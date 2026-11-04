@@ -599,6 +599,25 @@ async function launch() {
       await page.waitForFunction(() => document.querySelectorAll('#view-inventory [data-sheet] tbody tr[data-item]').length === 3);
     });
 
+    await step('tags: every tag its own colour, picked from swatches', async () => {
+      const chipColours = () => page.evaluate(() => [...document.querySelectorAll('#view-inventory [data-tag-filter] .dot')]
+        .map(d => [...d.classList].find(c => c.startsWith('c-'))));
+      const colours = await chipColours();
+      assert.equal(new Set(colours).size, colours.length, `two tags share a colour: ${colours}`);
+
+      await inv.locator('[data-manage-tags]').click();
+      const row = page.locator('#modal [data-tag-row]').filter({ has: page.locator('input[value="Wash mitts"]') });
+      assert.ok(await row.locator('[data-swatch]').count() >= 18, 'at least 18 colours to pick from');
+      assert.equal(await row.locator('[data-swatch].used').count(), colours.length - 1, 'colours other tags use are marked');
+      await row.locator('[data-swatch="grape"]').click();
+      assert.match(await row.locator('[data-t-preview]').getAttribute('class'), /c-grape/, 'the preview follows the pick');
+      await row.locator('[data-t-save]').click();
+      await expectToast(/Tag saved/);
+      await page.click('#modal [data-close]');
+      await page.waitForFunction(() => [...document.querySelectorAll('#view-inventory [data-tag-filter]')]
+        .find(b => b.textContent.includes('Wash mitts'))?.querySelector('.dot.c-grape'));
+    });
+
     await step('inventory sheet: edit cells like Excel, a count records usage', async () => {
       // Type on a cell to replace it, Enter saves and moves down (sorted by name: Microfiber → Snow foam).
       await invCell('Microfiber 40x40', 'reorder_level').click();
