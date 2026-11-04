@@ -10,8 +10,8 @@ Auth, deployed on Vercel.
 |---|---|---|
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
-| Parts — auto parts for sale, over-the-counter sales | ✓ | ✓ (no costs) |
-| Inventory — everything stocked, tags, sheet view, counts, deliveries, Excel export/paste | edit | view + stock counts |
+| Parts — auto parts for sale, over-the-counter sales (labor, itemized) | ✓ | ✓ (no costs) |
+| Inventory — everything stocked, tags, simple list, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
@@ -51,6 +51,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Collected** = totals of paid jobs. **Receivables** = totals of unpaid jobs.
 - **Commission** = every counted job (detailers are paid at EOD either way).
 - **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
+- Money counts in the drawer or GCash on the day it was received: a running job's or a counter sale's
+  payment day (`paid_on`), otherwise the job's own day.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.
 - Expected GCash = GCash collected + tips − tips given to the crew − commission via GCash − GCash expenses.
 - **GCash tips** stay in GCash until someone gives them to the crew (EOD → "GCash tips given to crew", or the
@@ -135,22 +137,29 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Tags** group items (any number per item; owner adds, renames, recolours, deletes them). The built-in
   **Auto Parts** tag is what makes an item *for sale*: only those appear on the **Parts** tab and in a
   job's "+ Add part". It can be renamed but not deleted, and an item tagged with it needs a selling price.
-- **Sheet view** works like Excel: arrow keys move, typing replaces a cell, Enter saves and moves down,
-  Tab moves right, Escape cancels, double-click edits; click a column to sort; tag chips and search
-  filter. The Item column stays in view while scrolling sideways. **Cards** view for phones (the default
-  there until someone picks a view on that device).
+- Inventory and Parts are **simple lists**: each row shows the item's name (with its tags and any set),
+  its price and its stock, sorted by name; a search box and the tag chips filter. **Tap a row** for the
+  item's details (SKU, price, set, commission, average cost and value for the owner, stock, reorder level)
+  and its actions: Count (everyone), Receive, History and Edit (owner). Everything about an item is changed
+  in its Edit form.
 - **Export CSV** opens in Excel / Google Sheets (what is shown, costs only for the owner).
   **Paste from Excel** (owner): copy rows with their header row from Excel or Sheets; it shows a preview
   and any row errors, then adds all rows or none. Stock is added as opening stock at its cost; new tag
   names are created. It only adds new items (an existing name or SKU is refused); edit those in the sheet.
 - **Counting is how usage is tracked**: chemicals and supplies are not logged per job. Anyone (staff too)
   records what is on the shelf; the difference is recorded as **Used** (or Damaged / Lost, or a Recount
-  correction up or down). Typing in the Stock column opens the count, it never just overwrites the number.
+  correction up or down). A count never just overwrites the number.
 - **Receive** (owner) adds a delivery and updates the weighted average cost. **Paid with**: drawer cash,
   GCash or the cash fund records the amount as that day's expense (it shows on EOD as "from Inventory"
   and can only be undone from Inventory; the cash fund refuses more than it holds), or **Already paid /
-  opening stock** records no money. **Undo** in an item's history removes its latest delivery, with its
-  stock, average cost and expense.
+  opening stock** records no money. Each delivery has its own cost per unit and supplier (the same item from
+  another supplier at another price is just another delivery). **Undo** in an item's history removes its
+  latest delivery, with its stock, average cost and expense.
+- **Correct cost** (owner, any delivery in an item's history): for a delivery entered at the wrong price, e.g.
+  opening stock entered at ₱0. The average cost is worked out again from that delivery on (`replayAvgCost` in
+  `lib/calc.js`, previewed before saving), so later deliveries keep their weight and Undo still goes back
+  exactly; a paid delivery's expense follows (that day's EOD; a cash fund purchase already replenished must be
+  un-replenished first). Sales already made keep the cost they were sold at.
 - How Finance counts deliveries: a supply (not Auto Parts) is a cost on the day it is bought. An auto part
   bought to sell is stock: the money leaves the drawer (EOD, Finance money in/out), but its cost counts
   only as **cost of parts sold** when it sells, so it is never counted twice.
@@ -158,6 +167,20 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   counter on the Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
   A paid counter sale must say **Cash or GCash** (nothing is picked for them; the server refuses a paid sale
   without one). EOD's Cash drawer and GCash cards then show "from parts counter" on its own line.
+- On a new sale, a part's **price each** can be raised above its list price (a harder job, a pricier
+  source); never below it: lower the total with the Discount box. The list price in Inventory does not change.
+- **Labor** (new counter sale): typed per sale, since easy and hard installs differ. The customer pays it on top
+  of the parts and all of it is the installer's commission (a `labor` line: price = commission), so it shows in
+  EOD's commission. Once per sale. Migration 014 allows the `labor` line kind.
+- **Counter sales** show one box per sale, itemized: each item with its price (quantity × price each), labor,
+  any discount, then the total; the box is as tall as the sale. The Parts tab's search box covers the parts
+  list and the day's sales (JO#, items, sold by).
+- **Sold on credit** (Customer paid unticked): the sale shows **Unpaid** with a **Mark paid** button, and is
+  listed under "Unpaid from other days" whatever day the Parts tab is on. Mark paid asks the day and Cash or
+  GCash. The sale and its labor stay on the day it was made (Receivable there until paid, Collected after); the
+  money counts in the drawer or GCash on the **day it was paid** (`jobs.paid_on`), where EOD notes it as money
+  for earlier counter sales. **Undo payment** takes it back off that day. Same closed-day rules as other jobs.
+  Migration 015 lets a counter sale have `paid_on` (agreed 2026-11-04).
 - **Sets**: a part can also sell as a set (e.g. one bulb ₱2,000, a pair ₱3,500). Count stock in **pieces**
   (unit `pc`) and fill **Set of** (pieces per set) and **Set price** (and commission per set). "+ Add part"
   then offers both; a set line takes its pieces from the same stock, and removing, voiding or restoring it

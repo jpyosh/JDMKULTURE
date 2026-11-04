@@ -7,6 +7,17 @@ export function itemsSummary(job) {
     + (job.totals.discount ? `<span class="item-chip discount">−${peso(job.totals.discount)}</span>` : '');
 }
 
+// A sale itemized: each item with its price (parts sold by the piece show quantity × price each), then any
+// labor and discount, then the total. One line each, so the box is as tall as the sale.
+export function receipt(job) {
+  const line = (cls, name, detail, amount) => `<div class="receipt-line ${cls}">
+    <span class="receipt-name">${name}${detail ? ` <span class="muted">${detail}</span>` : ''}</span> <span class="money">${amount}</span></div>`;
+  const each = i => (i.kind === 'part' && Number(i.quantity) !== 1 ? `${Number(i.quantity)} × ${peso(i.price / i.quantity)}` : '');
+  return `<div class="receipt">${job.items.map(i => line(i.kind, esc(i.name), each(i), peso(i.price))).join('')}
+    ${job.totals.discount ? line('discount', 'Discount', esc(job.discount_reason || ''), `−${peso(job.totals.discount)}`) : ''}
+    ${line('total', 'Total', '', peso(job.totals.total))}</div>`;
+}
+
 const detail = (label, value, full) =>
   `<div class="review-detail${full ? ' full' : ''}"><span class="label">${esc(label)}</span><span class="value">${value}</span></div>`;
 

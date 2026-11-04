@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -58,6 +58,30 @@ test('parts counter money goes to the drawer or GCash it was paid with, and EOD 
   assert.deepEqual([s.partsCashReceived, s.partsGcashReceived], [450, 900], 'paid counter sales only, by how they were paid');
   assert.deepEqual([s.cashReceived, s.gcashReceived], [450 + 600, 900], 'still part of the drawer and GCash totals');
   assert.equal(s.expectedCash, 1000 + 1050 - s.commissionCash);
+});
+
+test('a counter sale paid on a later day: the sale stays on its day, the money counts on the day it was paid', () => {
+  const partLine = { kind: 'part', name: 'Wiper blade', quantity: 1, price: 2000, commission: 0, unit_cost: 1200 };
+  const labor = { kind: 'labor', name: 'Labor', price: 500, commission: 500 };
+  const sale = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', paid_on: '2026-12-04',
+    payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [partLine, labor] });
+  const sameDay = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-04', paid_on: '2026-12-04',
+    payment_received: true, payment_method: 'Cash', items: [{ ...partLine, price: 1000 }] });
+  const jobs = [sale, sameDay];
+
+  const saleDay = daySummary({ date: '2026-12-01', jobs, meta: { cash_float: 1000 } });
+  assert.deepEqual([saleDay.collected, saleDay.receivables, saleDay.commission], [2500, 0, 500], 'a sale of that day, now paid');
+  assert.deepEqual([saleDay.cashReceived, saleDay.gcashReceived, saleDay.jobTips], [0, 0, 0], 'but no money came in that day');
+  assert.equal(saleDay.paidLater, 2500);
+  assert.equal(saleDay.expectedCash, 1000 - 500);
+
+  const payDay = daySummary({ date: '2026-12-04', jobs, meta: { cash_float: 1000 } });
+  assert.deepEqual([payDay.collected, payDay.commission], [1000, 0], 'the earlier sale is not a sale again');
+  assert.deepEqual([payDay.gcashReceived, payDay.partsGcashReceived, payDay.cashReceived, payDay.jobTips], [2500, 2500, 1000, 50]);
+  assert.equal(payDay.earlierSalesPaid, 2500, 'shown on its own note');
+  assert.equal(payDay.paidLater, 0);
+  assert.equal(payDay.expectedGcash, 2500 + 50);
+  assert.equal(tipsOwed({ jobs, metas: [], before: '2026-12-05' }), 50, 'the tip came in on the day it was paid');
 });
 
 test('saleDate: carwash counts on its job date; running jobs when both closed and paid', () => {
@@ -213,4 +237,18 @@ test('daily sales report for the group chat: the boss\'s format, matching Oct 29
   // Centavos are shown only when there are any; commission paid via GCash comes off GCash.
   const odd = salesReport({ date, summary: daySummary({ date, jobs: [paid('GCash', 1000.5, 100)], meta: { commission_gcash_paid: 100 } }) });
   assert.equal(odd.text, 'October 29, 2026\nTotal of cars - 1\nTotal sales - 1,000.50\nLess comms - 100\nLess expenses - 0\nTotal net = 900.50\n\nCash - 0\nGcash - 900.50');
+});
+
+test('average cost replayed from a delivery: weighted by what is on the shelf at each delivery; sales and counts only move stock', () => {
+  const moves = [
+    { id: 1, kind: 'receive', quantity: 10, unit_cost: 800 },
+    { id: 2, kind: 'sale', quantity: -3, unit_cost: 0 },
+    { id: 3, kind: 'receive', quantity: 5, unit_cost: 900 },
+    { id: 4, kind: 'use', quantity: -12 },
+    { id: 5, kind: 'receive', quantity: 2, unit_cost: 1000 },
+  ];
+  const { avg, before } = replayAvgCost(0, 0, moves);
+  assert.equal(avg, 1000, 'an empty shelf takes the new cost');
+  assert.deepEqual(before, [{ id: 1, avg: 0 }, { id: 3, avg: 800 }, { id: 5, avg: 841.67 }], 'the average just before each delivery');
+  assert.equal(replayAvgCost(7, 500, moves.slice(2, 3)).avg, 666.67, 'starts from the stock and average before the first change');
 });
