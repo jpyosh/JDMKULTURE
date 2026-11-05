@@ -102,7 +102,7 @@ async function launch() {
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
-          'Finance', 'Cash fund', 'Payroll', 'Settings']);
+          'Analytics', 'Finance', 'Cash fund', 'Payroll', 'Settings']);
     });
 
     await step('design: system type, readable contrast, keyboard focus, reduced motion', async () => {
@@ -170,8 +170,8 @@ async function launch() {
       await dtTime.waitFor();
       assert.ok(minutesApart(await dtTime.inputValue(), await shopHHMM()) <= 1, 'detailing time in is now');
       // A job opened on an earlier day gets no automatic time.
-      await page.locator('#view-detailing [data-open-date]').fill('2026-09-14');
-      await page.locator('#view-detailing [data-open-date]').dispatchEvent('change');
+      await page.locator('#view-detailing [data-date]').fill('2026-09-14');
+      await page.locator('#view-detailing [data-date]').dispatchEvent('change');
       await page.waitForFunction(() => document.querySelector('#view-detailing [data-editor] [data-f="time_in"]').value === '');
       await page.click('#nav [data-view="carwash"]');
     });
@@ -308,7 +308,8 @@ async function launch() {
     await step('detailing: running job is carried over, paid, then done', async () => {
       await page.click('#nav [data-view="detailing"]');
       const editor = detailing.locator('[data-editor]');
-      await detailing.locator('[data-open-date]').fill(DAY);
+      await detailing.locator('[data-date]').fill(DAY);
+      await detailing.locator('[data-date]').dispatchEvent('change');
       const services = await editor.locator('[data-add="service"] option').allTextContents();
       assert.ok(services.includes('Paint Correction') && !services.includes('Premium Wash'), 'only detailing services offered');
       const addons = await editor.locator('[data-add="addon"] option').allTextContents();
@@ -362,6 +363,84 @@ async function launch() {
       await doneRow.locator('[data-act="restore"]').click();
       await expectToast(/restored/);
       await page.waitForFunction(() => !/VOID/.test(document.querySelector('#view-detailing [data-completed]').textContent));
+    });
+
+    await step('tint & PPF: carwash cards and form; a job is a sale on the day it is finished', async () => {
+      const tint = page.locator('#view-tint_ppf');
+      const editor = tint.locator('[data-editor]');
+      const TINT_DAY = '2026-08-20';
+      const metrics = async () => Object.fromEntries((await tint.locator('[data-metrics] .metric').evaluateAll(cards =>
+        cards.map(c => [c.querySelector('.label').textContent.trim(), c.querySelector('.value').textContent.trim()]))));
+      const setDay = async day => {
+        await tint.locator('[data-date]').fill(day);
+        await tint.locator('[data-date]').dispatchEvent('change');
+      };
+      const vehiclesCard = n => page.waitForFunction(want => document.querySelector('#view-tint_ppf [data-metrics] .metric .value')?.textContent.trim() === want, String(n));
+      await page.click('#nav [data-view="tint_ppf"]');
+      await editor.locator('[data-f="vehicle_class"]').waitFor();
+      await setDay(TINT_DAY);
+      await tint.locator('[data-completed-date]').fill('2026-08-01');
+      await tint.locator('[data-completed-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /08-01/.test(document.querySelector('#view-tint_ppf [data-metrics]').textContent));
+      assert.deepEqual(Object.keys(await metrics()),
+        ['Vehicles', 'Collected', 'Unpaid (all days)', 'Commission', 'Net (collected − comm.)', 'In progress', 'Completed since 08-01']);
+      assert.match(await tint.locator('[data-entry-date]').textContent(), /Aug 20, 2026/);
+
+      // Same form as carwash, plus Job done.
+      const addJob = async ({ plate, method, paid, done, tip }) => {
+        await editor.locator('[data-f="vehicle_class"]').selectOption('M');
+        await editor.locator('[data-f="plate"]').fill(plate);
+        await editor.locator('[data-add="addon"]').selectOption({ label: 'Engine Wash' });
+        await editor.locator('[data-f="payment_method"]').selectOption(method);
+        await editor.locator('[data-f="payment_received"]').setChecked(paid);
+        await editor.locator('[data-f="job_done"]').setChecked(done);
+        await editor.locator('[data-f="tip_gcash"]').fill(tip);
+        await tint.locator('[data-review]').click();
+        await page.waitForSelector('#modal[open]');
+        const text = await page.locator('#modal').textContent();
+        await page.click('#modal [data-confirm]');
+        await expectToast(/TP-082026-\d+ added/);
+        return text;
+      };
+
+      // Paid and done: goes straight to Completed and shows in the day's cards.
+      const review = await addJob({ plate: 'tnt 1', method: 'GCash', paid: true, done: true, tip: '50' });
+      assert.match(review, /GCash · paid/);
+      assert.match(review, /counts as a sale on Thu, Aug 20, 2026/i);
+      await tint.locator('[data-completed] tr', { hasText: 'TP-082026-001' }).waitFor();
+      assert.equal(await tint.locator('[data-active] tr', { hasText: 'TP-082026-001' }).count(), 0, 'not on the board');
+      await vehiclesCard(1);
+      const paidCards = await metrics();
+      assert.notEqual(paidCards.Collected, '₱0.00');
+      assert.equal(paidCards['Unpaid (all days)'], '₱0.00');
+
+      // Done, not paid: on the board, shows as Unpaid. Mark paid keeps the method and tip typed on the form.
+      await addJob({ plate: 'tnt 2', method: 'GCash', paid: false, done: true, tip: '75' });
+      const owed = tint.locator('[data-active] tr', { hasText: 'TP-082026-002' });
+      await owed.waitFor();
+      assert.match(await owed.textContent(), /awaiting payment/);
+      await vehiclesCard(2);
+      assert.notEqual((await metrics())['Unpaid (all days)'], '₱0.00');
+      await shot('05d-tint-board');
+      await owed.locator('[data-act="pay"]').click();
+      assert.equal(await page.inputValue('#modal [data-pay-method]'), 'GCash', 'the method picked on the form');
+      assert.equal(await page.inputValue('#modal [data-pay-tip]'), '75', 'the tip typed on the form is not lost');
+      assert.equal(await page.inputValue('#modal [data-pay-date]'), TINT_DAY, 'the payment day is the day open on the tab');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/i);
+      await tint.locator('[data-completed] tr', { hasText: 'TP-082026-002' }).waitFor();
+
+      // Paid, still in progress: the In progress card counts it.
+      await addJob({ plate: 'tnt 3', method: 'Cash', paid: true, done: false, tip: '' });
+      await page.waitForFunction(() => /Paid 08-20 · in progress/.test(document.querySelector('#view-tint_ppf [data-active]').textContent));
+      assert.equal((await metrics())['In progress'], '1');
+
+      // The arrows move the cards and the form's day, like Carwash; the Today button comes back.
+      await tint.locator('[data-shift="1"]').click();
+      await vehiclesCard(0);
+      assert.match(await tint.locator('[data-entry-date]').textContent(), /Aug 21, 2026/);
+      await tint.locator('[data-today]').click();
+      await page.waitForFunction(() => document.querySelector('#view-tint_ppf [data-date]').value !== '2026-08-21');
     });
 
     const eod = page.locator('#view-eod');
@@ -918,7 +997,7 @@ async function launch() {
       const partsGcash = eodView.locator('[data-gcash] .row-line', { hasText: 'parts counter' }).locator('.money');
       await partsGcash.waitFor();
       assert.equal((await partsGcash.textContent()).trim(), '₱550.00');
-      assert.match(await eodView.locator('[data-cash]').textContent(), /₱550\.00 received today is for counter sales made on earlier days/);
+      assert.match(await eodView.locator('[data-cash]').textContent(), /₱550\.00 received today is for jobs and counter sales from earlier days/);
       await page.click('#nav [data-view="parts"]');
     });
 
@@ -941,6 +1020,33 @@ async function launch() {
       const costs = colorOf(await page.locator('#view-reports .weekly-stat strong.amber-text').evaluate(el => getComputedStyle(el).color));
       assert.ok(isAmber(costs), `costs should read amber, got rgb(${costs.r},${costs.g},${costs.b})`);
       await shot('08-reports');
+    });
+
+    await step('analytics: daily, weekly, monthly and quarterly', async () => {
+      await page.click('#nav [data-view="analytics"]');
+      const view = page.locator('#view-analytics');
+      await view.locator('[data-date]').fill('2026-09-30');
+      await view.locator('[data-date]').dispatchEvent('change');
+      assert.deepEqual((await view.locator('[data-grain]').allTextContents()).map(t => t.trim()), ['Daily', 'Weekly', 'Monthly', 'Quarterly']);
+      for (const [grain, rows] of [['day', 14], ['week', 8], ['month', 6], ['quarter', 4]]) {
+        await view.locator(`[data-grain="${grain}"]`).click();
+        await page.waitForFunction(([g, n]) => {
+          const el = document.querySelector('#view-analytics');
+          return el.querySelector(`[data-grain="${g}"]`).classList.contains('active') && el.querySelectorAll('[data-rows] tr').length === n;
+        }, [grain, rows]);
+        assert.equal(await view.locator('[data-chart] [data-bar]').count(), rows, `${grain} has one bar per period`);
+      }
+      await view.locator('[data-grain="month"]').click();
+      await page.waitForFunction(() => /Sep 2026/.test(document.querySelector('#view-analytics [data-rows]').textContent));
+      const headers = (await view.locator('thead th').allTextContents()).map(t => t.trim());
+      for (const h of ['Period', 'Days with sales', 'Cars', 'Sales', 'Per day', 'Per car', 'Commission', 'Expenses', 'Payroll', 'Bills', 'Net profit']) {
+        assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
+      }
+      assert.equal(await view.locator('.weekly-stat').count(), 4);
+      assert.match(await view.locator('[data-help]').textContent(), /How to read/);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 0, `page scrolls sideways by ${overflow}px`);
+      await shot('08b-analytics');
     });
 
     const payroll = page.locator('#view-payroll');

@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -472,7 +472,7 @@ test('015 lets a counter sale record the day it was paid, without changing any j
     ('carwash', 'JO-031027-001', '2027-03-10', true, 'Cash')`);
   const before = await all(driver, 'select * from jobs order by id');
 
-  assert.deepEqual(await migrate(driver, quiet), ['015']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '015' }), ['015']);
   assert.deepEqual(await all(driver, 'select * from jobs order by id'), before, 'existing jobs are unchanged');
   const [unpaid, , wash] = before;
   await driver.query("update jobs set payment_received = true, paid_on = '2027-03-13' where id = $1", [unpaid.id]);
@@ -481,6 +481,38 @@ test('015 lets a counter sale record the day it was paid, without changing any j
   await assert.rejects(driver.query('update jobs set payment_received = false where id = $1', [unpaid.id]), /check/i, 'a pay day means paid');
   await assert.rejects(driver.query("update jobs set closed_on = '2027-03-13' where id = $1", [unpaid.id]), /check/i);
   await assert.rejects(driver.query("update jobs set paid_on = '2027-03-10' where id = $1", [wash.id]), /check/i, 'carwash keeps its Paid checkbox');
+});
+
+test('016 books a running job on the day it is finished, and changes nothing else', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '015' });
+  await driver.query(`insert into jobs (department, jo_number, job_date, closed_on, paid_on, payment_received, payment_method) values
+    ('detailing', 'DT-1', '2027-04-01', '2027-04-01', '2027-04-01', true, 'Cash'),
+    ('tint_ppf', 'TP-1', '2027-04-01', '2027-04-01', null, false, 'Cash'),
+    ('tint_ppf', 'TP-2', '2027-04-01', '2027-04-02', '2027-04-05', true, 'GCash'),
+    ('tint_ppf', 'TP-3', '2027-04-01', '2027-04-06', '2027-04-02', true, 'Cash'),
+    ('detailing', 'DT-2', '2027-04-01', null, '2027-04-01', true, 'Cash'),
+    ('detailing', 'DT-3', '2027-04-01', null, null, false, 'Cash'),
+    ('carwash', 'CW-1', '2027-04-01', null, null, true, 'Cash'),
+    ('parts', 'PC-1', '2027-04-01', null, '2027-04-03', true, 'Cash')`);
+  const rest = 'id, department, jo_number, job_date, closed_on, paid_on, payment_received, payment_method';
+  const before = await all(driver, `select ${rest} from jobs order by id`);
+
+  assert.deepEqual(await migrate(driver, quiet), ['016']);
+  assert.deepEqual(await all(driver, `select ${rest} from jobs order by id`), before, 'only the sale date is worked out differently');
+  assert.deepEqual((await all(driver, 'select jo_number, sale_date from jobs order by id')).map(j => [j.jo_number, j.sale_date]), [
+    ['DT-1', '2027-04-01'],
+    ['TP-1', '2027-04-01'], // finished, not paid yet: a sale of the finish day, still owed
+    ['TP-2', '2027-04-02'], // paid after it was finished: was 04-05
+    ['TP-3', '2027-04-06'], // paid before it was finished
+    ['DT-2', null], ['DT-3', null], // not finished: not a sale yet
+    ['CW-1', '2027-04-01'], ['PC-1', '2027-04-01'],
+  ]);
+  // Marking a job done now sets the sale date, and the board's index still exists.
+  const moved = await one(driver, "update jobs set closed_on = '2027-04-09' where jo_number = 'DT-3' returning sale_date");
+  assert.equal(moved.sale_date, '2027-04-09');
+  const indexes = (await all(driver, "select indexname from pg_indexes where tablename = 'jobs'")).map(i => i.indexname);
+  assert.ok(indexes.includes('jobs_sale_date_idx') && indexes.includes('jobs_active_running_idx'));
 });
 
 test('012 records the GCash tips given to the crew each day, leaving earlier days as they were', async () => {

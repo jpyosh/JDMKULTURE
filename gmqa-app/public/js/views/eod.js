@@ -276,8 +276,8 @@ function renderMath() {
   const notes = [];
   if (s.paidInAdvance) notes.push(`${peso(s.paidInAdvance)} received today is for running jobs that are not done yet. It is in today's count but becomes a sale when the job is done.`);
   if (s.paidEarlier) notes.push(`${peso(s.paidEarlier)} of today's sales were paid on an earlier day, so that money is not in today's count.`);
-  if (s.earlierSalesPaid) notes.push(`${peso(s.earlierSalesPaid)} received today is for counter sales made on earlier days. It is in today's count; the sales stay on their own days.`);
-  if (s.paidLater) notes.push(`${peso(s.paidLater)} of today's counter sales were paid on a later day, so that money is not in today's count.`);
+  if (s.earlierSalesPaid) notes.push(`${peso(s.earlierSalesPaid)} received today is for jobs and counter sales from earlier days. It is in today's count; the sales stay on their own days.`);
+  if (s.paidLater) notes.push(`${peso(s.paidLater)} of today's sales were paid on a later day, so that money is not in today's count.`);
   $('[data-cash]', root).insertAdjacentHTML('beforeend', notes.map(n => `<div class="hint mt">${esc(n)}</div>`).join(''));
 
   const variance = (key, expected) => {

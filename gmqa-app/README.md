@@ -14,6 +14,7 @@ Auth, deployed on Vercel.
 | Inventory — everything stocked, tags, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
+| Analytics — daily, weekly, monthly, quarterly trends | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
 | Settings — users & roles, vehicle classes, change history | ✓ | — |
 
@@ -30,17 +31,26 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 | Department | Tab | JO numbers | Counts as a sale |
 |---|---|---|---|
 | Carwash | Carwash | `CW-MMDDYY-###` | on the day it is entered (same-day) |
-| Detailing | Detailing | `DT-MMDDYY-###` | when it is both **marked done** and **paid**, on the later of the two days |
+| Detailing | Detailing | `DT-MMDDYY-###` | on the day it is **finished** (marked done), paid or not |
 | Tint & PPF | Tint & PPF | `TP-MMDDYY-###` | same as Detailing |
 
 - Detailing and Tint & PPF jobs are **running**: they stay on their board day after day until done and paid.
+- A new running job takes the same form as Carwash (Payment, Customer paid, GCash tip) plus **Job done**. The date
+  at the top picks the day, as on Carwash. Tick both and it is a sale that day and goes straight to Completed; tick
+  Customer paid only and the money counts that day while the job stays on the board; tick Job done only and it is
+  that day's sale, unpaid, until **Mark paid**. A job entered paid or done needs its day open.
+- The board's cards: **Vehicles, Collected, Commission, Net** are the picked day (the same as EOD). **Unpaid (all
+  days)** is what customers owe for finished jobs, **In progress** the jobs still being worked on, whatever the
+  day. **Completed since** is the total of the Completed list from its "finished since" date.
 - Every service belongs to one department (Pricing Matrix → department tabs) and is only offered there.
   Add-ons are shared: every add-on is offered on Carwash, Detailing and Tint & PPF jobs.
 - EOD and Sales Reports combine all departments and show each department's sales separately.
-- Money is counted the day it is received: a running job paid before it is finished is in that day's
-  drawer, while its sale and commission are booked on the day it is done.
+- Money is counted the day it is received, so the drawer matches what is really there: a running job paid before
+  it is finished is in that day's drawer, and one paid after it is finished is in the later day's drawer. Its sale
+  and commission are booked on the day it is done either way (agreed 2026-11-05, migration 016). A job finished and
+  not paid is that day's receivable, and its commission comes out of that day's drawer, like an unpaid carwash job.
 - Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
-- The board's **Completed** list shows every sale since a chosen day (default: the last 7 days), including
+- The board's **Completed** list shows every job done and paid, finished since a chosen day (default: the last 7 days), including
   any dated after today, so a finished job never drops out of sight. Completed jobs can still be edited,
   have their payment undone, be marked not done, or be voided by the owner.
 - Older `JO-` numbers from before departments existed are kept as they were.
@@ -113,6 +123,17 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Bills paid** (Finance) lists every bill paid in the period; **Undo** removes one recorded by mistake
   completely (fund, that day's drawer and profit go back). The audit log keeps a record of it.
 - Finance opens with a **How Finance works** guide for new users (it stays closed once someone closes it).
+
+## Analytics (owner)
+
+- **Daily / Weekly / Monthly / Quarterly** show the last 14 days, 8 pay weeks (Sunday to Saturday), 6 months or
+  4 calendar quarters up to the chosen day (`GET /analytics`, `periodBuckets` in `lib/calc.js`).
+- Every period uses the same math as Finance (`periodTotals` and `profitAndLoss` in `lib/calc.js`), so its sales,
+  costs and net profit always equal Finance for the same days. A test checks this for every period.
+- The period still running stops at the chosen day. It is compared with the one before **per day with sales** and
+  **per car**, never on its unfinished total.
+- **To check**: a day with carwash attendance (`P` or `0.5P`) and no sales. If the jobs were never entered, that
+  period's sales and profit are too low. Construction days are not flagged.
 
 ## Cash fund (abonos)
 

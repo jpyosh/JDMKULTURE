@@ -9,10 +9,11 @@
 //
 // Departments (agreed 2026-10-03):
 //   * Carwash jobs are same-day and count on their job date.
-//   * Detailing and Tint & PPF jobs are "running": they count (sale + commission) only on their
-//     sale date = the later of the day the work was closed and the day they were paid in full.
+//   * Detailing and Tint & PPF jobs are "running": they count (sale + commission) on the day the work is
+//     finished, paid or not (agreed 2026-11-05). Until it is paid, a finished job is that day's receivable.
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
-//     cash in that day's drawer, while its sale is booked on the sale date.
+//     cash in that day's drawer, and one paid after it is done puts it in the later day's drawer,
+//     while its sale stays on the finish day.
 //   * The same for a counter sale taken on credit and marked paid later (agreed 2026-11-04): the sale and
 //     its labor stay on the day it was made; the money counts on the day it was paid (paid_on).
 
@@ -29,9 +30,7 @@ const department = key => DEPARTMENTS.find(d => d.key === key) || null;
 const isRunning = job => Boolean(department(job.department || 'carwash')?.running);
 
 function saleDate(job) {
-  if (!isRunning(job)) return job.job_date;
-  if (!job.closed_on || !job.paid_on) return null;
-  return job.closed_on > job.paid_on ? job.closed_on : job.paid_on;
+  return isRunning(job) ? job.closed_on || null : job.job_date;
 }
 
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
@@ -128,11 +127,12 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   const counterReceived = received.filter(j => j.department === 'parts');
   const partsCashReceived = sum(counterReceived.filter(j => j.payment_method === 'Cash'), j => j.totals.total);
   const partsGcashReceived = round2(sum(counterReceived, j => j.totals.total) - partsCashReceived);
-  const paidInAdvance = sum(runningPaidToday.filter(j => saleDate(j) !== date), j => j.totals.total);
-  const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on !== date), j => j.totals.total);
-  // Counter sales taken on credit: today's sales paid on a later day, and earlier sales paid today.
-  const paidLater = sum(sales.filter(j => !isRunning(j) && j.payment_received && receivedDate(j) > date), j => j.totals.total);
-  const earlierSalesPaid = sum(received.filter(j => !isRunning(j) && saleDate(j) < date), j => j.totals.total);
+  // Running jobs paid before they were finished: today's money for later sales, and today's sales paid earlier.
+  const paidInAdvance = sum(runningPaidToday.filter(j => !saleDate(j) || saleDate(j) > date), j => j.totals.total);
+  const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on && j.paid_on < date), j => j.totals.total);
+  // Finished jobs and counter sales paid afterwards: today's sales paid on a later day, and earlier sales paid today.
+  const paidLater = sum(sales.filter(j => j.payment_received && receivedDate(j) > date), j => j.totals.total);
+  const earlierSalesPaid = sum(received.filter(j => saleDate(j) && saleDate(j) < date), j => j.totals.total);
 
   const cashExpenses = sum(expenses.filter(e => e.side === 'cash'), e => e.amount);
   const gcashExpenses = sum(expenses.filter(e => e.side === 'gcash'), e => e.amount);
@@ -400,10 +400,123 @@ function salesReport({ date, summary: s }) {
   return r;
 }
 
+// ---------------------------------------------------------------- periods (Finance and Analytics)
+
+// The EOD rules of each day in `dates`, added up. jobs, expenses and metas may cover more days than `dates`.
+function periodTotals({ dates, jobs, expenses, metas }) {
+  const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
+    cashIn: 0, gcashIn: 0, drawerExpenses: 0, fundExpenses: 0, partsBoughtDrawer: 0, partsBoughtFund: 0, vehicles: 0, salesDays: [] };
+  for (const day of dates) {
+    const s = daySummary({
+      date: day, jobs,
+      expenses: expenses.filter(e => e.expense_date === day),
+      meta: metas.find(m => m.job_date === day) || {},
+    });
+    for (const k of DEPARTMENT_KEYS) t.departments[k] += s.departments[k].collected;
+    t.gross += s.collected;
+    t.commission += s.commission;
+    t.receivables += s.receivables;
+    t.partsSales += s.partsSales;
+    t.partsCost += s.partsCost;
+    t.cashIn += s.cashReceived;
+    t.gcashIn += s.gcashReceived;
+    t.drawerExpenses += s.drawerExpenses;
+    t.fundExpenses += s.fundExpenses;
+    t.partsBoughtDrawer += s.partsBoughtDrawer;
+    t.partsBoughtFund += s.partsBoughtFund;
+    t.vehicles += s.vehicles;
+    if (s.vehicles) t.salesDays.push(day);
+  }
+  return t;
+}
+
+// Profit and loss of a period from periodTotals. payroll = net pay for work done in the period (cash
+// advances handed out from the drawer already appear under drawer expenses).
+function profitAndLoss(t, { payroll, billsTotal }) {
+  const r = round2;
+  const income = {
+    departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, r(t.departments[k])])),
+    gross: r(t.gross), commission: r(t.commission), net: r(t.gross - t.commission),
+    partsSales: r(t.partsSales), partsCost: r(t.partsCost), receivables: r(t.receivables),
+  };
+  const opex = {
+    payroll,
+    billsTotal,
+    // Parts bought to sell are stock, not a cost: their cost counts when sold (income.partsCost).
+    drawerExpenses: r(t.drawerExpenses - t.partsBoughtDrawer),
+    // Abonos bought with the cash fund: costs, but not money out of the drawer.
+    fundExpenses: r(t.fundExpenses - t.partsBoughtFund),
+    partsBought: r(t.partsBoughtDrawer + t.partsBoughtFund),
+  };
+  opex.total = r(opex.payroll + opex.billsTotal + opex.drawerExpenses + opex.fundExpenses);
+  return { income, opex, netProfit: r(income.net - income.partsCost - opex.total) };
+}
+
+// One row of Analytics. staffDays: days someone worked the carwash; such a day without sales may mean
+// the jobs were never entered, which would make the period's profit look too low.
+function analyticsRow(period, t, { payroll, billsTotal, staffDays }) {
+  const { income, opex, netProfit } = profitAndLoss(t, { payroll, billsTotal });
+  const salesDays = t.salesDays.length;
+  return {
+    ...period, salesDays, cars: t.vehicles,
+    staffNoSales: datesBetween(period.start, period.end).filter(d => staffDays.has(d) && !t.salesDays.includes(d)),
+    sales: income.gross, departments: income.departments, receivables: income.receivables,
+    commission: income.commission, expenses: round2(opex.drawerExpenses + opex.fundExpenses),
+    payroll: opex.payroll, bills: opex.billsTotal, partsCost: income.partsCost, netProfit,
+    perDay: salesDays ? round2(income.gross / salesDays) : 0,
+    perCar: t.vehicles ? round2(income.gross / t.vehicles) : 0,
+  };
+}
+
+// How many periods Analytics shows for each grain.
+const PERIOD_COUNTS = { day: 14, week: 8, month: 6, quarter: 4 };
+const SHORT_MONTHS = FULL_MONTHS.map(m => m.slice(0, 3));
+const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function sundayOf(date) {
+  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
+}
+
+// The whole period around `date`. Weeks are the Sunday-to-Saturday pay weeks; quarters are calendar quarters.
+function periodAround(grain, date) {
+  if (grain === 'day') return { start: date, end: date };
+  if (grain === 'week') return { start: sundayOf(date), end: addDays(sundayOf(date), 6) };
+  const [y, m] = date.split('-').map(Number);
+  const first = grain === 'month' ? m : Math.floor((m - 1) / 3) * 3 + 1;
+  const last = grain === 'month' ? m : first + 2;
+  return { start: `${y}-${pad2(first)}-01`, end: `${y}-${pad2(last)}-${pad2(lastDayOf(y, last))}` };
+}
+
+function periodLabel(grain, { start, end }) {
+  const [y, m, d] = start.split('-').map(Number);
+  if (grain === 'day') return `${SHORT_DAYS[new Date(`${start}T00:00:00Z`).getUTCDay()]}, ${SHORT_MONTHS[m - 1]} ${d}`;
+  if (grain === 'month') return `${SHORT_MONTHS[m - 1]} ${y}`;
+  if (grain === 'quarter') return `Q${Math.ceil(m / 3)} ${y}`;
+  const [, endMonth, endDay] = end.split('-').map(Number);
+  return `${SHORT_MONTHS[m - 1]} ${d}–${endMonth === m ? '' : `${SHORT_MONTHS[endMonth - 1]} `}${endDay}`;
+}
+
+// The last `count` periods up to and including `date`, oldest first. The one still running stops at
+// `date` and is marked partial, so it is never padded with days that have not happened.
+function periodBuckets(grain, date, count = PERIOD_COUNTS[grain]) {
+  const out = [];
+  let whole = periodAround(grain, date);
+  for (let i = 0; i < count; i += 1) {
+    const end = whole.end > date ? date : whole.end;
+    out.unshift({ label: periodLabel(grain, whole), start: whole.start, end, partial: end !== whole.end });
+    whole = periodAround(grain, addDays(whole.start, -1));
+  }
+  return out;
+}
+
+// Percent change to one decimal; null when there is nothing to compare with.
+const pctChange = (now, before) => (before ? Math.round((now - before) / before * 1000) / 10 : null);
+
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
+  periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS,
 };
