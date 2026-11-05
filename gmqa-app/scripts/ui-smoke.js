@@ -562,7 +562,16 @@ async function launch() {
         && /Closed by/.test(document.querySelector('#view-eod [data-status]').textContent));
       await eod.locator('[data-sales-report]').click();
       await expectToast(/copied/i);
-      const want = 'March 3, 2027\nTotal of cars - 1\nTotal sales - 300\nLess comms - 0\nLess expenses - 0\nTotal net = 300\n\nCash - 0\nGcash - 300';
+      const head = 'March 3, 2027\nTotal of cars - 1\nTotal sales - 300\nLess comms - 0\nLess expenses - 0\nTotal net = 300\n\n';
+      assert.equal(await page.inputValue('#modal[open] [data-report-text]'), `${head}Cash - not counted yet\nGcash - not counted yet`, 'nothing is made up before the count');
+      await page.click('#modal [data-close]');
+
+      // After the count: the amounts on screen go in the report, with each side's variance.
+      await eod.locator('[data-m="actual_cash"]').fill('50');
+      await eod.locator('[data-m="actual_gcash"]').fill('290');
+      await eod.locator('[data-sales-report]').click();
+      await expectToast(/copied/i);
+      const want = `${head}Cash - 50\nGcash - 290\nCash variance = +50\nGcash variance = -10`;
       assert.equal(await page.inputValue('#modal[open] [data-report-text]'), want, 'shown, so it can also be copied by hand');
       // The Windows clipboard hands line breaks back as \r\n.
       assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n'), want);
@@ -865,11 +874,17 @@ async function launch() {
 
     const partsView = page.locator('#view-parts');
     const partRow = name => partsView.locator('[data-parts] [data-part]', { hasText: name });
-    const saleCard = jo => partsView.locator('[data-counter] [data-sale]', { hasText: jo });
+    const partsEditor = partsView.locator('[data-editor]');
+    const activeRow = jo => partsView.locator('[data-active] tr', { hasText: jo });
+    const doneRow = jo => partsView.locator('[data-completed] tr', { hasText: jo });
+    const setPartsDay = async day => {
+      await partsView.locator('[data-date]').fill(day);
+      await partsView.locator('[data-date]').dispatchEvent('change');
+    };
     const partStockStarts = start => page.waitForFunction(s => [...document.querySelectorAll('#view-parts [data-part]')]
       .find(r => r.textContent.includes('Engine oil 1L'))?.querySelector('[data-stock]')?.textContent.trim().startsWith(s), start);
 
-    await step('parts: a simple list with search; counter sales with labor and a raised price, itemized', async () => {
+    await step('parts: a simple list with search; job orders with labor and a raised price, itemized', async () => {
       await page.click('#nav [data-view="parts"]');
       const row = partRow('Engine oil 1L');
       await row.waitFor();
@@ -882,62 +897,65 @@ async function launch() {
       assert.match(await page.textContent('#modal [data-panel]'), /OIL-1L[\s\S]*Avg cost\s*₱300\.00/);
       await page.click('#modal [data-close]');
 
-      await partsView.locator('[data-counter-date]').fill('2026-09-21');
-      await partsView.locator('[data-counter-date]').dispatchEvent('change');
-      await partsView.locator('[data-new-sale]').click();
-      await page.waitForSelector('#modal[open] [data-add="part"]');
-      assert.equal(await page.locator('#modal [data-add="service"]').count(), 0, 'no services at the parts counter');
-      await page.selectOption('#modal [data-add="part"]', { index: 1 });
-      await page.fill('#modal [data-l="quantity"]', '2');
-      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱1,100\.00/);
+      await setPartsDay('2026-09-21');
+      await partsView.locator('[data-completed-date]').fill('2026-09-01');
+      await partsView.locator('[data-completed-date]').dispatchEvent('change');
+      assert.equal(await partsEditor.locator('[data-add="service"]').count(), 0, 'no services at the parts counter');
+      assert.equal(await partsEditor.locator('[data-f="payment_received"]').isChecked(), false, 'a new job starts open and unpaid');
+      await partsEditor.locator('[data-add="part"]').selectOption({ index: 1 });
+      await partsEditor.locator('[data-l="quantity"]').fill('2');
+      assert.match(await partsEditor.locator('[data-totals]').textContent(), /Total\s*₱1,100\.00/);
       // A harder job: the price goes up on this sale (never below the list price), and labor is typed in.
-      await page.fill('#modal [data-l="unit_price"]', '500');
-      const payChoice = page.locator('#modal [data-pay-choice]');
-      await payChoice.locator('input[value="GCash"]').check();
-      await page.click('#modal [data-save]');
+      await partsEditor.locator('[data-l="unit_price"]').fill('500');
+      await partsEditor.locator('[data-pay-choice] input[value="GCash"]').check();
+      await partsView.locator('[data-review]').click();
       await expectToast(/at least ₱550\.00/);
-      await page.fill('#modal [data-l="unit_price"]', '600');
-      await page.fill('#modal [data-labor]', '300');
-      assert.match(await page.textContent('#modal [data-totals]'), /Subtotal\s*₱1,500\.00[\s\S]*Commission\s*₱300\.00[\s\S]*Total\s*₱1,500\.00/);
-      await shot('07c-parts-new-sale');
-      await page.click('#modal [data-save]');
+      await partsEditor.locator('[data-l="unit_price"]').fill('600');
+      await partsEditor.locator('[data-labor]').fill('300');
+      assert.match(await partsEditor.locator('[data-totals]').textContent(), /Subtotal\s*₱1,500\.00[\s\S]*Commission\s*₱300\.00[\s\S]*Total\s*₱1,500\.00/);
+      // A walk-in: paid and done at once.
+      await partsEditor.locator('[data-f="payment_received"]').check();
+      await partsEditor.locator('[data-f="job_done"]').check();
+      await shot('07c-parts-new-job');
+      await partsView.locator('[data-review]').click();
+      await page.waitForSelector('#modal[open] [data-confirm]');
+      assert.match(await page.textContent('#modal'), /counts as a sale on Mon, Sep 21, 2026/i);
+      await page.click('#modal [data-confirm]');
       await expectToast(/PC-092126-001 added/);
-      const sale = saleCard('PC-092126-001');
+      const sale = doneRow('PC-092126-001');
       await sale.waitFor();
-      assert.match(await sale.textContent(), /Paid/, 'counter sales default to paid (cash-and-carry)');
+      assert.equal(await activeRow('PC-092126-001').count(), 0, 'paid and done goes straight to Completed');
       assert.match(await sale.textContent(), /GCash/);
-      assert.doesNotMatch(await sale.textContent(), /Unpaid/);
       // Itemized: each item with its price, then labor, then the total.
       assert.deepEqual((await sale.locator('.receipt-line').allTextContents()).map(t => t.replace(/\s+/g, ' ').trim()),
         ['Engine oil 1L 2 × ₱600.00 ₱1,200.00', 'Labor ₱300.00', 'Total ₱1,500.00']);
       await partStockStarts('10');
 
       // The same part as a set: one case of 4 at the set price takes 4 bottles.
-      await partsView.locator('[data-new-sale]').click();
-      await page.waitForSelector('#modal[open] [data-add="part"]');
-      const setOption = await page.locator('#modal [data-add="part"] option', { hasText: 'set of 4' }).getAttribute('value');
-      await page.selectOption('#modal [data-add="part"]', setOption);
-      assert.match(await page.textContent('#modal [data-lines]'), /set of 4/);
-      assert.match(await page.textContent('#modal [data-totals]'), /Total\s*₱2,000\.00/);
-      await page.locator('#modal [data-pay-choice] input[value="Cash"]').check();
-      await page.click('#modal [data-save]');
+      const setOption = await partsEditor.locator('[data-add="part"] option', { hasText: 'set of 4' }).getAttribute('value');
+      await partsEditor.locator('[data-add="part"]').selectOption(setOption);
+      assert.match(await partsEditor.locator('[data-lines]').textContent(), /set of 4/);
+      assert.match(await partsEditor.locator('[data-totals]').textContent(), /Total\s*₱2,000\.00/);
+      await partsEditor.locator('[data-pay-choice] input[value="Cash"]').check();
+      await partsEditor.locator('[data-f="payment_received"]').check();
+      await partsEditor.locator('[data-f="job_done"]').check();
+      await partsView.locator('[data-review]').click();
+      await page.click('#modal [data-confirm]');
       await expectToast(/PC-092126-002 added/);
       await partStockStarts('6');
-      // Each sale's box is as tall as its lines.
-      const [two, one] = [await sale.boundingBox(), await saleCard('PC-092126-002').boundingBox()];
-      assert.ok(two.height > one.height, `a sale with more lines is taller (${two.height} vs ${one.height})`);
+      await doneRow('PC-092126-002').waitFor();
 
-      // One search box for the whole tab: parts and the day's sales.
+      // One search box for the whole tab: parts and the jobs.
       await partsView.locator('[data-search]').fill('labor');
-      await page.waitForFunction(() => document.querySelectorAll('#view-parts [data-sale]').length === 1);
-      assert.equal(await saleCard('PC-092126-001').count(), 1);
+      await page.waitForFunction(() => document.querySelectorAll('#view-parts [data-completed] tr[data-id]').length === 1);
+      assert.equal(await doneRow('PC-092126-001').count(), 1);
       await partsView.locator('[data-search]').fill('snow');
-      await page.waitForFunction(() => !document.querySelector('#view-parts [data-part]') && !document.querySelector('#view-parts [data-sale]'));
+      await page.waitForFunction(() => !document.querySelector('#view-parts [data-part]') && !document.querySelector('#view-parts [data-completed] tr[data-id]'));
       await partsView.locator('[data-search]').fill('');
-      await page.waitForFunction(() => document.querySelectorAll('#view-parts [data-sale]').length === 2);
+      await page.waitForFunction(() => document.querySelectorAll('#view-parts [data-completed] tr[data-id]').length === 2);
       await shot('07c-parts');
 
-      // EOD puts each counter sale in the drawer or GCash it was paid with, on its own line; the labor is commission.
+      // EOD puts each job in the drawer or GCash it was paid with, on its own line; the labor is commission.
       await page.click('#nav [data-view="eod"]');
       const eodView = page.locator('#view-eod');
       await eodView.locator('[data-date]').fill('2026-09-21');
@@ -949,55 +967,88 @@ async function launch() {
       await page.click('#nav [data-view="parts"]');
     });
 
-    await step('parts: a sale taken on credit is marked paid on the day the customer pays', async () => {
-      const setCounterDate = async d => {
-        await partsView.locator('[data-counter-date]').fill(d);
-        await partsView.locator('[data-counter-date]').dispatchEvent('change');
-      };
-      await setCounterDate('2026-09-22');
-      await partsView.locator('[data-new-sale]').click();
-      await page.waitForSelector('#modal[open] [data-add="part"]');
-      await page.selectOption('#modal [data-add="part"]', { index: 1 });
-      await page.uncheck('#modal [data-f="payment_received"]');
-      await page.click('#modal [data-save]');
-      await expectToast(/PC-092226-001 added/);
-      const sale = saleCard('PC-092226-001');
-      await sale.waitFor();
-      assert.match(await sale.textContent(), /Unpaid/);
-      assert.equal(await sale.locator('[data-act="pay"]').count(), 1, 'an unpaid sale has Mark paid');
+    await step('parts: an open job stays for days; commission on the day it is done, money on the day it is paid', async () => {
+      const metrics = async () => Object.fromEntries((await partsView.locator('[data-metrics] .metric').evaluateAll(cards =>
+        cards.map(c => [c.querySelector('.label').textContent.trim(), c.querySelector('.value').textContent.trim()]))));
+      const vehiclesCard = n => page.waitForFunction(want => document.querySelector('#view-parts [data-metrics] .metric .value')?.textContent.trim() === want, String(n));
 
-      // Three days later the customer pays: the sale is listed as owing whatever day is open.
-      await setCounterDate('2026-09-23');
-      const owing = partsView.locator('[data-owing] [data-sale]', { hasText: 'PC-092226-001' });
-      await owing.waitFor();
-      assert.match(await partsView.locator('[data-owing]').textContent(), /Unpaid[\s\S]*Sep 22[\s\S]*₱550\.00/);
-      await partsView.locator('[data-owing]').scrollIntoViewIfNeeded();
-      await shot('07c-parts-owing');
-      await owing.locator('[data-act="pay"]').click();
+      // Monday: opened with labor, nothing ticked. The part is held, nothing counts yet.
+      await setPartsDay('2026-09-22');
+      await vehiclesCard(0);
+      assert.deepEqual(Object.keys(await metrics()).slice(0, 6), ['Vehicles', 'Collected', 'Unpaid (all days)', 'Commission', 'Net (collected − comm.)', 'In progress']);
+      await partsEditor.locator('[data-add="part"]').selectOption({ index: 1 });
+      await partsEditor.locator('[data-labor]').fill('200');
+      await partsView.locator('[data-review]').click();
+      await page.waitForSelector('#modal[open] [data-confirm]');
+      assert.match(await page.textContent('#modal'), /stays on the board/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/PC-092226-001 added/);
+      const job = activeRow('PC-092226-001');
+      await job.waitFor();
+      assert.match(await job.textContent(), /In progress/);
+      await partStockStarts('5');
+      await page.waitForFunction(() => /In progress\s*1/.test(document.querySelector('#view-parts [data-metrics]').innerText));
+      assert.equal((await metrics()).Commission, '₱0.00', 'no commission until the job is done');
+      await shot('07c-parts-open-job');
+
+      // The install turns out harder: Edit changes the labor.
+      await job.locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-labor]');
+      assert.equal(await page.inputValue('#modal [data-labor]'), '200');
+      await page.fill('#modal [data-labor]', '250');
+      await page.click('#modal [data-save]');
+      await expectToast(/PC-092226-001 saved/);
+      await page.waitForFunction(() => /₱800\.00/.test(document.querySelector('#view-parts [data-active]').textContent));
+
+      // Wednesday: marked done. Its sale and commission are that day's, still unpaid.
+      await setPartsDay('2026-09-23');
+      await vehiclesCard(0);
+      await job.locator('[data-act="complete"]').click();
+      await page.waitForSelector('#modal[open] [data-done-date]');
+      assert.equal(await page.inputValue('#modal [data-done-date]'), '2026-09-23', 'the done day is the day open on the tab');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/marked done/);
+      await vehiclesCard(1);
+      const doneCards = await metrics();
+      assert.deepEqual([doneCards.Commission, doneCards['Unpaid (all days)'], doneCards.Collected], ['₱250.00', '₱800.00', '₱0.00']);
+      assert.match(await job.textContent(), /awaiting payment/);
+      // Every action button must be fully visible, with the itemized job and the longest status in the row,
+      // also on a narrower laptop screen.
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const clipped = await page.evaluate(() => {
+        const wrap = document.querySelector('#view-parts [data-active]').closest('.table-wrap').getBoundingClientRect();
+        return [...document.querySelectorAll('#view-parts [data-active] [data-act]')]
+          .filter(el => { const r = el.getBoundingClientRect(); return r.right > wrap.right + 1 || r.left < wrap.left - 1; })
+          .map(el => el.textContent.trim() || el.title);
+      });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      assert.deepEqual(clipped, [], 'parts board action buttons are clipped');
+
+      // Friday: the customer pays. Cash or GCash must be picked.
+      await setPartsDay('2026-09-25');
+      await vehiclesCard(0);
+      await job.locator('[data-act="pay"]').click();
       await page.waitForSelector('#modal[open] [data-pay-date]');
-      assert.equal(await page.inputValue('#modal [data-pay-date]'), '2026-09-23', 'the payment day is the day open on the tab');
+      assert.equal(await page.inputValue('#modal [data-pay-date]'), '2026-09-25', 'the payment day is the day open on the tab');
       await page.click('#modal [data-confirm]');
       await expectToast(/Choose Cash or GCash/);
       await page.locator('#modal [data-pay-method] input[value="GCash"]').check();
       await shot('07c-parts-mark-paid');
       await page.click('#modal [data-confirm]');
-      await expectToast(/PC-092226-001 paid/);
-      await page.waitForFunction(() => !document.querySelector('#view-parts [data-owing] [data-sale]'));
+      await expectToast(/payment recorded/);
+      await doneRow('PC-092226-001').waitFor();
+      assert.equal(await activeRow('PC-092226-001').count(), 0);
+      assert.equal(await doneRow('PC-092226-001').locator('[data-act="unpay"]').count(), 1, 'a payment can be undone');
 
-      await setCounterDate('2026-09-22');
-      await sale.waitFor();
-      assert.match(await sale.textContent(), /GCash · Paid Sep 23/);
-      assert.equal(await sale.locator('[data-act="unpay"]').count(), 1, 'a payment can be undone');
-
-      // The money is in Sep 23's GCash, with a note saying which day's sale it was for.
+      // The money is in Friday's GCash, with a note saying it was for an earlier day.
       await page.click('#nav [data-view="eod"]');
       const eodView = page.locator('#view-eod');
-      await eodView.locator('[data-date]').fill('2026-09-23');
+      await eodView.locator('[data-date]').fill('2026-09-25');
       await eodView.locator('[data-date]').dispatchEvent('change');
       const partsGcash = eodView.locator('[data-gcash] .row-line', { hasText: 'parts counter' }).locator('.money');
       await partsGcash.waitFor();
-      assert.equal((await partsGcash.textContent()).trim(), '₱550.00');
-      assert.match(await eodView.locator('[data-cash]').textContent(), /₱550\.00 received today is for jobs and counter sales from earlier days/);
+      assert.equal((await partsGcash.textContent()).trim(), '₱800.00');
+      assert.match(await eodView.locator('[data-cash]').textContent(), /₱800\.00 received today is for jobs and counter sales from earlier days/);
       await page.click('#nav [data-view="parts"]');
     });
 
@@ -1689,9 +1740,9 @@ async function launch() {
       assert.equal(await page.locator('#view-pricing tbody input').count(), 0, 'staff sees prices read-only');
       // Staff can sell parts but do not see costs.
       await page.click('#nav [data-view="parts"]');
-      await page.locator('#view-parts [data-counter-date]').fill('2026-09-21');
-      await page.locator('#view-parts [data-counter-date]').dispatchEvent('change');
-      await saleCard('PC-092126-001').waitFor();
+      await page.locator('#view-parts [data-completed-date]').fill('2026-09-01');
+      await page.locator('#view-parts [data-completed-date]').dispatchEvent('change');
+      await doneRow('PC-092126-001').waitFor();
       assert.doesNotMatch(await partsView.textContent(), /cost/i, 'staff must not see part costs');
       await partRow('Engine oil 1L').click();
       await page.waitForSelector('#modal[open] [data-panel]');

@@ -1,10 +1,10 @@
-// Running job boards (Detailing, Tint & PPF). A job stays on the board, carried over day after day,
+// Running job boards (Detailing, Tint & PPF, Parts). A job stays on the board, carried over day after day,
 // until it is both marked done and paid. It counts in sales on the day it is finished. The date at the top
 // works like Carwash: it picks the day the cards show and the day a new job is entered on.
 import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, formatTime, prettyDate, loadCatalog, classLabel, isOwner,
   openModal, closeModal, modalHeader, departmentOf } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
-import { itemsSummary, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
+import { itemsSummary, receipt, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
 
 const daysBetween = (from, to) => Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000);
 
@@ -16,8 +16,21 @@ function status(job) {
   return '<span class="status-pill progress">In progress</span>';
 }
 
-export function createRunningView(department) {
+// opts: title, desc, entryTitle, activeTitle replace the default wording. lead and tail are extra HTML above the board
+// and below it. matches(job) filters what the tables show (the cards never change with it). onChange runs before a
+// reload, after anything that may have moved stock.
+export function createRunningView(department, opts = {}) {
   const dept = departmentOf(department);
+  const title = opts.title || dept.label;
+  const shown = list => (opts.matches ? list.filter(opts.matches) : list);
+  // Parts are itemized, as a counter sale always was; the cost of parts is the owner's.
+  const itemsCell = j => (dept.catalog ? itemsSummary(j)
+    : `${receipt(j)}${isOwner() ? `<div class="muted small">Cost of parts ${peso(j.totals.cost)}</div>` : ''}`);
+  // Parts need no vehicle class, and the itemized box already ends with the total.
+  const classHead = dept.catalog ? '<th>Class</th>' : '';
+  const classCell = j => (dept.catalog ? `<td>${esc(classLabel(j.vehicle_class))}</td>` : '');
+  const totalHead = dept.catalog ? '<th class="num">Total</th>' : '';
+  const totalCell = j => (dept.catalog ? `<td class="num money">${peso(j.totals.total)}</td>` : '');
   let root;
   let editor = null;
   let active = [];
@@ -28,8 +41,8 @@ export function createRunningView(department) {
     root = el;
     root.innerHTML = `
       <div class="view-header">
-        <div><h1>${esc(dept.label)}</h1>
-          <div class="desc">Job orders stay here until they are done and paid. A job counts in sales on the day it is finished.</div></div>
+        <div><h1>${esc(title)}</h1>
+          <div class="desc">${esc(opts.desc || 'Job orders stay here until they are done and paid. A job counts in sales on the day it is finished.')}</div></div>
         <div class="date-nav">
           <button class="btn ghost" type="button" data-shift="-1" aria-label="Previous day">‹</button>
           <input type="date" data-date>
@@ -40,28 +53,30 @@ export function createRunningView(department) {
       <div data-banner></div>
       <div class="metrics-row" data-metrics></div>
       <div class="card" data-entry-card>
-        <div class="section-header"><h2>New ${esc(dept.label)} job</h2><span class="subtle-badge" data-entry-date></span></div>
+        <div class="section-header"><h2>${esc(opts.entryTitle || `New ${dept.label} job`)}</h2><span class="subtle-badge" data-entry-date></span></div>
         <div data-editor></div>
         <div class="entry-actions"><button class="btn ghost" type="button" data-clear>Clear</button><button class="btn" type="button" data-review>Review job</button></div>
       </div>
+      ${opts.lead || ''}
       <div class="card">
-        <div class="section-header"><h2>Active jobs</h2>
+        <div class="section-header"><h2>${esc(opts.activeTitle || 'Active jobs')}</h2>
           <label class="check owner-only"><input type="checkbox" data-show-voided> Show voided</label></div>
-        <div class="table-wrap"><table class="jobs-table running-table">
-          <thead><tr><th>JO#</th><th>Opened</th><th>Class</th><th>Plate</th><th>Items</th><th>Detailer</th>
-            <th class="num">Total</th><th class="num">Comm.</th><th>Status</th><th></th></tr></thead>
+        <div class="table-wrap"><table class="jobs-table running-table${dept.catalog ? '' : ' parts-board'}">
+          <thead><tr><th>JO#</th><th>Opened</th>${classHead}<th>Plate</th><th>Items</th><th>${dept.catalog ? 'Detailer' : 'Sold by'}</th>
+            ${totalHead}<th class="num">Comm.</th><th>Status</th><th></th></tr></thead>
           <tbody data-active></tbody>
         </table></div>
       </div>
       <div class="card">
         <div class="section-header"><h2>Completed (done and paid)</h2>
           <label class="inline-label">Show jobs finished since <input type="date" data-completed-date></label></div>
-        <div class="table-wrap"><table class="jobs-table running-table">
+        <div class="table-wrap"><table class="jobs-table running-table${dept.catalog ? '' : ' parts-board'}">
           <thead><tr><th>JO#</th><th>Opened</th><th>Done</th><th>Paid</th><th>Plate</th><th>Items</th>
-            <th class="num">Total</th><th class="num">Comm.</th><th class="num">Net</th><th></th></tr></thead>
+            ${totalHead}<th class="num">Comm.</th><th class="num">Net</th><th></th></tr></thead>
           <tbody data-completed></tbody>
         </table></div>
-      </div>`;
+      </div>
+      ${opts.tail || ''}`;
 
     $('[data-completed-date]', root).value = addDays(todayLocal(), -6);
     $('[data-date]', root).addEventListener('change', e => { if (e.target.value) setDate(e.target.value); });
@@ -90,10 +105,18 @@ export function createRunningView(department) {
     $('[data-date]', root).value = date;
     $('[data-entry-date]', root).textContent = prettyDate(date);
     editor?.syncTime();
-    await reload();
+    await loadBoard();
   }
 
-  const reload = () => Promise.all([loadDay(), loadActive(), loadCompleted()]);
+  const loadBoard = () => Promise.all([loadDay(), loadActive(), loadCompleted()]);
+
+  async function reload() {
+    if (opts.onChange) {
+      await opts.onChange();
+      if (!editor.lines().length) resetEditor(); // the form's stock figures are fresh again
+    }
+    await loadBoard();
+  }
 
   async function loadDay() {
     const date = current.date;
@@ -143,15 +166,16 @@ export function createRunningView(department) {
   function renderActive() {
     const tbody = $('[data-active]', root);
     const today = todayLocal();
-    tbody.innerHTML = active.length ? active.map(j => `
+    const rows = shown(active);
+    tbody.innerHTML = rows.length ? rows.map(j => `
       <tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''}">
         <td class="jo-number">${esc(j.jo_number)}${j.voided_at ? `<div class="void-note">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
         <td><div class="mono">${esc(j.job_date)}</div><div class="muted small">${j.time_in ? `${esc(formatTime(j.time_in))} · ` : ''}${daysBetween(j.job_date, today) === 0 ? 'today' : `${daysBetween(j.job_date, today)} day(s) ago`}</div></td>
-        <td>${esc(classLabel(j.vehicle_class))}</td>
+        ${classCell(j)}
         <td>${esc(j.plate || '—')}</td>
-        <td class="items-cell">${itemsSummary(j)}</td>
+        <td class="items-cell">${itemsCell(j)}</td>
         <td>${esc(j.detailer || '—')}</td>
-        <td class="num money">${peso(j.totals.total)}</td>
+        ${totalCell(j)}
         <td class="num money amber-text">${peso(j.totals.commission)}</td>
         <td>${status(j)}</td>
         <td class="row-actions"><div class="actions">${j.voided_at
@@ -164,22 +188,23 @@ export function createRunningView(department) {
              ${isOwner() ? '<button class="icon-btn" type="button" data-act="void" title="Void job">✕</button>' : ''}`}
           <button class="icon-btn" type="button" data-act="history" title="Change history">⟲</button></div></td>
       </tr>`).join('')
-      : `<tr><td colspan="10"><div class="empty-state">No active ${esc(dept.label)} jobs.</div></td></tr>`;
+      : `<tr><td colspan="${dept.catalog ? 10 : 8}"><div class="empty-state">${active.length ? 'No jobs match.' : `No active ${esc(title)} jobs.`}</div></td></tr>`;
     bindActions(tbody, active);
     renderMetrics();
   }
 
   function renderCompleted() {
     const tbody = $('[data-completed]', root);
-    tbody.innerHTML = completed.length ? completed.map(j => `
+    const rows = shown(completed);
+    tbody.innerHTML = rows.length ? rows.map(j => `
       <tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''}">
         <td class="jo-number">${esc(j.jo_number)}${j.voided_at ? `<div class="void-note">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
         <td class="mono">${esc(j.job_date)}</td><td class="mono">${esc(j.closed_on)}</td>
         <td class="mono">${esc(j.paid_on)} <span class="muted small">${esc(j.payment_method)}</span>${
           j.sale_date > todayLocal() ? '<div class="status-pill waiting">Dated after today</div>' : ''}</td>
         <td>${esc(j.plate || '—')}</td>
-        <td class="items-cell">${itemsSummary(j)}</td>
-        <td class="num money">${peso(j.totals.total)}</td>
+        <td class="items-cell">${itemsCell(j)}</td>
+        ${totalCell(j)}
         <td class="num money amber-text">${peso(j.totals.commission)}</td>
         <td class="num money pos">${peso(j.totals.net)}</td>
         <td class="row-actions"><div class="actions">${j.voided_at
@@ -190,7 +215,7 @@ export function createRunningView(department) {
              ${isOwner() ? '<button class="icon-btn" type="button" data-act="void" title="Void job">✕</button>' : ''}`}
           <button class="icon-btn" type="button" data-act="history" title="Change history">⟲</button></div></td>
       </tr>`).join('')
-      : '<tr><td colspan="10"><div class="empty-state">Nothing completed since this day.</div></td></tr>';
+      : `<tr><td colspan="${dept.catalog ? 10 : 9}"><div class="empty-state">${completed.length ? 'No jobs match.' : 'Nothing completed since this day.'}</div></td></tr>`;
     bindActions(tbody, completed);
     renderMetrics();
   }
@@ -220,24 +245,34 @@ export function createRunningView(department) {
     await reload();
   }
 
+  // Parts ask Cash or GCash every time, with nothing picked for them.
   function payModal(job) {
+    const method = dept.catalog
+      ? `<div><label>Method</label><select data-pay-method>${['Cash', 'GCash'].map(p => `<option ${p === job.payment_method ? 'selected' : ''}>${p}</option>`).join('')}</select></div>`
+      : `<fieldset class="choice-group pay-choice" data-pay-method><legend>Paid with</legend>
+          ${['Cash', 'GCash'].map(p => `<label><input type="radio" name="board-pay" value="${p}"> ${p}</label>`).join('')}</fieldset>`;
     openModal(`${modalHeader(`Mark ${job.jo_number} paid`, `Full payment of ${peso(job.totals.total)}. The money counts in the drawer on the payment date.`)}
-      <div class="form-grid modal-form-grid">
+      ${dept.catalog ? '' : receipt(job)}
+      <div class="form-grid modal-form-grid${dept.catalog ? '' : ' mt'}">
         <div><label>Payment date</label><input type="date" data-pay-date value="${current.date}"></div>
-        <div><label>Method</label><select data-pay-method>${['Cash', 'GCash'].map(p => `<option ${p === job.payment_method ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+        ${method}
         <div><label>GCash tip</label><input type="number" min="0" step="0.01" data-pay-tip value="${job.tip_gcash || ''}" placeholder="0.00"></div>
       </div>
       <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Record payment</button></div>`,
-    card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
-      await api('POST', `/jobs/${job.id}/pay`, {
-        date: $('[data-pay-date]', card).value,
-        payment_method: $('[data-pay-method]', card).value,
-        tip_gcash: Number($('[data-pay-tip]', card).value || 0),
+    card => $('[data-confirm]', card).addEventListener('click', e => {
+      const paidWith = dept.catalog ? $('[data-pay-method]', card).value : $('[data-pay-method] input:checked', card)?.value;
+      if (!paidWith) return toast('Choose Cash or GCash', 'error');
+      busy(e.currentTarget, async () => {
+        await api('POST', `/jobs/${job.id}/pay`, {
+          date: $('[data-pay-date]', card).value,
+          payment_method: paidWith,
+          tip_gcash: Number($('[data-pay-tip]', card).value || 0),
+        });
+        closeModal();
+        toast(`${job.jo_number}: payment recorded`);
+        await reload();
       });
-      closeModal();
-      toast(`${job.jo_number}: payment recorded`);
-      await reload();
-    })));
+    }));
   }
 
   function completeModal(job) {
@@ -254,7 +289,7 @@ export function createRunningView(department) {
     })));
   }
 
-  return { mount, show };
+  return { mount, show, render: () => { renderActive(); renderCompleted(); } };
 }
 
 export const detailing = createRunningView('detailing');

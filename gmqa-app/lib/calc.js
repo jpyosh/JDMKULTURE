@@ -9,13 +9,11 @@
 //
 // Departments (agreed 2026-10-03):
 //   * Carwash jobs are same-day and count on their job date.
-//   * Detailing and Tint & PPF jobs are "running": they count (sale + commission) on the day the work is
-//     finished, paid or not (agreed 2026-11-05). Until it is paid, a finished job is that day's receivable.
+//   * Detailing, Tint & PPF and parts jobs are "running": they count (sale + commission) on the day the work
+//     is finished, paid or not (agreed 2026-11-05). Until it is paid, a finished job is that day's receivable.
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
 //     cash in that day's drawer, and one paid after it is done puts it in the later day's drawer,
 //     while its sale stays on the finish day.
-//   * The same for a counter sale taken on credit and marked paid later (agreed 2026-11-04): the sale and
-//     its labor stay on the day it was made; the money counts on the day it was paid (paid_on).
 
 // catalog: whether the department sells Pricing Matrix services/add-ons (the parts counter sells
 // inventory parts only, and needs no vehicle).
@@ -23,7 +21,7 @@ const DEPARTMENTS = [
   { key: 'carwash', label: 'Carwash', prefix: 'CW', running: false, catalog: true },
   { key: 'detailing', label: 'Detailing', prefix: 'DT', running: true, catalog: true },
   { key: 'tint_ppf', label: 'Tint & PPF', prefix: 'TP', running: true, catalog: true },
-  { key: 'parts', label: 'Parts counter', prefix: 'PC', running: false, catalog: false },
+  { key: 'parts', label: 'Parts counter', prefix: 'PC', running: true, catalog: false },
 ];
 const DEPARTMENT_KEYS = DEPARTMENTS.map(d => d.key);
 const department = key => DEPARTMENTS.find(d => d.key === key) || null;
@@ -79,10 +77,9 @@ function salesFigures(jobs) {
   };
 }
 
-// The day a job's money came in: a running job's payment day; a carwash or counter sale paid when it was
-// made, its own day; a counter sale taken on credit and marked paid later (paid_on), that later day.
+// The day a job's money came in: a running job's payment day; a paid carwash job, its own day.
 // The sale itself (and its commission) stays on its sale date either way.
-const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? (j.paid_on || saleDate(j)) : null);
+const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? saleDate(j) : null);
 // Money in on `date`.
 const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j) && receivedDate(j) === date);
 
@@ -130,7 +127,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   // Running jobs paid before they were finished: today's money for later sales, and today's sales paid earlier.
   const paidInAdvance = sum(runningPaidToday.filter(j => !saleDate(j) || saleDate(j) > date), j => j.totals.total);
   const paidEarlier = sum(sales.filter(j => isRunning(j) && j.paid_on && j.paid_on < date), j => j.totals.total);
-  // Finished jobs and counter sales paid afterwards: today's sales paid on a later day, and earlier sales paid today.
+  // Jobs paid after they were finished: today's sales paid on a later day, and earlier sales paid today.
   const paidLater = sum(sales.filter(j => j.payment_received && receivedDate(j) > date), j => j.totals.total);
   const earlierSalesPaid = sum(received.filter(j => saleDate(j) && saleDate(j) < date), j => j.totals.total);
 
@@ -380,11 +377,16 @@ function salesReport({ date, summary: s }) {
     commission: s.commission,
     expenses: round2(s.cashExpenses + s.gcashExpenses),
     net: round2(s.collected - s.commission - s.cashExpenses - s.gcashExpenses),
-    cash: round2(s.cashReceived - s.commissionCash - s.cashExpenses),
-    gcash: round2(s.gcashReceived - s.commissionGcash - s.gcashExpenses),
+    // What was really counted at EOD (the cash includes the float, as the drawer does), and how far off each side is.
+    cash: s.actualCash == null ? null : round2(s.actualCash),
+    gcash: s.actualGcash == null ? null : round2(s.actualGcash),
+    cashVariance: s.cashVariance,
+    gcashVariance: s.gcashVariance,
   };
   // Centavos only when there are any; the Cash and Gcash lines are written without a thousands comma.
   const num = (n, comma = true) => n.toLocaleString('en-US', { useGrouping: comma, minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+  const counted = n => (n == null ? 'not counted yet' : num(n, false));
+  const variance = (label, n) => (n == null ? [] : [`${label} variance = ${n > 0 ? '+' : ''}${num(n)}`]);
   const [y, m, d] = date.split('-').map(Number);
   r.text = [
     `${FULL_MONTHS[m - 1]} ${d}, ${y}`,
@@ -394,8 +396,10 @@ function salesReport({ date, summary: s }) {
     `Less expenses - ${num(r.expenses)}`,
     `Total net = ${num(r.net)}`,
     '',
-    `Cash - ${num(r.cash, false)}`,
-    `Gcash - ${num(r.gcash, false)}`,
+    `Cash - ${counted(r.cash)}`,
+    `Gcash - ${counted(r.gcash)}`,
+    ...variance('Cash', r.cashVariance),
+    ...variance('Gcash', r.gcashVariance),
   ].join('\n');
   return r;
 }

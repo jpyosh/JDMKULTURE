@@ -379,7 +379,7 @@ async function copySalesReport() {
   let copied = false;
   try { await navigator.clipboard.writeText(text); copied = true; } catch { /* shown below to copy by hand */ }
   openModal(`${modalHeader('Sales report', copied ? 'Copied. Paste it in the group chat.' : 'Select the text and copy it.', prettyDate(current.date))}
-    <textarea class="report-text" data-report-text readonly rows="9">${esc(text)}</textarea>
+    <textarea class="report-text" data-report-text readonly rows="12">${esc(text)}</textarea>
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Close</button>
       <button class="btn" type="button" data-copy-again>Copy again</button></div>`, card => {
     $('[data-copy-again]', card).addEventListener('click', async () => {

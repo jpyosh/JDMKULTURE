@@ -368,6 +368,9 @@ th.num{text-align:right;}
 .time-cell small{color:var(--muted);font-size:11px;}
 .items-cell{max-width:320px;white-space:normal;}
 .running-table .items-cell{max-width:220px;}
+.running-table .items-cell .receipt{min-width:200px;}
+.parts-board .status-pill{white-space:normal;max-width:130px;}
+.parts-board .row-actions .actions{grid-template-columns:auto;justify-items:stretch;}
 .void-note{font-size:11px;color:var(--accent-text);max-width:140px;white-space:normal;}
 .row-actions{white-space:nowrap;text-align:right;}
 .row-actions .actions{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;align-items:center;min-width:200px;}

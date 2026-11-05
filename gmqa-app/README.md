@@ -10,7 +10,7 @@ Auth, deployed on Vercel.
 |---|---|---|
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
-| Parts — auto parts for sale, over-the-counter sales (labor, itemized) | ✓ | ✓ (no costs) |
+| Parts — job orders (open, done, paid; labor, itemized) and the auto parts for sale | ✓ | ✓ (no costs) |
 | Inventory — everything stocked, tags, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
@@ -33,8 +33,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 | Carwash | Carwash | `CW-MMDDYY-###` | on the day it is entered (same-day) |
 | Detailing | Detailing | `DT-MMDDYY-###` | on the day it is **finished** (marked done), paid or not |
 | Tint & PPF | Tint & PPF | `TP-MMDDYY-###` | same as Detailing |
+| Parts counter | Parts | `PC-MMDDYY-###` | same as Detailing |
 
-- Detailing and Tint & PPF jobs are **running**: they stay on their board day after day until done and paid.
+- Detailing, Tint & PPF and parts jobs are **running**: they stay on their board day after day until done and paid.
+  A job's commission (a parts job's labor too) is paid out on the day it is marked done, whether or not the customer has paid.
 - A new running job takes the same form as Carwash (Payment, Customer paid, GCash tip) plus **Job done**. The date
   at the top picks the day, as on Carwash. Tick both and it is a sale that day and goes straight to Completed; tick
   Customer paid only and the money counts that day while the job stays on the board; tick Job done only and it is
@@ -71,8 +73,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   Days before Thu Oct 29, 2026 keep the old rule (tips given out the same day), so their numbers do not change.
 - **Copy sales report** (EOD) copies the day's report for the group chat in the boss's format: date, total of cars
   (paid or not), total sales (paid), less comms, less expenses (drawer cash + GCash, not the cash fund), total net,
-  then Cash and Gcash (each side's money in less the commission and expenses paid from it). Float, tips and payroll
-  payouts are left out (`salesReport` in `lib/calc.js`).
+  then Cash and Gcash as **actually counted** at EOD (the drawer count includes the float) and each side's variance
+  (+ over, - short). A side not counted yet says so and has no variance (`salesReport` in `lib/calc.js`).
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
 - Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
@@ -189,24 +191,26 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - How Finance counts deliveries: a supply (not Auto Parts) is a cost on the day it is bought. An auto part
   bought to sell is stock: the money leaves the drawer (EOD, Finance money in/out), but its cost counts
   only as **cost of parts sold** when it sells, so it is never counted twice.
-- Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold over the
-  counter on the Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed, defaults to paid).
-  A paid counter sale must say **Cash or GCash** (nothing is picked for them; the server refuses a paid sale
+- Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold as a job order on the
+  Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed). A part can stay for days until it is
+  installed, so the tab is a running board with the same cards, date arrows and form as Tint & PPF. A walk-in ticks
+  Customer paid and Job done and is finished at once; an install stays open. The part leaves stock when the job is
+  opened, so it cannot be sold twice; voiding puts it back. Migration 017 made every older counter sale a finished
+  job on its own day, so no day's numbers changed.
+  A paid parts job must say **Cash or GCash** (nothing is picked for them; the server refuses a paid job
   without one). EOD's Cash drawer and GCash cards then show "from parts counter" on its own line.
 - On a new sale, a part's **price each** can be raised above its list price (a harder job, a pricier
   source); never below it: lower the total with the Discount box. The list price in Inventory does not change.
-- **Labor** (new counter sale): typed per sale, since easy and hard installs differ. The customer pays it on top
-  of the parts and all of it is the installer's commission (a `labor` line: price = commission), so it shows in
-  EOD's commission. Once per sale. Migration 014 allows the `labor` line kind.
-- **Counter sales** show one box per sale, itemized: each item with its price (quantity × price each), labor,
-  any discount, then the total; the box is as tall as the sale. The Parts tab's search box covers the parts
-  list and the day's sales (JO#, items, sold by).
-- **Sold on credit** (Customer paid unticked): the sale shows **Unpaid** with a **Mark paid** button, and is
-  listed under "Unpaid from other days" whatever day the Parts tab is on. Mark paid asks the day and Cash or
-  GCash. The sale and its labor stay on the day it was made (Receivable there until paid, Collected after); the
-  money counts in the drawer or GCash on the **day it was paid** (`jobs.paid_on`), where EOD notes it as money
-  for earlier counter sales. **Undo payment** takes it back off that day. Same closed-day rules as other jobs.
-  Migration 015 lets a counter sale have `paid_on` (agreed 2026-11-04).
+- **Labor** (parts jobs): typed per job, since easy and hard installs differ, and it can be changed with **Edit**
+  until the job is paid. The customer pays it on top of the parts and all of it is the installer's commission (a
+  `labor` line: price = commission), so it shows in EOD's commission on the day the job is done. Once per job.
+  Migration 014 allows the `labor` line kind.
+- **Parts jobs** are itemized on the board: each item with its price (quantity × price each), labor, any discount,
+  then the total. The Parts tab's search box covers the parts list and the jobs (JO#, items, plate, sold by).
+- **Paid later**: a parts job finished and not paid stays on the board with a **Mark paid** button, which asks the
+  day and Cash or GCash. The sale and its labor stay on the day it was done (Receivable there until paid, Collected
+  after); the money counts in the drawer or GCash on the **day it was paid** (`jobs.paid_on`), where EOD notes it as
+  money for earlier jobs. **Undo payment** takes it back off that day. Same closed-day rules as other jobs.
 - **Sets**: a part can also sell as a set (e.g. one bulb ₱2,000, a pair ₱3,500). Count stock in **pieces**
   (unit `pc`) and fill **Set of** (pieces per set) and **Set price** (and commission per set). "+ Add part"
   then offers both; a set line takes its pieces from the same stock, and removing, voiding or restoring it
