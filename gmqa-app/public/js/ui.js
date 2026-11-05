@@ -161,7 +161,7 @@ export const DEPARTMENTS = [
   { key: 'carwash', label: 'Carwash', running: false, catalog: true },
   { key: 'detailing', label: 'Detailing', running: true, catalog: true },
   { key: 'tint_ppf', label: 'Tint & PPF', running: true, catalog: true },
-  { key: 'parts', label: 'Parts counter', running: false, catalog: false },
+  { key: 'parts', label: 'Parts counter', running: true, catalog: false },
 ];
 export const departmentOf = key => DEPARTMENTS.find(d => d.key === key) || DEPARTMENTS[0];
 

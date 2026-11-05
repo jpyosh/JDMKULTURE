@@ -984,7 +984,7 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: job.items.find(i => i.kind === 'service').id }] }));
   assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 20);
   const counter = await ok(api(STAFF, 'POST', '/jobs', {
-    job_date: '2026-12-03', department: 'parts', payment_received: true, payment_method: 'GCash', items: [{ part_id: part.id, quantity: 3 }],
+    job_date: '2026-12-03', department: 'parts', payment_received: true, job_done: true, payment_method: 'GCash', items: [{ part_id: part.id, quantity: 3 }],
   }));
   assert.equal(counter.jo_number, 'PC-120326-001');
   assert.equal(counter.vehicle_class, null, 'counter sales need no vehicle');
@@ -1145,7 +1145,7 @@ test('sets: stock is counted in pieces; a part sells per piece or as a set', asy
 
   // One set (2 pieces at the set price) and one piece, from the same stock.
   const sale = await ok(api(STAFF, 'POST', '/jobs', {
-    job_date: D, department: 'parts', payment_received: true, payment_method: 'Cash',
+    job_date: D, department: 'parts', payment_method: 'Cash',
     items: [{ part_id: bulb.id, quantity: 1, as_set: true }, { part_id: bulb.id, quantity: 1 }],
   }));
   const [setLine, pieceLine] = sale.items;
@@ -1229,7 +1229,7 @@ test('EOD gives the daily sales report for the group chat, for staff and owner',
   await ok(api(STAFF, 'POST', `/days/${day}/expenses`, { side: 'cash', description: 'Soap', amount: 100 }));
   for (const who of [STAFF, OWNER]) {
     const { report } = await ok(api(who, 'GET', `/days/${day}`));
-    assert.equal(report.text, 'February 15, 2027\nTotal of cars - 3\nTotal sales - 2,000\nLess comms - 150\nLess expenses - 100\nTotal net = 1,750\n\nCash - 550\nGcash - 1200');
+    assert.equal(report.text, 'February 15, 2027\nTotal of cars - 3\nTotal sales - 2,000\nLess comms - 150\nLess expenses - 100\nTotal net = 1,750\n\nCash - not counted yet\nGcash - not counted yet');
   }
 });
 
@@ -1264,7 +1264,7 @@ test('parts counter: labor is typed per sale and paid to the installer; a part c
 
   // A hard install: the parts at a raised price plus ₱1,500 labor, all paid by the customer; the labor is the installer's commission.
   const sale = await ok(api(STAFF, 'POST', '/jobs', {
-    job_date: D, department: 'parts', payment_received: true, payment_method: 'Cash',
+    job_date: D, department: 'parts', job_done: true, payment_method: 'Cash',
     items: [{ part_id: mirror.id, quantity: 2, unit_price: 6500 }, { labor: 1500 }],
   }));
   const [partLine, laborLine] = sale.items;
@@ -1336,15 +1336,15 @@ test('parts counter: an unpaid sale is marked paid on the day the customer pays,
   await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D1, quantity: 10, unit_cost: 600, paid_from: 'none' }));
 
   // Taken on credit on D1 (₱2,000 parts + ₱500 labor); D1 is closed before the customer pays.
-  const sale = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, department: 'parts', items: [{ part_id: horn.id, quantity: 2 }, { labor: 500 }] }));
+  const sale = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, department: 'parts', job_done: true, items: [{ part_id: horn.id, quantity: 2 }, { labor: 500 }] }));
   assert.deepEqual([sale.payment_received, sale.paid_on], [false, null]);
   await ok(api(STAFF, 'POST', `/days/${D1}/close`));
   let day1 = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
   assert.deepEqual([day1.collected, day1.receivables, day1.commission], [0, 2500, 500]);
-  // The Parts tab lists every unpaid counter sale, whatever its day.
-  const owing = await ok(api(STAFF, 'GET', '/jobs?department=parts&unpaid=1'));
+  // The Parts board keeps every unpaid job, whatever its day.
+  const owing = await ok(api(STAFF, 'GET', '/jobs/active?department=parts'));
   assert.ok(owing.some(j => j.id === sale.id));
-  assert.ok(owing.every(j => j.department === 'parts' && !j.payment_received && !j.voided_at));
+  assert.ok(owing.every(j => j.department === 'parts' && !j.voided_at));
 
   // Paying goes through Mark paid (with the day and Cash or GCash), not an edit.
   assert.match((await api(OWNER, 'PATCH', `/jobs/${sale.id}`, { payment_received: true })).data.error, /Mark paid/);
@@ -1354,7 +1354,7 @@ test('parts counter: an unpaid sale is marked paid on the day the customer pays,
   const paid = await ok(api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2, payment_method: 'GCash' }));
   assert.deepEqual([paid.payment_received, paid.paid_on, paid.payment_method, paid.sale_date], [true, D2, 'GCash', D1]);
   assert.match((await api(STAFF, 'POST', `/jobs/${sale.id}/pay`, { date: D2, payment_method: 'Cash' })).data.error, /Already paid/);
-  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs?department=parts&unpaid=1'))).some(j => j.id === sale.id), 'no longer owing');
+  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs/active?department=parts'))).some(j => j.id === sale.id), 'no longer owing');
 
   const day2 = (await ok(api(OWNER, 'GET', `/days/${D2}`))).summary;
   assert.deepEqual([day2.gcashReceived, day2.partsGcashReceived, day2.earlierSalesPaid], [2500, 2500, 2500], 'the money is in D2\'s GCash');
@@ -1375,6 +1375,86 @@ test('parts counter: an unpaid sale is marked paid on the day the customer pays,
   assert.match((await api(STAFF, 'POST', `/jobs/${cash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Already paid/);
   const wash = await ok(api(STAFF, 'POST', '/jobs', { job_date: D3, vehicle_class: 'S', items: [{ name: 'Wash', price: 300, commission: 50 }] }));
   assert.match((await api(STAFF, 'POST', `/jobs/${wash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Paid checkbox/);
+});
+
+test('parts job orders: open for days, stock held from the start, commission on the day the job is done', async () => {
+  const D1 = '2028-02-07'; // Monday
+  const D2 = '2028-02-09'; // Wednesday, installed
+  const D3 = '2028-02-11'; // Friday, paid
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const mirror = await ok(api(OWNER, 'POST', '/inventory', { name: 'Open-job mirror', unit: 'pc', price: 6000, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${mirror.id}/receive`, { date: D1, quantity: 3, unit_cost: 4500, paid_from: 'none' }));
+  const stock = async () => (await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === mirror.id).stock;
+  const board = async () => (await ok(api(STAFF, 'GET', '/jobs/active?department=parts'))).map(j => j.id);
+  const day = async d => (await ok(api(OWNER, 'GET', `/days/${d}`))).summary;
+
+  // Opened Monday: on the board, the part held for this customer, nothing in sales or commission.
+  const job = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: D1, department: 'parts', plate: 'prt 1', detailer: 'Menan', items: [{ part_id: mirror.id, quantity: 1 }, { labor: 1000 }],
+  }));
+  assert.deepEqual([job.closed_on, job.paid_on, job.sale_date, job.payment_received], [null, null, null, false]);
+  assert.equal(await stock(), 2, 'it cannot be sold twice');
+  assert.ok((await board()).includes(job.id));
+  assert.deepEqual((await day(D1)).departments.parts, { jobs: 0, collected: 0, receivables: 0, commission: 0, net: 0 });
+
+  // A harder install than expected: labor can change until the job is paid.
+  const labor = job.items.find(i => i.kind === 'labor');
+  const part = job.items.find(i => i.kind === 'part');
+  const edited = await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: part.id }, { labor: 1500 }] }));
+  assert.deepEqual([edited.totals.total, edited.totals.commission], [7500, 1500]);
+  assert.equal(edited.items.filter(i => i.kind === 'labor').length, 1);
+  assert.notEqual(edited.items.find(i => i.kind === 'labor').id, labor.id);
+  assert.equal(await stock(), 2, 'editing the labor does not move stock');
+
+  // Marked done Wednesday: the sale and the installer's commission are Wednesday's, still owed.
+  const done = await ok(api(STAFF, 'POST', `/jobs/${job.id}/complete`, { date: D2 }));
+  assert.equal(done.sale_date, D2);
+  const doneDay = await day(D2);
+  assert.deepEqual(doneDay.departments.parts, { jobs: 1, collected: 0, receivables: 7500, commission: 1500, net: -1500 });
+  assert.equal(doneDay.expectedCash, -1500, 'the commission leaves the drawer the day the job is done');
+  assert.ok((await board()).includes(job.id), 'on the board until it is paid');
+
+  // Paid Friday: the money is Friday's, the sale stays on Wednesday, and it moves to Completed.
+  const paid = await ok(api(STAFF, 'POST', `/jobs/${job.id}/pay`, { date: D3, payment_method: 'GCash' }));
+  assert.deepEqual([paid.paid_on, paid.sale_date], [D3, D2]);
+  assert.ok(!(await board()).includes(job.id));
+  assert.ok((await ok(api(STAFF, 'GET', `/jobs/completed?department=parts&since=${D1}`))).some(j => j.id === job.id));
+  assert.deepEqual([(await day(D3)).partsGcashReceived, (await day(D3)).commission], [7500, 0]);
+  assert.equal((await day(D2)).partsCost, 4500, 'cost of the part counts with the sale');
+  assert.match((await api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: part.id }] })).data.error, /locked/);
+
+  // A walk-in: paid and done at once is a sale right away, straight to Completed.
+  const D4 = '2028-02-12';
+  const walkIn = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: D4, department: 'parts', job_done: true, payment_received: true, payment_method: 'Cash', items: [{ part_id: mirror.id, quantity: 1 }],
+  }));
+  assert.deepEqual([walkIn.closed_on, walkIn.paid_on, walkIn.sale_date], [D4, D4, D4]);
+  assert.ok(!(await board()).includes(walkIn.id));
+  assert.deepEqual([(await day(D4)).departments.parts.collected, (await day(D4)).partsCashReceived], [6000, 6000]);
+
+  // A cancelled open job puts the part back.
+  const cancelled = await ok(api(STAFF, 'POST', '/jobs', { job_date: D4, department: 'parts', items: [{ part_id: mirror.id, quantity: 1 }] }));
+  assert.equal(await stock(), 0);
+  assert.match((await api(STAFF, 'POST', '/jobs', { job_date: D4, department: 'parts', items: [{ part_id: mirror.id, quantity: 1 }] })).data.error, /in stock/);
+  await ok(api(OWNER, 'POST', `/jobs/${cancelled.id}/void`, { reason: 'Customer cancelled' }));
+  assert.equal(await stock(), 1);
+
+  // Same closed-day rules as Tint & PPF.
+  const D5 = '2028-02-14';
+  await ok(api(STAFF, 'POST', `/days/${D5}/close`));
+  const entry = extra => ({ job_date: D5, department: 'parts', items: [{ name: 'Fitting', price: 100, commission: 0 }], ...extra });
+  assert.equal((await api(STAFF, 'POST', '/jobs', entry({ job_done: true }))).status, 403);
+  assert.equal((await api(STAFF, 'POST', '/jobs', entry({ payment_received: true, payment_method: 'Cash' }))).status, 403);
+  await ok(api(STAFF, 'POST', '/jobs', entry({})));
+});
+
+test('sales report: EOD gives the counted cash and GCash and their variance', async () => {
+  const D = '2028-03-06';
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ name: 'Wash', price: 1000, commission: 100 }] }));
+  await ok(api(STAFF, 'PUT', `/days/${D}`, { cash_float: 500 }));
+  assert.match((await ok(api(STAFF, 'GET', `/days/${D}`))).report.text, /Cash - not counted yet\nGcash - not counted yet$/);
+  const counted = await ok(api(STAFF, 'PUT', `/days/${D}`, { cash_float: 500, actual_cash: 1350, actual_gcash: 0 }));
+  assert.match(counted.report.text, /Total net = 900\n\nCash - 1350\nGcash - 0\nCash variance = -50\nGcash variance = 0$/);
 });
 
 test('analytics: every period matches Finance, is owner-only and flags days with staff but no sales', async () => {

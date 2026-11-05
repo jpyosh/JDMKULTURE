@@ -12,9 +12,9 @@ function job(fields) {
 }
 const line = (price, commission) => ({ kind: 'service', name: 'x', price, commission });
 
-test('departments: carwash (same-day), detailing and tint_ppf (running), parts counter (same-day, no catalog)', () => {
+test('departments: carwash (same-day), detailing, tint_ppf and the parts counter (running; parts have no catalog)', () => {
   assert.deepEqual(DEPARTMENTS.map(d => [d.key, d.running, d.catalog]),
-    [['carwash', false, true], ['detailing', true, true], ['tint_ppf', true, true], ['parts', false, false]]);
+    [['carwash', false, true], ['detailing', true, true], ['tint_ppf', true, true], ['parts', true, false]]);
 });
 
 test('parts bought for resale leave the drawer like any expense, and are reported separately', () => {
@@ -34,7 +34,7 @@ test('parts bought for resale leave the drawer like any expense, and are reporte
 
 test('parts: line cost is frozen per unit; cost and parts sales are counted with paid sales', () => {
   const partLine = { kind: 'part', name: 'Wiper blade', quantity: 2, price: 900, commission: 40, unit_cost: 300 };
-  const counter = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', payment_received: true, items: [partLine] });
+  const counter = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', closed_on: '2026-12-01', paid_on: '2026-12-01', payment_received: true, items: [partLine] });
   assert.deepEqual(counter.totals, { subtotal: 900, discount: 0, total: 900, commission: 40, net: 860, cost: 600 });
   const wash = job({ job_date: '2026-12-01', payment_received: true, items: [line(600, 100), { ...partLine, quantity: 1, price: 450, commission: 20 }] });
   const unpaid = job({ job_date: '2026-12-01', payment_received: false, items: [{ ...partLine, quantity: 1, price: 450 }] });
@@ -47,11 +47,12 @@ test('parts: line cost is frozen per unit; cost and parts sales are counted with
 
 test('parts counter money goes to the drawer or GCash it was paid with, and EOD shows each', () => {
   const partLine = { kind: 'part', name: 'Wiper blade', quantity: 1, price: 450, commission: 20, unit_cost: 300 };
-  const counter = fields => job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', items: [partLine], ...fields });
+  const counter = fields => job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', closed_on: '2026-12-01', items: [partLine], ...fields });
+  const paidWith = payment_method => counter({ payment_received: true, paid_on: '2026-12-01', payment_method });
   const s = daySummary({ date: '2026-12-01', meta: { cash_float: 1000 }, jobs: [
-    counter({ payment_received: true, payment_method: 'Cash' }),
-    counter({ payment_received: true, payment_method: 'GCash' }),
-    counter({ payment_received: true, payment_method: 'GCash' }),
+    paidWith('Cash'),
+    paidWith('GCash'),
+    paidWith('GCash'),
     counter({ payment_received: false, payment_method: 'Cash' }),
     job({ job_date: '2026-12-01', payment_received: true, payment_method: 'Cash', items: [line(600, 0)] }),
   ] });
@@ -63,9 +64,9 @@ test('parts counter money goes to the drawer or GCash it was paid with, and EOD 
 test('a counter sale paid on a later day: the sale stays on its day, the money counts on the day it was paid', () => {
   const partLine = { kind: 'part', name: 'Wiper blade', quantity: 1, price: 2000, commission: 0, unit_cost: 1200 };
   const labor = { kind: 'labor', name: 'Labor', price: 500, commission: 500 };
-  const sale = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', paid_on: '2026-12-04',
+  const sale = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-01', closed_on: '2026-12-01', paid_on: '2026-12-04',
     payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [partLine, labor] });
-  const sameDay = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-04', paid_on: '2026-12-04',
+  const sameDay = job({ department: 'parts', vehicle_class: null, job_date: '2026-12-04', closed_on: '2026-12-04', paid_on: '2026-12-04',
     payment_received: true, payment_method: 'Cash', items: [{ ...partLine, price: 1000 }] });
   const jobs = [sale, sameDay];
 
@@ -82,6 +83,26 @@ test('a counter sale paid on a later day: the sale stays on its day, the money c
   assert.equal(payDay.paidLater, 0);
   assert.equal(payDay.expectedGcash, 2500 + 50);
   assert.equal(tipsOwed({ jobs, metas: [], before: '2026-12-05' }), 50, 'the tip came in on the day it was paid');
+});
+
+test('an open parts job: no sale and no commission until it is marked done, even when it is paid first', () => {
+  const partLine = { kind: 'part', name: 'Mirror', quantity: 1, price: 6000, commission: 0, unit_cost: 4500 };
+  const labor = { kind: 'labor', name: 'Labor', price: 1500, commission: 1500 };
+  const open = { department: 'parts', vehicle_class: null, job_date: '2026-12-01', payment_method: 'Cash', items: [partLine, labor] };
+
+  assert.equal(saleDate(job(open)), null);
+  const waiting = daySummary({ date: '2026-12-01', jobs: [job(open)], meta: { cash_float: 1000 } });
+  assert.deepEqual([waiting.vehicles, waiting.collected, waiting.receivables, waiting.commission, waiting.partsCost], [0, 0, 0, 0, 0]);
+  assert.equal(waiting.expectedCash, 1000);
+
+  // Paid at the counter on the 1st, installed on the 3rd.
+  const prepaid = job({ ...open, paid_on: '2026-12-01', closed_on: '2026-12-03', payment_received: true });
+  const payDay = daySummary({ date: '2026-12-01', jobs: [prepaid], meta: { cash_float: 1000 } });
+  assert.deepEqual([payDay.cashReceived, payDay.partsCashReceived, payDay.paidInAdvance, payDay.commission], [7500, 7500, 7500, 0]);
+  assert.equal(payDay.expectedCash, 8500, 'the money is in the drawer, the labor is not paid out yet');
+  const doneDay = daySummary({ date: '2026-12-03', jobs: [prepaid], meta: { cash_float: 1000 } });
+  assert.deepEqual([doneDay.collected, doneDay.commission, doneDay.partsCost, doneDay.cashReceived], [7500, 1500, 4500, 0]);
+  assert.equal(doneDay.expectedCash, 1000 - 1500, 'the labor goes to the installer when the job is done');
 });
 
 test('saleDate: carwash counts on its job date; running jobs on the day they are finished, paid or not', () => {
@@ -262,12 +283,33 @@ test('daily sales report for the group chat: the boss\'s format, matching Oct 29
     outflows: { payrollPayouts: [{ side: 'cash', amount: 2000 }] }, // payouts are not in the report
   });
   const r = salesReport({ date, summary: s });
-  assert.deepEqual(r, { cars: 20, sales: 11600, commission: 1520, expenses: 2859, net: 7221, cash: 4880, gcash: 2341,
-    text: 'October 29, 2026\nTotal of cars - 20\nTotal sales - 11,600\nLess comms - 1,520\nLess expenses - 2,859\nTotal net = 7,221\n\nCash - 4880\nGcash - 2341' });
+  assert.deepEqual(r, { cars: 20, sales: 11600, commission: 1520, expenses: 2859, net: 7221,
+    cash: null, gcash: null, cashVariance: null, gcashVariance: null,
+    text: 'October 29, 2026\nTotal of cars - 20\nTotal sales - 11,600\nLess comms - 1,520\nLess expenses - 2,859\nTotal net = 7,221\n\nCash - not counted yet\nGcash - not counted yet' });
 
-  // Centavos are shown only when there are any; commission paid via GCash comes off GCash.
-  const odd = salesReport({ date, summary: daySummary({ date, jobs: [paid('GCash', 1000.5, 100)], meta: { commission_gcash_paid: 100 } }) });
-  assert.equal(odd.text, 'October 29, 2026\nTotal of cars - 1\nTotal sales - 1,000.50\nLess comms - 100\nLess expenses - 0\nTotal net = 900.50\n\nCash - 0\nGcash - 900.50');
+  // Centavos are shown only when there are any; nothing is made up for a side that was not counted.
+  const odd = salesReport({ date, summary: daySummary({ date, jobs: [paid('GCash', 1000.5, 100)], meta: { commission_gcash_paid: 100, actual_gcash: 900.5 } }) });
+  assert.equal(odd.text, 'October 29, 2026\nTotal of cars - 1\nTotal sales - 1,000.50\nLess comms - 100\nLess expenses - 0\nTotal net = 900.50\n\nCash - not counted yet\nGcash - 900.50\nGcash variance = 0');
+});
+
+test('sales report: the cash and GCash actually counted at EOD, and each side\'s variance', () => {
+  const date = '2026-10-29';
+  const jobs = [
+    job({ job_date: date, payment_received: true, payment_method: 'Cash', items: [line(1000, 100)] }),
+    job({ job_date: date, payment_received: true, payment_method: 'GCash', items: [line(500, 0)] }),
+  ];
+  const report = meta => salesReport({ date, summary: daySummary({ date, jobs, meta: { cash_float: 2000, ...meta } }) });
+
+  // Expected: cash 2,000 + 1,000 − 100 = 2,900; GCash 500.
+  const short = report({ actual_cash: 2850, actual_gcash: 500 });
+  assert.deepEqual([short.cash, short.gcash, short.cashVariance, short.gcashVariance], [2850, 500, -50, 0]);
+  assert.match(short.text, /\n\nCash - 2850\nGcash - 500\nCash variance = -50\nGcash variance = 0$/);
+
+  const over = report({ actual_cash: 2900.5, actual_gcash: 520 });
+  assert.match(over.text, /\n\nCash - 2900\.50\nGcash - 520\nCash variance = \+0\.50\nGcash variance = \+20$/);
+
+  // A count of ₱0 is a count, not "not counted".
+  assert.match(report({ actual_cash: 0, actual_gcash: 0 }).text, /Cash - 0\nGcash - 0\nCash variance = -2,900\nGcash variance = -500$/);
 });
 
 test('average cost replayed from a delivery: weighted by what is on the shelf at each delivery; sales and counts only move stock', () => {

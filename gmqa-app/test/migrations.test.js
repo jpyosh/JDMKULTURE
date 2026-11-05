@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -415,7 +415,7 @@ test('006 adds parts inventory, part line items and the parts counter department
   await loadLegacyData(driver);
   await migrate(driver, { ...quiet, to: '005' });
   const before = await all(driver, 'select id, sale_date from jobs order by id');
-  await migrate(driver, quiet);
+  await migrate(driver, { ...quiet, to: '006' });
   assert.deepEqual(await all(driver, 'select id, sale_date from jobs order by id'), before, 'sale dates unchanged');
   assert.equal((await one(driver, 'select count(*)::int n from job_items where quantity <> 1')).n, 0, 'existing lines are quantity 1');
 
@@ -498,7 +498,7 @@ test('016 books a running job on the day it is finished, and changes nothing els
   const rest = 'id, department, jo_number, job_date, closed_on, paid_on, payment_received, payment_method';
   const before = await all(driver, `select ${rest} from jobs order by id`);
 
-  assert.deepEqual(await migrate(driver, quiet), ['016']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '016' }), ['016']);
   assert.deepEqual(await all(driver, `select ${rest} from jobs order by id`), before, 'only the sale date is worked out differently');
   assert.deepEqual((await all(driver, 'select jo_number, sale_date from jobs order by id')).map(j => [j.jo_number, j.sale_date]), [
     ['DT-1', '2027-04-01'],
@@ -511,6 +511,43 @@ test('016 books a running job on the day it is finished, and changes nothing els
   // Marking a job done now sets the sale date, and the board's index still exists.
   const moved = await one(driver, "update jobs set closed_on = '2027-04-09' where jo_number = 'DT-3' returning sale_date");
   assert.equal(moved.sale_date, '2027-04-09');
+  const indexes = (await all(driver, "select indexname from pg_indexes where tablename = 'jobs'")).map(i => i.indexname);
+  assert.ok(indexes.includes('jobs_sale_date_idx') && indexes.includes('jobs_active_running_idx'));
+});
+
+test('017 makes every existing counter sale a finished job on its own day, so no day changes', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '016' });
+  await driver.query(`insert into jobs (department, jo_number, job_date, paid_on, payment_received, payment_method, voided_at, voided_by, void_reason) values
+    ('parts', 'PC-1', '2027-05-01', null, true, 'GCash', null, null, null),
+    ('parts', 'PC-2', '2027-05-01', null, false, 'Cash', null, null, null),
+    ('parts', 'PC-3', '2027-05-01', '2027-05-04', true, 'Cash', null, null, null),
+    ('parts', 'PC-4', '2027-05-02', null, true, 'Cash', now(), 'owner', 'mistake'),
+    ('carwash', 'CW-1', '2027-05-01', null, true, 'Cash', null, null, null)`);
+  await driver.query(`insert into jobs (department, jo_number, job_date, closed_on, paid_on, payment_received, payment_method) values
+    ('tint_ppf', 'TP-1', '2027-05-01', null, null, false, 'Cash'), ('detailing', 'DT-1', '2027-05-01', '2027-05-03', '2027-05-01', true, 'GCash')`);
+  const rest = 'id, department, jo_number, job_date, payment_received, payment_method, voided_at, void_reason, sale_date';
+  const before = await all(driver, `select ${rest} from jobs order by id`);
+
+  assert.deepEqual(await migrate(driver, quiet), ['017']);
+  assert.deepEqual(await all(driver, `select ${rest} from jobs order by id`), before, 'same sale days, same payment, same void');
+  assert.deepEqual((await all(driver, 'select jo_number, closed_on, paid_on from jobs order by id')).map(j => [j.jo_number, j.closed_on, j.paid_on]), [
+    ['PC-1', '2027-05-01', '2027-05-01'], // paid when it was made
+    ['PC-2', '2027-05-01', null], // still owed
+    ['PC-3', '2027-05-01', '2027-05-04'], // paid on a later day: keeps that day
+    ['PC-4', '2027-05-02', '2027-05-02'],
+    ['CW-1', null, null], // carwash keeps its Paid checkbox
+    ['TP-1', null, null], ['DT-1', '2027-05-03', '2027-05-01'],
+  ]);
+
+  // A new parts job can now stay open, and it is a sale on the day it is done.
+  const open = await one(driver, "insert into jobs (department, jo_number, job_date) values ('parts', 'PC-5', '2027-05-06') returning id, sale_date");
+  assert.equal(open.sale_date, null, 'open: not a sale yet');
+  const done = await one(driver, "update jobs set closed_on = '2027-05-08' where id = $1 returning sale_date", [open.id]);
+  assert.equal(done.sale_date, '2027-05-08');
+  await assert.rejects(driver.query("update jobs set closed_on = '2027-05-05' where id = $1", [open.id]), /check/i, 'not before it was opened');
+  await assert.rejects(driver.query('update jobs set payment_received = true where id = $1', [open.id]), /check/i, 'paid needs a pay day');
+  await assert.rejects(driver.query("update jobs set closed_on = '2027-05-09' where jo_number = 'CW-1'"), /check/i, 'carwash is never marked done');
   const indexes = (await all(driver, "select indexname from pg_indexes where tablename = 'jobs'")).map(i => i.indexname);
   assert.ok(indexes.includes('jobs_sale_date_idx') && indexes.includes('jobs_active_running_idx'));
 });

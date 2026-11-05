@@ -21,7 +21,7 @@ export function receipt(job) {
 const detail = (label, value, full) =>
   `<div class="review-detail${full ? ' full' : ''}"><span class="label">${esc(label)}</span><span class="value">${value}</span></div>`;
 
-// What happens to a new Detailing / Tint & PPF job, in the words of its two ticks.
+// What happens to a new running job, in the words of its two ticks.
 function runningNote({ job_done: done, payment_received: paid }, day) {
   if (done && paid) return `Done and paid: it counts as a sale on ${day} and goes straight to Completed.`;
   if (done) return `It counts as a sale on ${day}, and stays on the board as unpaid until you press Mark paid.`;
@@ -44,8 +44,8 @@ export function reviewAndCreate({ editor, department, jobDate, onCreated }) {
       <span class="hint">${payload.time_in ? 'Filled in for you. Change it if the car came in at another time.' : 'Optional: when the car came in.'}</span></div>` : ''}
     <div class="review-details">
       ${detail('Vehicle', `${esc(classLabel(payload.vehicle_class))}${payload.plate ? ` · ${esc(payload.plate.toUpperCase())}` : ''}`)}
-      ${detail('Detailer', esc(payload.detailer || '—'))}
-      ${detail('Payment', `${esc(payload.payment_method)} · ${payload.payment_received ? 'paid' : '<b class="amber-text">not paid yet</b>'}`)}
+      ${detail(dept.catalog ? 'Detailer' : 'Sold by', esc(payload.detailer || '—'))}
+      ${detail('Payment', `${payload.payment_method ? `${esc(payload.payment_method)} · ` : ''}${payload.payment_received ? 'paid' : '<b class="amber-text">not paid yet</b>'}`)}
       ${detail('GCash tip', peso(payload.tip_gcash))}
       ${dept.running ? detail('Job', payload.job_done ? 'Done' : 'In progress') : ''}
       ${detail('Items', lines.map(l => `${esc(l.name)} — ${peso(l.price)}`).join('<br>'), true)}

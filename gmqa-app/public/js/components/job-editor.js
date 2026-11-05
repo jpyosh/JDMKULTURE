@@ -5,9 +5,9 @@ import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime } from '
 const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part', labor: 'Labor' };
 const round2 = n => Math.round(n * 100) / 100;
 
-// department: which catalog items are offered. A new running job (detailing, tint/PPF) takes payment like a
+// department: which catalog items are offered. A new running job (detailing, tint/PPF, parts) takes payment like a
 // carwash job, plus Job done. After that it records payment with Mark paid and locks the amount once paid.
-// The parts counter (no catalog) sells parts and custom items only and needs no vehicle.
+// The parts counter (no catalog) sells parts, labor and custom items only and needs no vehicle.
 // autoTimeWhen: for a new job, () => true when its date is today; Time in then follows the shop clock
 // until the user types a time of their own.
 export function createJobEditor(root, { job = null, department = job?.department || 'carwash', autoTimeWhen = null } = {}) {
@@ -16,8 +16,11 @@ export function createJobEditor(root, { job = null, department = job?.department
   const locked = Boolean(running && job?.paid_on);
   const takesPayment = !(running && job);
   const originalClass = job?.vehicle_class || '';
+  // The parts counter types labor in its own box, so a saved labor line is shown there, not as a line.
+  const takesLabor = !dept.catalog;
+  const savedLabor = takesLabor ? job?.items.find(i => i.kind === 'labor') : null;
   const editor = {
-    lines: (job?.items || []).map(i => ({
+    lines: (job?.items || []).filter(i => i !== savedLabor).map(i => ({
       id: i.id, kind: i.kind, catalog_item_id: i.catalog_item_id, part_id: i.part_id, quantity: i.quantity, pack_size: i.pack_size,
       name: i.name, price: i.price, commission: i.commission,
     })),
@@ -37,10 +40,9 @@ export function createJobEditor(root, { job = null, department = job?.department
   // A new part line can be sold above its list price (a harder job); lower goes through the discount.
   const priceEach = line => (line.unit_price == null ? unitPrice(line) : Number(line.unit_price) || 0);
   // The parts counter asks Cash or GCash every sale (nothing picked for them), so the money lands in the right count at EOD.
-  // A new counter sale also takes labor, typed per sale (easy and hard installs differ): the customer pays it and
-  // all of it is the installer's commission.
+  // It also takes labor, typed per job and changeable until the job is paid (easy and hard installs differ): the customer
+  // pays it and all of it is the installer's commission.
   const askPayment = !dept.catalog;
-  const takesLabor = !dept.catalog && !job;
   const uid = Math.random().toString(36).slice(2);
 
   root.innerHTML = `
@@ -56,7 +58,7 @@ export function createJobEditor(root, { job = null, department = job?.department
           ${['Cash', 'GCash'].map(p => `<label><input type="radio" name="pay-method-${uid}" data-f="payment_method" value="${p}" ${p === job?.payment_method ? 'checked' : ''}> ${p}</label>`).join('')}</fieldset>`
         : `<div><label>Payment</label><select data-f="payment_method">
           ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>`}
-        <div class="check-cell${running ? ' stacked' : ''}"><label class="check"><input type="checkbox" data-f="payment_received" ${(job ? job.payment_received : !dept.catalog) ? 'checked' : ''}> Customer paid</label>
+        <div class="check-cell${running ? ' stacked' : ''}"><label class="check"><input type="checkbox" data-f="payment_received" ${job?.payment_received ? 'checked' : ''}> Customer paid</label>
           ${running ? '<label class="check"><input type="checkbox" data-f="job_done"> Job done</label>' : ''}</div>`}
       </div>
 
@@ -77,7 +79,7 @@ export function createJobEditor(root, { job = null, department = job?.department
       </div>
 
       <div class="entry-grid">
-        ${takesLabor ? '<div><label>Labor (to the installer)</label><input type="number" min="0" step="0.01" data-labor placeholder="0.00"></div>' : ''}
+        ${takesLabor ? `<div><label>Labor (to the installer)</label><input type="number" min="0" step="0.01" data-labor value="${savedLabor?.price ?? ''}" placeholder="0.00"></div>` : ''}
         <div><label>Discount</label><input type="number" min="0" step="0.01" data-f="discount" value="${job?.discount || ''}" placeholder="0.00"></div>
         <div class="span-2"><label>Discount reason</label><input type="text" data-f="discount_reason" value="${v('discount_reason')}" placeholder="Optional" maxlength="200"></div>
         ${!takesPayment ? '' : `<div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>`}
@@ -201,7 +203,7 @@ export function createJobEditor(root, { job = null, department = job?.department
   const LOCKED_FIELDS = ['vehicle_class', 'discount'];
   if (locked) {
     LOCKED_FIELDS.forEach(key => { field(key).disabled = true; });
-    $$('.line-adders select, .line-adders button, [data-lines] button, [data-lines] input', root).forEach(el => { el.disabled = true; });
+    $$('.line-adders select, .line-adders button, [data-lines] button, [data-lines] input, [data-labor]', root).forEach(el => { el.disabled = true; });
   }
 
   // New job on today's date: Time in shows the current shop time and keeps up while the form is filled in,
@@ -241,21 +243,21 @@ export function createJobEditor(root, { job = null, department = job?.department
           if (l.catalog_item_id) return { catalog_item_id: l.catalog_item_id };
           return { name: l.name.trim(), price: Number(l.price) || 0, commission: Number(l.commission) || 0 };
         });
-        if (labor() > 0) out.items.push({ labor: labor() });
+        if (labor() > 0) out.items.push(labor() === Number(savedLabor?.price) ? { id: savedLabor.id } : { labor: labor() });
       }
       return out;
     },
     // Returns an error message or null.
     validate() {
       if (!currentClass() && dept.catalog) return 'Choose a vehicle class';
-      if (!editor.lines.length) return 'Add at least one item';
+      if (!editor.lines.length && !(labor() > 0)) return 'Add at least one item';
       if (editor.lines.some(l => l.kind === 'custom' && !l.id && !String(l.name).trim())) return 'Give each custom item a name';
       if (editor.lines.some(l => l.kind === 'part' && !l.id && !(Number(l.quantity) > 0))) return 'Enter a quantity for each part';
       const underpriced = editor.lines.find(l => l.kind === 'part' && !l.id && priceEach(l) < unitPrice(l));
       if (underpriced) return `${underpriced.name} sells for at least ${peso(unitPrice(underpriced))}. To charge less, use the Discount box.`;
       if (labor() < 0) return 'Labor cannot be less than ₱0';
       if (totals().total < 0) return 'Discount cannot be more than the subtotal';
-      if (askPayment && field('payment_received').checked && !$('[data-pay-choice] input:checked', root)) return 'Choose how the customer paid: Cash or GCash';
+      if (askPayment && takesPayment && field('payment_received').checked && !$('[data-pay-choice] input:checked', root)) return 'Choose how the customer paid: Cash or GCash';
       return null;
     },
   };
