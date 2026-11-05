@@ -627,7 +627,8 @@ async function launch() {
     });
 
     await step('inventory: a simple list; tap an item for its details, count and edit', async () => {
-      assert.equal(await inv.locator('[data-sheet], [data-mode]').count(), 0, 'no spreadsheet grid or view switch');
+      assert.equal(await inv.locator('[data-sheet]').isVisible(), false, 'Inventory starts on the list');
+      assert.match(await inv.locator('[data-mode="list"]').getAttribute('class'), /active/);
       // The details show everything about the item, with its actions.
       await openItem('Snow foam');
       assert.match(await page.textContent('#modal [data-panel]'), /Stock\s*4 gal[\s\S]*Reorder at\s*1[\s\S]*Avg cost\s*₱300\.00/);
@@ -700,6 +701,87 @@ async function launch() {
       assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Set of,Set price,Avg cost,Stock,Reorder at,Value/);
       assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,4,2000,300,12,2,3600/);
       await shot('07c-inventory');
+    });
+
+    const sheetRow = name => inv.locator('[data-sheet] tbody tr[data-item]', { hasText: name });
+    const invCell = (name, field) => sheetRow(name).locator(`td[data-field="${field}"]`);
+    const cellText = async (name, field) => (await invCell(name, field).textContent()).trim();
+    const cellBecomes = (name, field, text) => page.waitForFunction(([n, f, t]) => [...document.querySelectorAll('#view-inventory [data-sheet] tr[data-item]')]
+      .find(r => r.textContent.includes(n))?.querySelector(`td[data-field="${f}"]`).textContent.trim() === t, [name, field, text]);
+
+    await step('inventory sheet: a List / Sheet switch; edit cells in place like Excel', async () => {
+      await inv.locator('[data-mode="sheet"]').click();
+      await sheetRow('Snow foam').waitFor();
+      assert.equal(await inv.locator('[data-list]').isVisible(), false, 'one view at a time');
+
+      // Type on a cell to replace it; Tab saves and moves right, Enter saves and moves down.
+      await invCell('Engine oil 1L', 'price').click();
+      await page.keyboard.type('560');
+      await page.keyboard.press('Tab');
+      await expectToast(/Saved/);
+      await cellBecomes('Engine oil 1L', 'price', '₱560.00');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.field), 'commission', 'Tab moves to the next cell');
+      await invCell('Engine oil 1L', 'price').click();
+      await page.keyboard.type('550');
+      await page.keyboard.press('Enter');
+      await cellBecomes('Engine oil 1L', 'price', '₱550.00');
+
+      await invCell('Microfiber 40x40', 'reorder_level').click();
+      await page.keyboard.type('4');
+      await page.keyboard.press('Enter');
+      await cellBecomes('Microfiber 40x40', 'reorder_level', '4');
+      const focused = await page.evaluate(() => ({ field: document.activeElement.dataset.field, row: document.activeElement.closest('tr')?.textContent }));
+      assert.equal(focused.field, 'reorder_level', 'Enter moves to the cell below');
+      assert.match(focused.row, /Snow foam/);
+
+      // Escape cancels an edit; arrow keys move between cells.
+      await page.keyboard.type('99');
+      await page.keyboard.press('Escape');
+      assert.equal(await cellText('Snow foam', 'reorder_level'), '3');
+      await page.keyboard.press('ArrowLeft');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.field), 'stock');
+      await page.keyboard.press('ArrowUp');
+      assert.match(await page.evaluate(() => document.activeElement.closest('tr').textContent), /Microfiber/);
+
+      // The stock column records a count with a reason, never just overwrites the number.
+      await invCell('Snow foam', 'stock').click();
+      await page.keyboard.type('2');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('#modal[open] [data-c="reason"]');
+      assert.equal(await page.inputValue('#modal [data-c="counted"]'), '2');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /0\.5 gal used/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Count saved/);
+      await cellBecomes('Snow foam', 'stock', '2 Low');
+
+      // Tags are edited from the tags cell.
+      await invCell('Snow foam', 'tags').dblclick();
+      await page.waitForSelector('#modal[open] [data-tag-pick]');
+      await page.locator('#modal [data-tag-pick]', { hasText: 'Detailing chemicals' }).locator('input').uncheck();
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Saved/);
+      await page.waitForFunction(() => !/Detailing chemicals/.test([...document.querySelectorAll('#view-inventory [data-sheet] tr[data-item]')]
+        .find(r => r.textContent.includes('Snow foam'))?.querySelector('td[data-field="tags"]').textContent || 'Detailing chemicals'));
+
+      // Columns sort; the item name stays in view; each row keeps its buttons, History with Correct cost included.
+      await inv.locator('[data-sheet] th[data-sort="stock"] button').click();
+      assert.equal(await inv.locator('[data-sheet] th[data-sort="stock"]').getAttribute('aria-sort'), 'ascending');
+      const stocks = (await inv.locator('[data-sheet] td[data-field="stock"]').allTextContents()).map(t => parseFloat(t));
+      assert.deepEqual(stocks, [...stocks].sort((a, b) => a - b));
+      await inv.locator('[data-sheet] th[data-sort="name"] button').click();
+      assert.equal(await invCell('Snow foam', 'name').evaluate(td => getComputedStyle(td).position), 'sticky', 'the name column is frozen');
+      await sheetRow('Engine oil 1L').locator('[data-act="history"]').click();
+      await page.waitForSelector('#modal[open] [data-correct-cost]');
+      await page.click('#modal [data-close]');
+      await shot('07c-inventory-sheet');
+
+      // The choice is remembered on this device.
+      await page.reload();
+      await page.click('#nav [data-view="inventory"]');
+      await sheetRow('Snow foam').waitFor();
+      await inv.locator('[data-mode="list"]').click();
+      await invRow('Snow foam').waitFor();
+      assert.equal(await inv.locator('[data-sheet]').isVisible(), false);
     });
 
     const partsView = page.locator('#view-parts');
@@ -1514,6 +1596,13 @@ async function launch() {
       await invRow('Microfiber 40x40').waitFor();
       assert.doesNotMatch(await inv.textContent(), /cost|value/i, 'staff must not see costs');
       assert.equal(await inv.locator('[data-paste]').isVisible(), false);
+      // In the Sheet too: no cost columns, and only the stock can be changed (it records a count).
+      await inv.locator('[data-mode="sheet"]').click();
+      await sheetRow('Microfiber 40x40').waitFor();
+      assert.equal(await inv.locator('[data-sheet] thead th', { hasText: /cost|value/i }).count(), 0, 'staff must not see costs');
+      assert.deepEqual(await inv.locator('[data-sheet] tbody tr').first().locator('td.editable').evaluateAll(tds => tds.map(td => td.dataset.field)), ['stock']);
+      await inv.locator('[data-mode="list"]').click();
+      await invRow('Microfiber 40x40').waitFor();
       await openItem('Microfiber 40x40');
       assert.doesNotMatch(await page.textContent('#modal [data-panel]'), /cost|value/i, 'staff must not see costs in the details');
       for (const act of ['receive', 'history', 'edit']) assert.equal(await page.locator(`#modal [data-act="${act}"]`).count(), 0, `staff cannot ${act}`);
@@ -1549,6 +1638,15 @@ async function launch() {
         assert.ok((await row.boundingBox()).height >= 44, `${view} rows are at least 44px tall`);
         await shot(`12b-mobile-${view}`);
       }
+      // The Sheet scrolls inside its own box on a phone; the page never scrolls sideways.
+      await page.click('#nav [data-view="inventory"]');
+      await inv.locator('[data-mode="sheet"]').click();
+      await sheetRow('Snow foam').waitFor();
+      const sheetSideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(sheetSideways <= 1, `the sheet pushes the page sideways by ${sheetSideways}px on mobile`);
+      await shot('12b-mobile-inventory-sheet');
+      await inv.locator('[data-mode="list"]').click();
+      await invRow('Snow foam').waitFor();
       // Payroll (owner): the action buttons, including the sign-off sheet, fit the phone width.
       await page.click('#signout-btn');
       await signIn('owner@sandbox');

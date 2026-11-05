@@ -11,7 +11,7 @@ Auth, deployed on Vercel.
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
 | Parts — auto parts for sale, over-the-counter sales (labor, itemized) | ✓ | ✓ (no costs) |
-| Inventory — everything stocked, tags, simple list, counts, deliveries, Excel export/paste | edit | view + stock counts |
+| Inventory — everything stocked, tags, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
@@ -140,8 +140,13 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - Inventory and Parts are **simple lists**: each row shows the item's name (with its tags and any set),
   its price and its stock, sorted by name; a search box and the tag chips filter. **Tap a row** for the
   item's details (SKU, price, set, commission, average cost and value for the owner, stock, reorder level)
-  and its actions: Count (everyone), Receive, History and Edit (owner). Everything about an item is changed
-  in its Edit form.
+  and its actions: Count (everyone), Receive, History and Edit (owner).
+- **Sheet** (Inventory's List / Sheet switch, remembered per device, starts on List): every item in a grid edited
+  in place like Excel. Click a cell and type to replace it; Enter saves and moves down, Tab saves and moves
+  right (Shift goes back), Escape cancels, arrow keys move, F2 or double-click edits. Column headers sort; the
+  item name stays frozen. The owner edits every field except Avg cost and Value; staff only the Stock column.
+  Typing in Stock opens a count with a reason, it never just overwrites the number. Double-click Tags to pick
+  tags. Each row keeps Receive, Count, History (with Correct cost) and Edit.
 - **Export CSV** opens in Excel / Google Sheets (what is shown, costs only for the owner).
   **Paste from Excel** (owner): copy rows with their header row from Excel or Sheets; it shows a preview
   and any row errors, then adds all rows or none. Stock is added as opening stock at its cost; new tag
