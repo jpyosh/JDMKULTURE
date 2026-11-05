@@ -3,7 +3,8 @@
 // vehicle class is changed, which re-prices its catalog lines at the new class).
 //
 // Carwash jobs are same-day. Detailing and Tint & PPF jobs are "running": they stay on their
-// department's board until marked done (complete) and paid (pay), and count on the later date.
+// department's board until marked done (complete) and paid (pay), and count on the day they are done.
+// A new running job can also be entered already paid (payment_received) and/or done (job_done).
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
@@ -176,14 +177,15 @@ router.get('/jobs', async (req, res) => {
 router.get('/jobs/active', async (req, res) => {
   const dept = runningDepartment(req.query.department);
   const voided = req.query.include_voided === '1' ? '' : 'and voided_at is null';
-  res.json(await loadJobs(`department = $1 and sale_date is null ${voided}`, [dept]));
+  res.json(await loadJobs(`department = $1 and (closed_on is null or not payment_received) ${voided}`, [dept]));
 });
 
-// ?date= one day's sales; ?since= every sale from that day on (later-dated ones included, so none drop out of sight).
+// Finished and paid. ?date= one day's sales; ?since= every sale from that day on (later-dated ones included,
+// so none drop out of sight). A finished job not paid yet is still on the board.
 router.get('/jobs/completed', async (req, res) => {
   const dept = runningDepartment(req.query.department);
-  if (req.query.since) res.json(await loadJobs('department = $1 and sale_date >= $2', [dept, date(req.query.since)]));
-  else res.json(await loadJobs('department = $1 and sale_date = $2', [dept, date(req.query.date)]));
+  if (req.query.since) res.json(await loadJobs('department = $1 and payment_received and sale_date >= $2', [dept, date(req.query.since)]));
+  else res.json(await loadJobs('department = $1 and payment_received and sale_date = $2', [dept, date(req.query.date)]));
 });
 
 // ---------------------------------------------------------------- create / edit
@@ -192,11 +194,12 @@ router.post('/jobs', async (req, res) => {
   const jobDate = date(req.body.job_date, 'Job date');
   const dept = oneOf(req.body.department ?? 'carwash', DEPARTMENT_KEYS, 'Department');
   const running = department(dept).running;
+  const done = running && Boolean(req.body.job_done);
   const jobId = await db.tx(req.user.email, async q => {
-    if (!running) await assertDayOpen(q, jobDate, req.user);
+    // A plain running job touches no day's numbers; paid or done, it does.
+    if (!running || done || req.body.payment_received) await assertDayOpen(q, jobDate, req.user);
     const fields = await cleanJobFields(q, req.body);
     if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
-    if (running && fields.payment_received) throw bad('Record payment for this job with "Mark paid" once the customer pays');
     if (dept === 'parts' && fields.payment_received && !fields.payment_method) throw bad('Choose how the customer paid: Cash or GCash');
     const lines = await buildLines(q, req.body.items || [], fields.vehicle_class, dept);
     if (!lines.length) throw bad('Add at least one service, add-on or custom item');
@@ -204,6 +207,8 @@ router.post('/jobs', async (req, res) => {
     const values = {
       payment_method: 'Cash', payment_received: false, ...fields,
       department: dept, jo_number: await nextJoNumber(q, jobDate, dept), job_date: jobDate,
+      ...(done ? { closed_on: jobDate } : {}),
+      ...(running && fields.payment_received ? { paid_on: jobDate } : {}),
     };
     const cols = Object.keys(values);
     const job = await q.one(`insert into jobs (${cols.join(', ')}) values (${cols.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
@@ -279,7 +284,7 @@ router.post('/jobs/:id/complete', async (req, res) => {
     if (job.closed_on) throw bad(`Already marked done on ${job.closed_on}`);
     const day = date(req.body.date, 'Done date');
     if (day < job.job_date) throw bad(`Done date cannot be before the job was opened (${job.job_date})`);
-    await assertDaysOpen(q, [day, later(day, job.paid_on)].filter(Boolean), req.user);
+    await assertDayOpen(q, day, req.user);
     await q.query('update jobs set closed_on = $2 where id = $1', [job.id, day]);
   }));
 });
@@ -308,8 +313,9 @@ router.post('/jobs/:id/pay', async (req, res) => {
 router.post('/jobs/:id/unpay', async (req, res) => {
   res.json(await runningAction(req, async (q, job) => {
     if (!job.payment_received) throw bad('This job has no payment recorded');
-    // A counter sale paid when it was made has its money on its own day.
-    const days = isRunning(job) ? [job.paid_on, job.sale_date] : [job.paid_on || job.job_date];
+    // A counter sale paid when it was made has its money on its own day. Like paying, undoing it can happen
+    // after the day the job was finished has closed.
+    const days = isRunning(job) ? [job.paid_on, later(job.paid_on, job.closed_on)] : [job.paid_on || job.job_date];
     await assertDaysOpen(q, days.filter(Boolean), req.user);
     await q.query('update jobs set paid_on = null, payment_received = false where id = $1', [job.id]);
   }, { counterToo: true }));

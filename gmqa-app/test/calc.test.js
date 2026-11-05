@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost, periodBuckets, pctChange } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -84,33 +84,64 @@ test('a counter sale paid on a later day: the sale stays on its day, the money c
   assert.equal(tipsOwed({ jobs, metas: [], before: '2026-12-05' }), 50, 'the tip came in on the day it was paid');
 });
 
-test('saleDate: carwash counts on its job date; running jobs when both closed and paid', () => {
+test('saleDate: carwash counts on its job date; running jobs on the day they are finished, paid or not', () => {
   assert.equal(saleDate(job({ job_date: '2026-10-05' })), '2026-10-05');
   const running = { department: 'detailing', job_date: '2026-10-05' };
   assert.equal(saleDate(job(running)), null);
-  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-07' })), null, 'closed but unpaid');
+  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-07' })), '2026-10-07', 'finished, not paid yet');
   assert.equal(saleDate(job({ ...running, paid_on: '2026-10-06' })), null, 'paid but still in progress');
-  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-07', paid_on: '2026-10-08' })), '2026-10-08');
-  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-09', paid_on: '2026-10-06' })), '2026-10-09');
+  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-07', paid_on: '2026-10-08' })), '2026-10-07', 'paid after it was finished');
+  assert.equal(saleDate(job({ ...running, closed_on: '2026-10-09', paid_on: '2026-10-06' })), '2026-10-09', 'paid before it was finished');
 });
 
-test('a running job counts only on its sale date, with its commission', () => {
+test('a running job counts only on the day it is finished, with its commission', () => {
   const dt = job({
-    department: 'detailing', job_date: '2026-10-05', closed_on: '2026-10-07', paid_on: '2026-10-08',
+    department: 'detailing', job_date: '2026-10-05', closed_on: '2026-10-07', paid_on: '2026-10-07',
     payment_received: true, payment_method: 'GCash', items: [line(5000, 1000)],
   });
-  for (const date of ['2026-10-05', '2026-10-06', '2026-10-07']) {
+  for (const date of ['2026-10-05', '2026-10-06', '2026-10-08']) {
     const s = daySummary({ date, jobs: [dt] });
     assert.equal(s.collected, 0, date);
     assert.equal(s.commission, 0, date);
   }
-  const s = daySummary({ date: '2026-10-08', jobs: [dt] });
+  const s = daySummary({ date: '2026-10-07', jobs: [dt] });
   assert.equal(s.collected, 5000);
   assert.equal(s.commission, 1000);
   assert.equal(s.net, 4000);
   assert.equal(s.gcashReceived, 5000);
   assert.deepEqual(s.departments.detailing, { jobs: 1, collected: 5000, receivables: 0, commission: 1000, net: 4000 });
   assert.deepEqual(s.departments.carwash, { jobs: 0, collected: 0, receivables: 0, commission: 0, net: 0 });
+});
+
+test('a running job finished before it is paid: a sale of the finish day, the money counts on the day it is paid', () => {
+  const unpaid = { department: 'tint_ppf', job_date: '2026-10-05', closed_on: '2026-10-05', payment_method: 'Cash', items: [line(6500, 2500)] };
+
+  // Finished Monday, not paid yet: on Monday's books as a receivable, and the detailer's commission is due.
+  const owed = daySummary({ date: '2026-10-05', jobs: [job(unpaid)], meta: { cash_float: 3000 } });
+  assert.deepEqual(owed.departments.tint_ppf, { jobs: 1, collected: 0, receivables: 6500, commission: 2500, net: -2500 });
+  assert.deepEqual([owed.vehicles, owed.unpaidJobs, owed.cashReceived], [1, 1, 0]);
+  assert.equal(owed.expectedCash, 3000 - 2500, 'the detailer is paid at EOD, before the customer pays');
+
+  // Paid Wednesday by GCash with a tip.
+  const paid = job({ ...unpaid, paid_on: '2026-10-07', payment_received: true, payment_method: 'GCash', tip_gcash: 100 });
+  const saleDay = daySummary({ date: '2026-10-05', jobs: [paid], meta: { cash_float: 3000 } });
+  assert.deepEqual([saleDay.collected, saleDay.receivables, saleDay.commission], [6500, 0, 2500], 'still a sale of the finish day, now paid');
+  assert.deepEqual([saleDay.cashReceived, saleDay.gcashReceived, saleDay.jobTips], [0, 0, 0], 'no money came in that day');
+  assert.equal(saleDay.expectedCash, 3000 - 2500, "Monday's drawer does not change when the customer pays later");
+  assert.equal(saleDay.paidLater, 6500);
+  assert.equal(saleDay.paidEarlier, 0);
+
+  const payDay = daySummary({ date: '2026-10-07', jobs: [paid], meta: { cash_float: 3000 } });
+  assert.deepEqual([payDay.collected, payDay.commission, payDay.vehicles], [0, 0, 0], 'not a sale again');
+  assert.deepEqual([payDay.gcashReceived, payDay.jobTips], [6500, 100]);
+  assert.equal(payDay.earlierSalesPaid, 6500, 'shown on its own note');
+  assert.equal(payDay.paidInAdvance, 0, 'the job is finished, so this is not money in advance');
+});
+
+test('a running job not finished yet stays out of sales, even when it is unpaid', () => {
+  const open = job({ department: 'tint_ppf', job_date: '2026-10-05', items: [line(6500, 2500)] });
+  const s = daySummary({ date: '2026-10-05', jobs: [open] });
+  assert.deepEqual([s.vehicles, s.collected, s.receivables, s.commission], [0, 0, 0, 0]);
 });
 
 test('prepaid running job: cash counts the day it is received, the sale the day it is done', () => {
@@ -251,4 +282,40 @@ test('average cost replayed from a delivery: weighted by what is on the shelf at
   assert.equal(avg, 1000, 'an empty shelf takes the new cost');
   assert.deepEqual(before, [{ id: 1, avg: 0 }, { id: 3, avg: 800 }, { id: 5, avg: 841.67 }], 'the average just before each delivery');
   assert.equal(replayAvgCost(7, 500, moves.slice(2, 3)).avg, 666.67, 'starts from the stock and average before the first change');
+});
+
+// Analytics periods: weeks are the Sunday-to-Saturday pay weeks, quarters are calendar quarters, and the
+// period still running stops at the chosen day so it is never padded with days that have not happened.
+test('periodBuckets: day, week, month and quarter, oldest first, the running one cut at the date', () => {
+  const pick = list => list.map(p => [p.label, p.start, p.end, p.partial]);
+  assert.deepEqual(pick(periodBuckets('day', '2026-11-05', 2)), [
+    ['Wed, Nov 4', '2026-11-04', '2026-11-04', false],
+    ['Thu, Nov 5', '2026-11-05', '2026-11-05', false],
+  ]);
+  assert.deepEqual(pick(periodBuckets('week', '2026-11-05', 2)), [
+    ['Oct 25–31', '2026-10-25', '2026-10-31', false],
+    ['Nov 1–7', '2026-11-01', '2026-11-05', true],
+  ]);
+  assert.deepEqual(pick(periodBuckets('week', '2026-11-07', 1)), [['Nov 1–7', '2026-11-01', '2026-11-07', false]]);
+  assert.deepEqual(pick(periodBuckets('week', '2027-01-02', 1)), [['Dec 27–Jan 2', '2026-12-27', '2027-01-02', false]]);
+  assert.deepEqual(pick(periodBuckets('month', '2027-01-15', 2)), [
+    ['Dec 2026', '2026-12-01', '2026-12-31', false],
+    ['Jan 2027', '2027-01-01', '2027-01-15', true],
+  ]);
+  assert.deepEqual(pick(periodBuckets('month', '2028-02-29', 1)), [['Feb 2028', '2028-02-01', '2028-02-29', false]]);
+  assert.deepEqual(pick(periodBuckets('quarter', '2027-02-10', 2)), [
+    ['Q4 2026', '2026-10-01', '2026-12-31', false],
+    ['Q1 2027', '2027-01-01', '2027-02-10', true],
+  ]);
+  assert.equal(periodBuckets('day', '2026-11-05').length, 14);
+  assert.equal(periodBuckets('week', '2026-11-05').length, 8);
+  assert.equal(periodBuckets('month', '2026-11-05').length, 6);
+  assert.equal(periodBuckets('quarter', '2026-11-05').length, 4);
+});
+
+test('pctChange: rounded percent, nothing to compare with gives null', () => {
+  assert.equal(pctChange(150, 100), 50);
+  assert.equal(pctChange(75, 100), -25);
+  assert.equal(pctChange(1, 3), -66.7);
+  assert.equal(pctChange(100, 0), null);
 });

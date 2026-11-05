@@ -138,7 +138,7 @@ function render(s, fundStatus) {
     ${line('Net profit', peso(s.netProfit), `total ${s.netProfit < 0 ? 'neg-total' : ''}`)}
     ${o.partsBought ? `<p class="hint mt">${peso(o.partsBought)} of auto parts bought to sell is not counted above: it is stock until sold,
       and each part's cost counts as “Cost of parts sold” when it sells.</p>` : ''}
-    ${i.receivables ? `<p class="hint mt">${peso(i.receivables)} of carwash jobs in this period are still unpaid and not counted above.</p>` : ''}`;
+    ${i.receivables ? `<p class="hint mt">${peso(i.receivables)} of jobs in this period are still unpaid and not counted above.</p>` : ''}`;
   $('[data-cashflow]', root).innerHTML = `
     ${line('Cash received', peso(c.cashIn))}
     ${line('GCash received', peso(c.gcashIn))}

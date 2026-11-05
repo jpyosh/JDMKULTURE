@@ -3,7 +3,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { fundStatus, splitBill, daySummary, datesBetween, mondayOf, addDays, round2, DEPARTMENT_KEYS } = require('../lib/calc');
+const { fundStatus, splitBill, periodTotals, profitAndLoss, datesBetween, mondayOf, addDays, round2 } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { loadPayroll } = require('../lib/payroll-data');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
@@ -163,53 +163,17 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   ]);
 
   // Same per-day rules as EOD, added up over the period.
-  const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
-    cashIn: 0, gcashIn: 0, drawerExpenses: 0, fundExpenses: 0, partsBoughtDrawer: 0, partsBoughtFund: 0 };
-  for (const day of dates) {
-    const s = daySummary({
-      date: day, jobs,
-      expenses: expenses.filter(e => e.expense_date === day),
-      meta: metas.find(m => m.job_date === day) || {},
-    });
-    for (const k of DEPARTMENT_KEYS) t.departments[k] += s.departments[k].collected;
-    t.gross += s.collected;
-    t.commission += s.commission;
-    t.receivables += s.receivables;
-    t.partsSales += s.partsSales;
-    t.partsCost += s.partsCost;
-    t.cashIn += s.cashReceived;
-    t.gcashIn += s.gcashReceived;
-    t.drawerExpenses += s.drawerExpenses;
-    t.fundExpenses += s.fundExpenses;
-    t.partsBoughtDrawer += s.partsBoughtDrawer;
-    t.partsBoughtFund += s.partsBoughtFund;
-  }
+  const t = periodTotals({ dates, jobs, expenses, metas });
   const r = n => round2(n);
-  const income = {
-    departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, r(t.departments[k])])),
-    gross: r(t.gross), commission: r(t.commission), net: r(t.gross - t.commission),
-    partsSales: r(t.partsSales), partsCost: r(t.partsCost), receivables: r(t.receivables),
-  };
-
   const billsByFund = [];
   for (const b of bills) {
     const existing = billsByFund.find(x => x.fund_id === b.fund_id);
     if (existing) existing.amount = r(existing.amount + b.amount);
     else billsByFund.push({ fund_id: b.fund_id, name: b.name, amount: b.amount });
   }
-  // Payroll = net pay for work done in the period (cash advances handed out from the drawer
-  // already appear under drawer expenses).
-  const opex = {
-    payroll: payroll.totalNet,
-    bills: billsByFund,
-    billsTotal: r(bills.reduce((s, b) => s + b.amount, 0)),
-    // Parts bought to sell are stock, not a cost: their cost counts when sold (income.partsCost).
-    drawerExpenses: r(t.drawerExpenses - t.partsBoughtDrawer),
-    // Abonos bought with the cash fund: costs, but not money out of the drawer.
-    fundExpenses: r(t.fundExpenses - t.partsBoughtFund),
-    partsBought: r(t.partsBoughtDrawer + t.partsBoughtFund),
-  };
-  opex.total = r(opex.payroll + opex.billsTotal + opex.drawerExpenses + opex.fundExpenses);
+  const pl = profitAndLoss(t, { payroll: payroll.totalNet, billsTotal: r(bills.reduce((sum, b) => sum + b.amount, 0)) });
+  const { income, netProfit } = pl;
+  const opex = { ...pl.opex, bills: billsByFund };
 
   const sumOf = list => r(list.reduce((s, x) => s + x.amount, 0));
   const cashflow = {
@@ -221,7 +185,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     - cashflow.payrollPayouts - cashflow.setAsides - cashflow.billTopUps);
 
   res.json({
-    start, end, income, opex, netProfit: r(income.net - income.partsCost - opex.total), cashflow,
+    start, end, income, opex, netProfit, cashflow,
     // Each bill paid in the period, so one recorded by mistake can be found and undone.
     billPayments: bills,
     funds: funds.map(f => ({

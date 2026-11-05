@@ -21,6 +21,14 @@ export function receipt(job) {
 const detail = (label, value, full) =>
   `<div class="review-detail${full ? ' full' : ''}"><span class="label">${esc(label)}</span><span class="value">${value}</span></div>`;
 
+// What happens to a new Detailing / Tint & PPF job, in the words of its two ticks.
+function runningNote({ job_done: done, payment_received: paid }, day) {
+  if (done && paid) return `Done and paid: it counts as a sale on ${day} and goes straight to Completed.`;
+  if (done) return `It counts as a sale on ${day}, and stays on the board as unpaid until you press Mark paid.`;
+  if (paid) return `The money counts in the drawer on ${day}. The job stays on the board and counts as a sale on the day it is marked done.`;
+  return 'This job stays on the board until it is done and paid. It counts as a sale on the day it is finished.';
+}
+
 // Shows the review modal for a new job and creates it on confirm.
 export function reviewAndCreate({ editor, department, jobDate, onCreated }) {
   const error = editor.validate();
@@ -37,15 +45,15 @@ export function reviewAndCreate({ editor, department, jobDate, onCreated }) {
     <div class="review-details">
       ${detail('Vehicle', `${esc(classLabel(payload.vehicle_class))}${payload.plate ? ` · ${esc(payload.plate.toUpperCase())}` : ''}`)}
       ${detail('Detailer', esc(payload.detailer || '—'))}
-      ${dept.running
-        ? detail('Payment', 'Recorded later with <b>Mark paid</b>', true)
-        : `${detail('Payment', `${esc(payload.payment_method)} · ${payload.payment_received ? 'paid' : '<b class="amber-text">not paid yet</b>'}`)}${detail('GCash tip', peso(payload.tip_gcash))}`}
+      ${detail('Payment', `${esc(payload.payment_method)} · ${payload.payment_received ? 'paid' : '<b class="amber-text">not paid yet</b>'}`)}
+      ${detail('GCash tip', peso(payload.tip_gcash))}
+      ${dept.running ? detail('Job', payload.job_done ? 'Done' : 'In progress') : ''}
       ${detail('Items', lines.map(l => `${esc(l.name)} — ${peso(l.price)}`).join('<br>'), true)}
       ${t.discount ? detail('Discount', `${peso(t.discount)}${payload.discount_reason ? ` · ${esc(payload.discount_reason)}` : ''}`, true) : ''}
       ${detail('Total', `<b>${peso(t.total)}</b>`)}
       ${detail('Commission', peso(t.commission))}
     </div>
-    ${dept.running ? '<p class="hint mt">This job stays on the board until it is marked done and paid, and counts in sales on the later of those two days.</p>' : ''}
+    ${dept.running ? `<p class="hint mt">${esc(runningNote(payload, prettyDate(jobDate)))}</p>` : ''}
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Back</button><button class="btn" type="button" data-confirm>Add job</button></div>`,
   card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
     const timeIn = $('[data-review-time]', card);

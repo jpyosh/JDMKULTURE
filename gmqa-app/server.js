@@ -31,6 +31,7 @@ function createApp({ verifyToken, sandbox = false } = {}) {
   app.use('/api', require('./routes/jobs').router);
   app.use('/api', require('./routes/days').router);
   app.use('/api', require('./routes/reports').router);
+  app.use('/api', require('./routes/analytics').router);
   app.use('/api', require('./routes/payroll').router);
   app.use('/api', require('./routes/finance').router);
   app.use('/api', require('./routes/inventory').router);

@@ -611,7 +611,7 @@ test('add-ons are shared by every department; services stay in their own departm
   assert.match(wrong.data.error, /Detailing/);
 });
 
-test('running job (detailing): carried over until done and paid, counted on the later date', async () => {
+test('running job (detailing): carried over until done and paid, counted on the day it is finished', async () => {
   const paint = await catalogItem('Paint Correction');
   const premium = await catalogItem('Premium Wash');
 
@@ -674,17 +674,89 @@ test('running job (detailing): carried over until done and paid, counted on the 
   assert.deepEqual([unpaid.paid_on, unpaid.payment_received], [null, false]);
   await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { discount: 500 }));
 
-  // Done first, paid later: counts on the payment day.
-  await ok(api(STAFF, 'POST', `/jobs/${job.id}/complete`, { date: '2026-10-12' }));
+  // Done first, paid later: a sale of the finish day (owed until paid), and it stays on the board until paid.
+  const owed = await ok(api(STAFF, 'POST', `/jobs/${job.id}/complete`, { date: '2026-10-12' }));
+  assert.equal(owed.sale_date, '2026-10-12');
+  assert.deepEqual((await ok(api(STAFF, 'GET', '/days/2026-10-12'))).summary.departments.detailing,
+    { jobs: 1, collected: 0, receivables: 4500, commission: 1000, net: -1000 });
+  assert.ok((await ok(api(STAFF, 'GET', '/jobs/active?department=detailing'))).some(j => j.id === job.id), 'on the board until it is paid');
+  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs/completed?department=detailing&since=2026-10-06'))).some(j => j.id === job.id), 'not completed yet');
+
   const later = await ok(api(STAFF, 'POST', `/jobs/${job.id}/pay`, { date: '2026-10-14', payment_method: 'GCash' }));
-  assert.equal(later.sale_date, '2026-10-14');
+  assert.equal(later.sale_date, '2026-10-12');
+  assert.ok(!(await ok(api(STAFF, 'GET', '/jobs/active?department=detailing'))).some(j => j.id === job.id), 'off the board once paid');
+  assert.ok((await ok(api(STAFF, 'GET', '/jobs/completed?department=detailing&since=2026-10-12'))).some(j => j.id === job.id));
+  const s12 = (await ok(api(OWNER, 'GET', '/days/2026-10-12'))).summary;
+  assert.deepEqual([s12.departments.detailing.collected, s12.departments.detailing.receivables], [4500, 0]);
   const s14 = (await ok(api(OWNER, 'GET', '/days/2026-10-14'))).summary;
-  assert.equal(s14.departments.detailing.collected, 4500);
-  assert.equal(s14.gcashReceived, 4500);
+  assert.equal(s14.departments.detailing.collected, 0, 'the sale stays on the finish day');
+  assert.equal(s14.gcashReceived, 4500, 'the money counts on the day it was paid');
+  assert.equal(s14.earlierSalesPaid, 4500);
 
   const report = await ok(api(OWNER, 'GET', '/reports/range?start=2026-10-10&end=2026-10-14'));
-  assert.deepEqual(report.days.find(d => d.date === '2026-10-14').departments, { carwash: 0, detailing: 4500, tint_ppf: 0, parts: 0 });
+  assert.deepEqual(report.days.find(d => d.date === '2026-10-12').departments, { carwash: 0, detailing: 4500, tint_ppf: 0, parts: 0 });
   assert.equal(report.totals.departments.detailing, 4500);
+});
+
+test('a new running job can be entered paid and done, like a carwash job', async () => {
+  const paint = await catalogItem('Paint Correction');
+  const day = '2026-10-20';
+  const entry = extra => ({ job_date: day, department: 'detailing', vehicle_class: 'M', items: [{ catalog_item_id: paint.id }], ...extra });
+  const board = async () => (await ok(api(STAFF, 'GET', '/jobs/active?department=detailing'))).map(j => j.id);
+
+  // Paid and done: a sale of that day, straight to Completed.
+  const both = await ok(api(STAFF, 'POST', '/jobs', entry({ payment_received: true, job_done: true, payment_method: 'GCash', tip_gcash: 100 })));
+  assert.deepEqual([both.closed_on, both.paid_on, both.sale_date, both.payment_received, both.payment_method, both.tip_gcash],
+    [day, day, day, true, 'GCash', 100]);
+  assert.ok(!(await board()).includes(both.id));
+  assert.ok((await ok(api(STAFF, 'GET', `/jobs/completed?department=detailing&date=${day}`))).some(j => j.id === both.id));
+  let s = (await ok(api(STAFF, 'GET', `/days/${day}`))).summary;
+  assert.deepEqual(s.departments.detailing, { jobs: 1, collected: 5000, receivables: 0, commission: 1000, net: 4000 });
+  assert.deepEqual([s.gcashReceived, s.jobTips], [5000, 100]);
+
+  // Paid, still being worked on: the money is in today's drawer, no sale until it is finished.
+  const paidOnly = await ok(api(STAFF, 'POST', '/jobs', entry({ payment_received: true })));
+  assert.deepEqual([paidOnly.closed_on, paidOnly.paid_on, paidOnly.sale_date], [null, day, null]);
+  assert.ok((await board()).includes(paidOnly.id));
+  s = (await ok(api(STAFF, 'GET', `/days/${day}`))).summary;
+  assert.deepEqual([s.cashReceived, s.paidInAdvance, s.departments.detailing.jobs], [5000, 5000, 1]);
+
+  // Done, not paid: a sale of that day, owed, and it stays on the board.
+  const doneOnly = await ok(api(STAFF, 'POST', '/jobs', entry({ job_done: true, payment_method: 'GCash', tip_gcash: 50 })));
+  assert.deepEqual([doneOnly.closed_on, doneOnly.paid_on, doneOnly.sale_date, doneOnly.payment_received], [day, null, day, false]);
+  assert.ok((await board()).includes(doneOnly.id));
+  s = (await ok(api(STAFF, 'GET', `/days/${day}`))).summary;
+  assert.deepEqual(s.departments.detailing, { jobs: 2, collected: 5000, receivables: 5000, commission: 2000, net: 3000 });
+  assert.equal(s.jobTips, 100, 'a tip counts when the customer pays');
+
+  // Neither: the plain running job.
+  const plain = await ok(api(STAFF, 'POST', '/jobs', entry({})));
+  assert.deepEqual([plain.closed_on, plain.paid_on, plain.sale_date], [null, null, null]);
+
+  // Job done means nothing on a carwash job.
+  const premium = await catalogItem('Premium Wash');
+  const wash = await ok(api(STAFF, 'POST', '/jobs', { job_date: day, vehicle_class: 'M', job_done: true, items: [{ catalog_item_id: premium.id }] }));
+  assert.equal(wash.closed_on, null);
+});
+
+test('a running job entered paid or done needs its day open; a later payment does not need the finish day open', async () => {
+  const paint = await catalogItem('Paint Correction');
+  const closed = '2026-10-22';
+  await ok(api(STAFF, 'POST', `/days/${closed}/close`));
+  const entry = extra => ({ job_date: closed, department: 'detailing', vehicle_class: 'S', items: [{ catalog_item_id: paint.id }], ...extra });
+
+  assert.equal((await api(STAFF, 'POST', '/jobs', entry({ payment_received: true }))).status, 403, 'it would change a closed drawer');
+  assert.equal((await api(STAFF, 'POST', '/jobs', entry({ job_done: true }))).status, 403, 'it would add a sale to a closed day');
+  await ok(api(STAFF, 'POST', '/jobs', entry({})));
+  await ok(api(OWNER, 'POST', '/jobs', entry({ job_done: true })));
+
+  // Finished on a day that then closed: the customer can still pay on a later, open day, and that can be undone.
+  const job = await ok(api(STAFF, 'POST', '/jobs', { ...entry({}), job_date: '2026-10-21' }));
+  await ok(api(STAFF, 'POST', `/jobs/${job.id}/complete`, { date: '2026-10-21' }));
+  await ok(api(STAFF, 'POST', '/days/2026-10-21/close'));
+  await ok(api(STAFF, 'POST', `/jobs/${job.id}/pay`, { date: '2026-10-23', payment_method: 'Cash' }));
+  await ok(api(STAFF, 'POST', `/jobs/${job.id}/unpay`));
+  assert.equal((await api(STAFF, 'POST', `/jobs/${job.id}/reopen`)).status, 403, 'its sale day is closed');
 });
 
 test('running jobs respect closed days and roles', async () => {
@@ -1303,4 +1375,66 @@ test('parts counter: an unpaid sale is marked paid on the day the customer pays,
   assert.match((await api(STAFF, 'POST', `/jobs/${cash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Already paid/);
   const wash = await ok(api(STAFF, 'POST', '/jobs', { job_date: D3, vehicle_class: 'S', items: [{ name: 'Wash', price: 300, commission: 50 }] }));
   assert.match((await api(STAFF, 'POST', `/jobs/${wash.id}/pay`, { date: D3, payment_method: 'Cash' })).data.error, /Paid checkbox/);
+});
+
+test('analytics: every period matches Finance, is owner-only and flags days with staff but no sales', async () => {
+  const AS_OF = '2029-03-14'; // a Wednesday; 2029 is used by no other test
+  assert.equal((await api(STAFF, 'GET', `/analytics?grain=week&date=${AS_OF}`)).status, 403);
+  assert.equal((await api(OWNER, 'GET', `/analytics?grain=year&date=${AS_OF}`)).status, 400);
+  assert.equal((await api(OWNER, 'GET', '/analytics?grain=week&date=nope')).status, 400);
+
+  const premium = await catalogItem('Premium Wash');
+  const emp = await ok(api(OWNER, 'POST', '/employees', { name: 'Analytics Tester', role: 'Detailer', rate_per_day: 500, construction_rate: 800 }));
+  const sale = (job_date, extra = {}) => ok(api(STAFF, 'POST', '/jobs', {
+    job_date, vehicle_class: 'S', plate: 'ANL 001', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }], ...extra,
+  }));
+  // Week of Mar 4: two cars on the 5th, one on the 6th. Week of Mar 11: one paid and one unpaid on the 12th.
+  const first = await sale('2029-03-05');
+  await sale('2029-03-05');
+  await sale('2029-03-06');
+  await sale('2029-03-12');
+  await sale('2029-03-12', { payment_received: false });
+  await ok(api(STAFF, 'POST', '/days/2029-03-06/expenses', { side: 'cash', description: 'Soap', amount: 120 }));
+  for (const day of ['2029-03-05', '2029-03-06', '2029-03-07']) {
+    await ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/${day}`, { code: 'P' }));
+  }
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/2029-03-08`, { code: 'CN' }));
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: emp.id, date: '2029-03-13', kind: 'deduction', amount: 50, note: 'Advance' }));
+
+  for (const grain of ['day', 'week', 'month', 'quarter']) {
+    const { periods } = await ok(api(OWNER, 'GET', `/analytics?grain=${grain}&date=${AS_OF}`));
+    for (const p of periods) {
+      const f = await ok(api(OWNER, 'GET', `/finance/summary?start=${p.start}&end=${p.end}`));
+      const name = `${grain} ${p.label}`;
+      assert.equal(p.sales, f.income.gross, `${name} sales`);
+      assert.equal(p.commission, f.income.commission, `${name} commission`);
+      assert.equal(p.payroll, f.opex.payroll, `${name} payroll`);
+      assert.equal(p.bills, f.opex.billsTotal, `${name} bills`);
+      assert.equal(p.expenses, Math.round((f.opex.drawerExpenses + f.opex.fundExpenses) * 100) / 100, `${name} expenses`);
+      assert.equal(p.partsCost, f.income.partsCost, `${name} parts cost`);
+      assert.equal(p.netProfit, f.netProfit, `${name} net profit`);
+      assert.deepEqual(p.departments, f.income.departments, `${name} departments`);
+    }
+  }
+
+  const week = await ok(api(OWNER, 'GET', `/analytics?grain=week&date=${AS_OF}`));
+  assert.equal(week.grain, 'week');
+  assert.equal(week.date, AS_OF);
+  assert.equal(week.periods.length, 8);
+  const [before, now] = week.periods.slice(-2);
+  assert.deepEqual([before.label, before.start, before.end, before.partial], ['Mar 4–10', '2029-03-04', '2029-03-10', false]);
+  assert.deepEqual([now.label, now.start, now.end, now.partial], ['Mar 11–17', '2029-03-11', '2029-03-14', true]);
+  assert.equal(before.cars, 3);
+  assert.equal(before.salesDays, 2);
+  assert.equal(now.cars, 2, 'cars counts the unpaid job, like the sales report');
+  assert.equal(now.salesDays, 1);
+  assert.equal(now.receivables, first.totals.total);
+  assert.equal(before.perDay, Math.round(before.sales / 2 * 100) / 100);
+  assert.equal(before.perCar, Math.round(before.sales / 3 * 100) / 100);
+  // The 7th has carwash attendance and no sales. The 8th is construction work, so it is not flagged.
+  assert.deepEqual(before.staffNoSales, ['2029-03-07']);
+  assert.deepEqual(now.staffNoSales, []);
+  // A week in progress is compared per day with sales, never on its unfinished total.
+  assert.equal(week.change.perDay, Math.round((now.perDay - before.perDay) / before.perDay * 1000) / 10);
+  assert.equal(week.change.perCar, Math.round((now.perCar - before.perCar) / before.perCar * 1000) / 10);
 });

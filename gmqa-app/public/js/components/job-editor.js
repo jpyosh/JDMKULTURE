@@ -5,15 +5,16 @@ import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime } from '
 const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part', labor: 'Labor' };
 const round2 = n => Math.round(n * 100) / 100;
 
-// department: which catalog items are offered. Running departments (detailing, tint/PPF) record
-// payment with Mark paid instead of the checkbox, and lock the amount once paid. The parts counter
-// (no catalog) sells parts and custom items only and needs no vehicle.
+// department: which catalog items are offered. A new running job (detailing, tint/PPF) takes payment like a
+// carwash job, plus Job done. After that it records payment with Mark paid and locks the amount once paid.
+// The parts counter (no catalog) sells parts and custom items only and needs no vehicle.
 // autoTimeWhen: for a new job, () => true when its date is today; Time in then follows the shop clock
 // until the user types a time of their own.
 export function createJobEditor(root, { job = null, department = job?.department || 'carwash', autoTimeWhen = null } = {}) {
   const dept = departmentOf(department);
   const running = dept.running;
   const locked = Boolean(running && job?.paid_on);
+  const takesPayment = !(running && job);
   const originalClass = job?.vehicle_class || '';
   const editor = {
     lines: (job?.items || []).map(i => ({
@@ -51,11 +52,12 @@ export function createJobEditor(root, { job = null, department = job?.department
         <div><label>${dept.catalog ? 'Detailer' : 'Sold by'}</label><input type="text" data-f="detailer" value="${v('detailer')}" placeholder="Name" maxlength="80"></div>
         ${dept.catalog ? `<div><label>Time in</label><input type="time" data-f="time_in" value="${v('time_in')}"></div>` : ''}
         ${job && dept.catalog ? `<div><label>Time out</label><input type="time" data-f="time_out" value="${v('time_out')}"></div>` : ''}
-        ${running ? '' : `${askPayment ? `<fieldset class="choice-group pay-choice" data-pay-choice><legend>Paid with</legend>
+        ${!takesPayment ? '' : `${askPayment ? `<fieldset class="choice-group pay-choice" data-pay-choice><legend>Paid with</legend>
           ${['Cash', 'GCash'].map(p => `<label><input type="radio" name="pay-method-${uid}" data-f="payment_method" value="${p}" ${p === job?.payment_method ? 'checked' : ''}> ${p}</label>`).join('')}</fieldset>`
         : `<div><label>Payment</label><select data-f="payment_method">
           ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>`}
-        <div class="check-cell"><label class="check"><input type="checkbox" data-f="payment_received" ${(job ? job.payment_received : !dept.catalog) ? 'checked' : ''}> Customer paid</label></div>`}
+        <div class="check-cell${running ? ' stacked' : ''}"><label class="check"><input type="checkbox" data-f="payment_received" ${(job ? job.payment_received : !dept.catalog) ? 'checked' : ''}> Customer paid</label>
+          ${running ? '<label class="check"><input type="checkbox" data-f="job_done"> Job done</label>' : ''}</div>`}
       </div>
 
       ${locked ? '<div class="banner">This job is already paid, so its items, class, discount and tip are locked. Undo the payment first to change them.</div>' : ''}
@@ -78,7 +80,7 @@ export function createJobEditor(root, { job = null, department = job?.department
         ${takesLabor ? '<div><label>Labor (to the installer)</label><input type="number" min="0" step="0.01" data-labor placeholder="0.00"></div>' : ''}
         <div><label>Discount</label><input type="number" min="0" step="0.01" data-f="discount" value="${job?.discount || ''}" placeholder="0.00"></div>
         <div class="span-2"><label>Discount reason</label><input type="text" data-f="discount_reason" value="${v('discount_reason')}" placeholder="Optional" maxlength="200"></div>
-        ${running ? '' : `<div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>`}
+        ${!takesPayment ? '' : `<div><label>GCash tip</label><input type="number" min="0" step="0.01" data-f="tip_gcash" value="${job?.tip_gcash || ''}" placeholder="0.00"></div>`}
         <div class="span-2"><label>Remarks</label><input type="text" data-f="remarks" value="${v('remarks')}" placeholder="Optional" maxlength="500"></div>
       </div>
       <div class="editor-totals" data-totals></div>

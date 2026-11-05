@@ -127,4 +127,18 @@ async function loadPayroll(start, end, q = db) {
   };
 }
 
-module.exports = { loadPayroll, loadOtRules, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY };
+// Net pay for the work of start..end, from a loadPayroll covering at least those days.
+function payrollNetBetween({ rows, otRules }, start, end) {
+  const dates = datesBetween(start, end);
+  return round2(rows.reduce((total, row) => total + payrollForRange({
+    dates, days: row.days, rates: row.rates, otRules,
+    adjustments: row.adjustments.filter(a => a.adj_date >= start && a.adj_date <= end),
+  }).net, 0));
+}
+
+// Days anyone worked the carwash (construction work is not a carwash day).
+function carwashWorkDays({ rows }) {
+  return new Set(rows.flatMap(row => Object.entries(row.days).filter(([, d]) => ['P', '0.5P'].includes(d.code)).map(([day]) => day)));
+}
+
+module.exports = { loadPayroll, payrollNetBetween, carwashWorkDays, loadOtRules, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY };
