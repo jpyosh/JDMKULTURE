@@ -18,6 +18,7 @@ const conflict = message => new HttpError(409, message);
 function money(value, field, { min = 0, allowNull = false } = {}) {
   if (value === '' || value === null || value === undefined) {
     if (allowNull) return null;
+    if (min > 0) throw bad(`${field} must be a number of at least ${min}`);
     return 0;
   }
   const n = Number(value);

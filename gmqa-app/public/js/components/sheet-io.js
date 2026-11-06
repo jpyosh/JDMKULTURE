@@ -46,7 +46,7 @@ const HEADERS = {
   commission: ['commission', 'comm', 'communit', 'commissionunit', 'commissionperunit', 'commperunit'],
   reorder_level: ['reorder', 'reorderat', 'reorderlevel', 'reorderpoint', 'minstock', 'minimum'],
   tags: ['tags', 'tag', 'category', 'categories'],
-  stock: ['stock', 'qty', 'quantity', 'onhand', 'stockonhand', 'instock'],
+  stock: ['stock', 'overall', 'overallstock', 'qty', 'quantity', 'onhand', 'stockonhand', 'instock'],
   unit_cost: ['cost', 'unitcost', 'avgcost', 'averagecost', 'costperunit', 'cost/unit'],
   set_size: ['setof', 'setsize', 'piecesperset', 'pcsperset', 'perset'],
   set_price: ['setprice', 'priceperset', 'setsrp'],

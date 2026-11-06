@@ -57,6 +57,7 @@ test('sheet paste: rows copied from Excel/Sheets become items', async () => {
     tags: ['Auto Parts', 'Wheels'], stock: 2, unit_cost: 9000, set_size: null, set_price: null });
   assert.deepEqual(rows[1], { sku: '', name: 'APC', unit: 'gal', price: 0, commission: 0, reorder_level: 0, tags: ['Carwash chemicals'], stock: 3.5,
     unit_cost: 420, set_size: null, set_price: null });
+  assert.equal(importRows([['Item', 'Overall'], ['Wax', '3']]).rows[0].stock, 3, 'the Overall column of an export is its stock');
   assert.equal(rows.length, 2, 'blank rows are skipped; rows with errors are listed, not imported');
   assert.deepEqual(errors, ['Row 5: Selling price "abc" is not a number']);
   assert.deepEqual(importRows([['Price'], ['1']]).errors, ['The header row needs a Name (or Item) column']);

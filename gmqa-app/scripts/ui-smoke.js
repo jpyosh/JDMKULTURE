@@ -786,8 +786,8 @@ async function launch() {
       assert.match(csv.suggestedFilename(), /^Inventory_\d{4}-\d{2}-\d{2}\.csv$/);
       const text = fs.readFileSync(await csv.path(), 'utf8');
       assert.ok(text.startsWith('﻿'), 'Excel-friendly CSV');
-      assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Set of,Set price,Avg cost,Stock,Reorder at,Value/);
-      assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,4,2000,300,12,2,3600/);
+      assert.match(text, /SKU,Item,Unit,Tags,Price,Commission,Set of,Set price,Avg cost,Overall,Carwash,Detailing,Tint & PPF,Total stock,Reorder at,Value/);
+      assert.match(text, /OIL-1L,Engine oil 1L,bottle,Auto Parts,550,0,4,2000,300,12,0,0,0,12,2,3600/);
       await shot('07c-inventory');
     });
 
@@ -827,7 +827,7 @@ async function launch() {
       await page.keyboard.press('Escape');
       assert.equal(await cellText('Snow foam', 'reorder_level'), '3');
       await page.keyboard.press('ArrowLeft');
-      assert.equal(await page.evaluate(() => document.activeElement.dataset.field), 'stock');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.field), 'total_stock');
       await page.keyboard.press('ArrowUp');
       assert.match(await page.evaluate(() => document.activeElement.closest('tr').textContent), /Microfiber/);
 
@@ -840,7 +840,8 @@ async function launch() {
       assert.match(await page.textContent('#modal [data-c-summary]'), /0\.5 gal used/);
       await page.click('#modal [data-confirm]');
       await expectToast(/Count saved/);
-      await cellBecomes('Snow foam', 'stock', '2 Low');
+      await cellBecomes('Snow foam', 'stock', '2');
+      await cellBecomes('Snow foam', 'total_stock', '2 Low');
 
       // Tags are edited from the tags cell.
       await invCell('Snow foam', 'tags').dblclick();
@@ -870,6 +871,152 @@ async function launch() {
       await inv.locator('[data-mode="list"]').click();
       await invRow('Snow foam').waitFor();
       assert.equal(await inv.locator('[data-sheet]').isVisible(), false);
+    });
+
+    await step('inventory containers: send stock to a department, see each container, count there, move it back', async () => {
+      const container = key => inv.locator(`[data-container="${key}"]`);
+      const pick = async key => { await container(key).click(); await page.waitForFunction(k => document.querySelector(`#view-inventory [data-container="${k}"]`).classList.contains('active'), key); };
+      const totalValue = async () => (await inv.locator('[data-foot] [data-total-value]').textContent()).trim();
+      const valueBefore = await totalValue();
+      assert.deepEqual((await inv.locator('[data-container]').allTextContents()).map(t => t.replace(/\s*\d+$/, '').trim()),
+        ['All stock', 'Overall', 'Carwash', 'Detailing', 'Tint & PPF'], 'the four containers, and everything together');
+
+      // The owner sends stock from an item's details.
+      await openItem('Snow foam');
+      await page.click('#modal [data-act="move"]');
+      await page.waitForSelector('#modal[open] [data-m="quantity"]');
+      assert.equal(await page.inputValue('#modal [data-m="from"]'), 'overall');
+      await page.selectOption('#modal [data-m="to"]', 'carwash');
+      await page.fill('#modal [data-m="quantity"]', '1.5');
+      assert.match(await page.textContent('#modal [data-m-hint]'), /Overall 2 → 0\.5[\s\S]*Carwash 0 → 1\.5[\s\S]*No money/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock moved/);
+
+      // The list still shows the shop's total, and where it is. The value and the Low warning do not move.
+      await page.waitForFunction(() => /Carwash 1\.5/.test([...document.querySelectorAll('#view-inventory [data-item]')].find(r => r.textContent.includes('Snow foam'))?.textContent || ''));
+      assert.equal(await invStock('Snow foam'), '2 gal');
+      assert.match(await invRow('Snow foam').textContent(), /Overall 0\.5/);
+      assert.match(await invRow('Snow foam').textContent(), /Low/, 'low stock looks at the total');
+      assert.equal(await totalValue(), valueBefore, 'a move does not change the stock value');
+
+      // Each container on its own: what is in it, and what that is worth.
+      await pick('carwash');
+      await listCount(1);
+      assert.equal(await invStock('Snow foam'), '1.5 gal');
+      assert.match(await totalValue(), /₱[\d,.]+/);
+      await shot('07d-inventory-container');
+
+      // Counting from a container counts in that container.
+      await openItem('Snow foam');
+      assert.match(await page.textContent('#modal [data-panel]'), /Stock\s*2 gal[\s\S]*Overall\s*0\.5[\s\S]*Carwash\s*1\.5/);
+      await page.click('#modal [data-act="count"]');
+      assert.equal(await page.inputValue('#modal [data-c="container"]'), 'carwash');
+      await page.fill('#modal [data-c="counted"]', '1');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /0\.5 gal used/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Count saved/);
+      await waitStock('Snow foam', '1 gal');
+
+      // Moving on to another department, then back to Overall.
+      await openItem('Snow foam');
+      await page.click('#modal [data-act="move"]');
+      assert.equal(await page.inputValue('#modal [data-m="from"]'), 'carwash', 'starts from the container in view');
+      await page.selectOption('#modal [data-m="to"]', 'detailing');
+      await page.fill('#modal [data-m="quantity"]', '5');
+      assert.match(await page.textContent('#modal [data-m-hint]'), /Only 1 gal in Carwash/);
+      assert.equal(await page.locator('#modal [data-confirm]').isDisabled(), true, 'more than is there cannot be sent');
+      await page.fill('#modal [data-m="quantity"]', '1');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock moved/);
+      await listCount(0);
+      await pick('detailing');
+      await listCount(1);
+      await openItem('Snow foam');
+      await page.click('#modal [data-act="move"]');
+      await page.selectOption('#modal [data-m="to"]', 'overall');
+      await page.fill('#modal [data-m="quantity"]', '0.5');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock moved/);
+      await waitStock('Snow foam', '0.5 gal');
+
+      // The history shows each move once, where it went and who did it, and where a count was made.
+      await openItem('Snow foam');
+      await page.click('#modal [data-act="history"]');
+      await page.waitForSelector('#modal[open] .history-list');
+      const history = await page.textContent('#modal .history-list');
+      assert.match(history, /Moved\s*1\.5 gal\s*·\s*Overall → Carwash/);
+      assert.match(history, /Moved\s*1 gal\s*·\s*Carwash → Detailing/);
+      assert.match(history, /Moved\s*0\.5 gal\s*·\s*Detailing → Overall/);
+      assert.match(history, /Used\s*-0\.5 gal\s*·\s*Carwash/);
+      assert.equal((history.match(/Moved/g) || []).length, 3, 'one entry per move');
+      assert.match(await page.locator('#modal .history-entry', { hasText: 'Overall → Carwash' }).textContent(), /owner/i, 'it says who');
+      await page.click('#modal [data-close]');
+      await pick('');
+      await invRow('Snow foam').waitFor();
+
+      // Everything in one department: a count starts there, not in an empty Overall, so the shelf is not counted twice.
+      await openItem('Microfiber 40x40');
+      await page.click('#modal [data-act="move"]');
+      await page.selectOption('#modal [data-m="to"]', 'tint_ppf');
+      await page.fill('#modal [data-m="quantity"]', '24');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock moved/);
+      await page.waitForFunction(() => /Tint & PPF 24/.test([...document.querySelectorAll('#view-inventory [data-item]')].find(r => r.textContent.includes('Microfiber'))?.textContent || ''));
+      await openItem('Microfiber 40x40');
+      await page.click('#modal [data-act="count"]');
+      assert.equal(await page.inputValue('#modal [data-c="container"]'), 'tint_ppf', 'starts where the stock is');
+
+      // More than an empty Overall suggests a recount; going to the right container takes that back.
+      await page.selectOption('#modal [data-c="container"]', 'overall');
+      await page.fill('#modal [data-c="counted"]', '20');
+      assert.equal(await page.inputValue('#modal [data-c="reason"]'), 'recount');
+      await page.selectOption('#modal [data-c="container"]', 'tint_ppf');
+      assert.equal(await page.inputValue('#modal [data-c="reason"]'), 'used', 'the suggestion does not stick');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /4 pc used/);
+      // A reason picked by hand comes back when the suggestion no longer applies.
+      await page.selectOption('#modal [data-c="reason"]', 'damaged');
+      await page.selectOption('#modal [data-c="container"]', 'overall');
+      await page.selectOption('#modal [data-c="container"]', 'tint_ppf');
+      assert.equal(await page.inputValue('#modal [data-c="reason"]'), 'damaged');
+      await page.click('#modal [data-close]');
+      await openItem('Microfiber 40x40');
+      await page.click('#modal [data-act="move"]');
+      assert.equal(await page.inputValue('#modal [data-m="from"]'), 'tint_ppf');
+      await page.selectOption('#modal [data-m="to"]', 'overall');
+      await page.fill('#modal [data-m="quantity"]', '24');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Stock moved/);
+      await page.waitForFunction(() => !/Tint & PPF 24/.test([...document.querySelectorAll('#view-inventory [data-item]')].find(r => r.textContent.includes('Microfiber'))?.textContent || 'Tint & PPF 24'));
+
+      // Auto Parts stay in Overall: no Send, and no container to count in.
+      await openItem('Engine oil 1L');
+      assert.equal(await page.locator('#modal [data-act="move"]').count(), 0, 'auto parts cannot be sent');
+      await page.click('#modal [data-act="count"]');
+      assert.equal(await page.locator('#modal [data-c="container"]').count(), 0);
+      await page.click('#modal [data-close]');
+
+      // The sheet has a column per container; typing in a department's cell records a count there.
+      await inv.locator('[data-mode="sheet"]').click();
+      await sheetRow('Snow foam').waitFor();
+      assert.equal(await cellText('Snow foam', 'stock'), '1');
+      assert.equal(await cellText('Snow foam', 'detailing'), '0.5');
+      assert.equal(await cellText('Snow foam', 'carwash'), '—');
+      await cellBecomes('Snow foam', 'total_stock', '1.5 Low');
+      assert.equal(await cellText('Engine oil 1L', 'detailing'), '—');
+      assert.doesNotMatch(await invCell('Engine oil 1L', 'detailing').getAttribute('class'), /editable/, 'not for auto parts');
+      await sheetRow('Snow foam').locator('[data-act="move"]').waitFor();
+      assert.equal(await sheetRow('Engine oil 1L').locator('[data-act="move"]').count(), 0);
+      await invCell('Snow foam', 'detailing').click();
+      await page.keyboard.type('0.25');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('#modal[open] [data-c="reason"]');
+      assert.equal(await page.inputValue('#modal [data-c="container"]'), 'detailing');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /0\.25 gal used/);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Count saved/);
+      await cellBecomes('Snow foam', 'detailing', '0.25');
+      await inv.locator('[data-mode="list"]').click();
+      await invRow('Snow foam').waitFor();
     });
 
     const partsView = page.locator('#view-parts');
@@ -1775,6 +1922,7 @@ async function launch() {
       await invRow('Microfiber 40x40').waitFor();
       assert.doesNotMatch(await inv.textContent(), /cost|value/i, 'staff must not see costs');
       assert.equal(await inv.locator('[data-paste]').isVisible(), false);
+      assert.equal(await inv.locator('[data-container]').count(), 5, 'staff see every container');
       // In the Sheet too: no cost columns, and only the stock can be changed (it records a count).
       await inv.locator('[data-mode="sheet"]').click();
       await sheetRow('Microfiber 40x40').waitFor();
@@ -1784,8 +1932,12 @@ async function launch() {
       await invRow('Microfiber 40x40').waitFor();
       await openItem('Microfiber 40x40');
       assert.doesNotMatch(await page.textContent('#modal [data-panel]'), /cost|value/i, 'staff must not see costs in the details');
-      for (const act of ['receive', 'history', 'edit']) assert.equal(await page.locator(`#modal [data-act="${act}"]`).count(), 0, `staff cannot ${act}`);
+      for (const act of ['receive', 'history', 'edit', 'move']) assert.equal(await page.locator(`#modal [data-act="${act}"]`).count(), 0, `staff cannot ${act}`);
       await page.click('#modal [data-act="count"]');
+      // Only the owner can raise a count: staff are told why and cannot save it.
+      await page.fill('#modal [data-c="counted"]', '99');
+      assert.match(await page.textContent('#modal [data-c-summary]'), /Only the owner can raise a count/);
+      assert.equal(await page.isDisabled('#modal [data-confirm]'), true);
       await page.fill('#modal [data-c="counted"]', '20');
       await page.click('#modal [data-confirm]');
       await expectToast(/Count saved/);
