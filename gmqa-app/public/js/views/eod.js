@@ -58,6 +58,7 @@ function mount(el) {
             <input type="text" data-e="description" placeholder="What was it for?" maxlength="200">
             <input type="number" min="0.01" step="0.01" data-e="amount" placeholder="Amount">
             <button class="btn ghost" type="button" data-add-expense>+ Add</button>
+            ${isOwner() ? '<label class="check expense-check"><input type="checkbox" data-e="for_resale"> Supplier payment (consigned parts already sold)</label>' : ''}
           </div>
           <div class="hint" data-fund-hint></div>
         </div>
@@ -78,6 +79,7 @@ function mount(el) {
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
   $('[data-sales-report]', root).addEventListener('click', e => busy(e.currentTarget, copySalesReport));
   $('[data-e="side"]', root).addEventListener('change', renderFundHint);
+  $('[data-e="for_resale"]', root)?.addEventListener('change', renderFundHint);
 }
 
 async function show() { await setDate(current.date); }
@@ -138,7 +140,7 @@ function render() {
   $$('.expense-form [data-e], [data-add-expense]', root).forEach(el => { el.disabled = locked(); });
 
   $('[data-expenses]', root).innerHTML = current.day.expenses.length
-    ? current.day.expenses.map(e => `<div class="row-line"><span class="k"><span class="kind-pill ${EXPENSE_PILL[e.side].cls}">${EXPENSE_PILL[e.side].label}</span> ${esc(e.description)}</span>
+    ? current.day.expenses.map(e => `<div class="row-line"><span class="k"><span class="kind-pill ${EXPENSE_PILL[e.side].cls}">${EXPENSE_PILL[e.side].label}</span> ${esc(e.description)}${e.for_resale && !e.from_stock ? ' <span class="muted small">Supplier payment</span>' : ''}</span>
         <span>${peso(e.amount)} ${e.from_stock ? '<span class="muted small" title="Undo it from the item’s stock history in Inventory">from Inventory</span>'
           : locked() || e.topup_id ? '' : `<button class="icon-btn" type="button" data-del-expense="${e.id}" title="Delete">✕</button>`}</span></div>`).join('')
       + (current.day.summary.fundExpenses ? `<div class="hint mt">${peso(current.day.summary.fundExpenses)} was paid from the cash fund, so it is not taken out of the drawer.</div>` : '')
@@ -160,6 +162,10 @@ const EXPENSE_PILL = { cash: { cls: 'service', label: 'Cash' }, gcash: { cls: 'a
 function renderFundHint() {
   const fund = current.cashFund;
   const hint = $('[data-fund-hint]', root);
+  if ($('[data-e="for_resale"]', root)?.checked) {
+    hint.textContent = 'For parts already sold: the money still comes off what was paid from, but its cost is not counted twice in Finance.';
+    return;
+  }
   if ($('[data-e="side"]', root).value !== 'fund') {
     hint.textContent = 'Bought something today\'s sales can\'t cover (an abono)? Choose "Cash fund (abono)" in the first box.';
     return;
@@ -394,10 +400,12 @@ async function addExpense() {
   const body = { side: get('side').value, description: get('description').value.trim(), amount: Number(get('amount').value || 0) };
   if (!body.description) return toast('Describe the expense', 'error');
   if (!(body.amount > 0)) return toast('Enter an amount greater than zero', 'error');
+  if (get('for_resale')?.checked) body.for_resale = true;
   current.day = await api('POST', `/days/${current.date}/expenses`, body);
   if (body.side === 'fund') current.cashFund = await api('GET', '/cash-fund');
   get('description').value = '';
   get('amount').value = '';
+  if (get('for_resale')) get('for_resale').checked = false;
   toast('Expense added');
   render();
 }

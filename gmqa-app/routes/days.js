@@ -4,7 +4,7 @@ const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
 const { daySummary, tipsOwed, salesReport, TIPS_TRACKED_FROM } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
-const { bad, notFound, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
+const { bad, notFound, forbidden, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
 
 const router = express.Router();
@@ -89,10 +89,15 @@ router.post('/days/:date/expenses', async (req, res) => {
   const side = oneOf(req.body.side, ['cash', 'gcash', 'fund'], 'Paid from');
   const amount = money(req.body.amount, 'Amount', { min: 0.01 });
   const description = text(req.body.description, 'Description', { required: true, max: 200 });
+  // A supplier payment (consignment): the parts' cost already counts when they sell, so this money leaves
+  // the drawer without being a second cost. Owner only, because it keeps the amount out of Net profit.
+  const forResale = req.body.for_resale === true;
+  if (forResale && req.user.role !== 'owner') throw forbidden('Only the owner can record a supplier payment');
   await db.tx(req.user.email, async q => {
     await assertDayOpen(q, day, req.user);
     if (side === 'fund') await assertFundCovers(q, amount);
-    await q.query('insert into expenses (expense_date, side, description, amount) values ($1, $2, $3, $4)', [day, side, description, amount]);
+    await q.query('insert into expenses (expense_date, side, description, amount, for_resale) values ($1, $2, $3, $4, $5)',
+      [day, side, description, amount, forResale]);
   });
   res.status(201).json(await loadDay(day));
 });

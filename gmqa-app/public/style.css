@@ -261,6 +261,7 @@ select option,select optgroup{background-color:var(--surface-alt);color:var(--te
 .entry-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
 .expense-form,.inline-form{display:grid;grid-template-columns:110px 1fr 120px auto;gap:8px;margin-top:14px;}
 .inline-form{grid-template-columns:1.4fr 1fr 110px auto;}
+.expense-check{grid-column:1/-1;white-space:normal;}
 .mini-input{width:90px;}
 
 /* job editor */

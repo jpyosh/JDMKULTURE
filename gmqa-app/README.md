@@ -191,6 +191,11 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - How Finance counts deliveries: a supply (not Auto Parts) is a cost on the day it is bought. An auto part
   bought to sell is stock: the money leaves the drawer (EOD, Finance money in/out), but its cost counts
   only as **cost of parts sold** when it sells, so it is never counted twice.
+- **Consignment**: paste or add the item tagged Auto Parts and Consignment, with the dealer price as its cost and
+  no money recorded. It sells like any part, and profit is SRP less dealer price on the day of the sale. To remit,
+  add an EOD expense and tick **Supplier payment** (owner only): the money leaves the drawer or fund, but it is
+  not a second cost in Finance. The Sales Reports profit is a plain total, so it does subtract the payment, as it
+  does for parts bought to sell. Consigned stock counts in the Inventory stock value until sold.
 - Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold as a job order on the
   Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed). A part can stay for days until it is
   installed, so the tab is a running board with the same cards, date arrows and form as Tint & PPF. A walk-in ticks

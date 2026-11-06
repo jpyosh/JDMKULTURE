@@ -1518,3 +1518,40 @@ test('analytics: every period matches Finance, is owner-only and flags days with
   assert.equal(week.change.perDay, Math.round((now.perDay - before.perDay) / before.perDay * 1000) / 10);
   assert.equal(week.change.perCar, Math.round((now.perCar - before.perCar) / before.perCar * 1000) / 10);
 });
+
+test('consignment: a supplier payment leaves the drawer but is not a second cost', async () => {
+  const D = '2030-02-04';
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').name;
+  await ok(api(OWNER, 'POST', '/inventory/import', { date: D, rows: [
+    { name: 'Consigned H95', price: 10990, stock: 2, unit_cost: 7200, tags: [autoParts, 'Consignment'] },
+  ] }));
+  const part = (await ok(api(OWNER, 'GET', '/inventory'))).find(p => p.name === 'Consigned H95');
+  await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: D, department: 'parts', payment_received: true, job_done: true, payment_method: 'Cash', items: [{ part_id: part.id, quantity: 1 }],
+  }));
+
+  // Only the owner marks a payment this way: it keeps the amount out of Net profit.
+  const byStaff = await api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Supplier', amount: 7200, for_resale: true });
+  assert.equal(byStaff.status, 403);
+  assert.deepEqual((await ok(api(OWNER, 'GET', `/days/${D}`))).expenses, [], 'a refused payment records nothing');
+
+  const before = (await ok(api(OWNER, 'GET', `/days/${D}`))).summary;
+  const day = await ok(api(OWNER, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Remit H95 x1', amount: 7200, for_resale: true }));
+  assert.deepEqual(day.expenses.map(e => [e.side, e.amount, e.for_resale, e.from_stock]), [['cash', 7200, true, false]]);
+  assert.equal(day.summary.cashExpenses, 7200, 'the money leaves the drawer');
+  const drawer = s => s.cashFloat + s.cashReceived - s.commissionCash - s.cashExpenses;
+  assert.equal(drawer(day.summary), drawer(before) - 7200, 'expected cash goes down by what was remitted');
+
+  let f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  assert.equal(f.income.partsCost, 7200, 'the cost was counted when the part sold');
+  assert.deepEqual([f.opex.drawerExpenses, f.opex.partsBought, f.cashflow.drawerExpenses], [0, 7200, 7200]);
+  assert.equal(f.netProfit, 3790, 'profit is SRP less dealer price, counted once');
+
+  // An ordinary expense is still a cost, and a supplier payment can be deleted like any other expense.
+  await ok(api(OWNER, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Ice', amount: 90 }));
+  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  assert.deepEqual([f.opex.drawerExpenses, f.netProfit], [90, 3700]);
+  await ok(api(OWNER, 'DELETE', `/expenses/${day.expenses[0].id}`));
+  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  assert.deepEqual([f.opex.partsBought, f.cashflow.drawerExpenses], [0, 90]);
+});
