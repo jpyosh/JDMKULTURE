@@ -2,7 +2,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { analyticsRow, datesBetween, periodBuckets, periodTotals, pctChange, round2, PERIOD_COUNTS } = require('../lib/calc');
+const { analyticsRow, datesBetween, periodBuckets, periodTotals, pctChange, round2, serviceTrends, PERIOD_COUNTS } = require('../lib/calc');
 const { loadJobs } = require('../lib/store');
 const { loadPayroll, payrollNetBetween, carwashWorkDays, SHOP_TODAY } = require('../lib/payroll-data');
 const { date, oneOf } = require('../lib/http');
@@ -38,6 +38,7 @@ router.get('/analytics', requireOwner, async (req, res) => {
     grain, date: day, periods,
     // Per day with sales and per car, so a period still running is compared fairly with a finished one.
     change: { perDay: pctChange(now.perDay, before.perDay), perCar: pctChange(now.perCar, before.perCar) },
+    services: serviceTrends(periods, jobs),
   });
 });
 

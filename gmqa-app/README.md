@@ -136,6 +136,12 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   **per car**, never on its unfinished total.
 - **To check**: a day with carwash attendance (`P` or `0.5P`) and no sales. If the jobs were never entered, that
   period's sales and profit are too low. Construction days are not flagged.
+- **Services** (`serviceTrends` in `lib/calc.js`): each Pricing Matrix service and add-on sold in the periods shown,
+  grouped by the name on the sale, because some catalog items were reused for a different service. Only true renames
+  are merged (`SERVICE_RENAMES`: Standard Wash is Regular Wash). **Sold** counts every job, paid or not, like Cars;
+  **Brought in** is the line price on paid jobs, like Sales. Custom lines, parts and labor are one **Other** line, and
+  discounts have their own line, so services + other − discounts = the period's sales (a test checks this against
+  Finance). **Change** compares sold per day with sales in the last two periods with sales.
 
 ## Cash fund (abonos)
 

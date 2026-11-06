@@ -516,11 +516,62 @@ function periodBuckets(grain, date, count = PERIOD_COUNTS[grain]) {
 // Percent change to one decimal; null when there is nothing to compare with.
 const pctChange = (now, before) => (before ? Math.round((now - before) / before * 1000) / 10 : null);
 
+// Old sale names that are the same service as a current one, so a rename does not look like a trend.
+const SERVICE_RENAMES = new Map([['standard wash', 'Regular Wash']]);
+
+// What each service and add-on sold, period by period, under the name on the sale. periods: analyticsRow results.
+// sold counts every job of the period, paid or not (like Cars); sales counts paid jobs at the line's price (like
+// Sales). Custom lines, parts and labor go in other. A discount is on the whole job, so it is kept apart:
+// services + other − discounts = the period's sales.
+// change and trend compare sold per day with sales in the last two periods that have sales, so a period still
+// running is fair and a day with nothing sold yet is not a fall.
+function serviceTrends(periods, jobs) {
+  const rows = new Map();
+  const other = periods.map(() => 0);
+  const discounts = periods.map(() => 0);
+  for (const job of jobs.filter(isCounted)) {
+    const date = saleDate(job);
+    const at = date ? periods.findIndex(p => date >= p.start && date <= p.end) : -1;
+    if (at < 0) continue;
+    if (job.payment_received) discounts[at] = round2(discounts[at] + Number(job.discount));
+    for (const line of job.items) {
+      const price = job.payment_received ? Number(line.price) : 0;
+      if (line.kind !== 'service' && line.kind !== 'addon') {
+        other[at] = round2(other[at] + price);
+        continue;
+      }
+      const onSale = line.name.trim();
+      const name = SERVICE_RENAMES.get(onSale.toLowerCase()) || onSale;
+      const key = `${line.kind}:${name.toLowerCase()}`;
+      if (!rows.has(key)) rows.set(key, { kind: line.kind, name, periods: periods.map(() => ({ sold: 0, sales: 0 })) });
+      const cell = rows.get(key).periods[at];
+      cell.sold += Number(line.quantity) || 1;
+      cell.sales = round2(cell.sales + price);
+    }
+  }
+
+  const [now, before] = periods.flatMap((p, i) => (p.salesDays ? [i] : [])).reverse();
+  const compared = before !== undefined;
+  const items = [...rows.values()].map(row => {
+    const perDay = i => row.periods[i].sold / periods[i].salesDays;
+    const change = compared ? pctChange(perDay(now), perDay(before)) : null;
+    const isNew = compared && change === null && perDay(now) > 0;
+    return {
+      ...row,
+      sold: row.periods.reduce((t, p) => t + p.sold, 0),
+      sales: sum(row.periods, p => p.sales),
+      change,
+      trend: isNew ? 'new' : change === null ? null : change > 0 ? 'up' : change < 0 ? 'down' : 'flat',
+    };
+  }).sort((a, b) => b.sales - a.sales || b.sold - a.sold || a.name.localeCompare(b.name));
+  return { items, other, discounts, compare: compared ? { now: periods[now].label, before: periods[before].label } : null };
+}
+
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, splitBill,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
-  periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS,
+  periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
 };
