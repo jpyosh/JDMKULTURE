@@ -1074,8 +1074,15 @@ async function launch() {
     });
 
     await step('analytics: daily, weekly, monthly and quarterly', async () => {
+      // The Sold / Brought in buttons can be tapped while the figures are still loading.
+      await page.route('**/api/analytics*', async route => { await new Promise(r => setTimeout(r, 800)); await route.continue(); });
       await page.click('#nav [data-view="analytics"]');
       const view = page.locator('#view-analytics');
+      await view.locator('[data-measure="sales"]').click();
+      await view.locator('[data-measure="sold"]').click();
+      assert.deepEqual(problems, [], 'tapping before the figures arrive');
+      await view.locator('[data-bar]').first().waitFor();
+      await page.unroute('**/api/analytics*');
       await view.locator('[data-date]').fill('2026-09-30');
       await view.locator('[data-date]').dispatchEvent('change');
       assert.deepEqual((await view.locator('[data-grain]').allTextContents()).map(t => t.trim()), ['Daily', 'Weekly', 'Monthly', 'Quarterly']);
@@ -1095,6 +1102,29 @@ async function launch() {
       }
       assert.equal(await view.locator('.weekly-stat').count(), 4);
       assert.match(await view.locator('[data-help]').textContent(), /How to read/);
+      // Services: one trend per service; the figures follow the period picked on the chart and add up to its sales.
+      const services = view.locator('[data-services]');
+      const rows = services.locator('[data-service]');
+      assert.ok(await rows.count() > 0, 'September has services');
+      assert.equal(await rows.first().locator('[data-spark] span').count(), 6, 'one bar per month');
+      const pesos = async el => Number((await el.textContent()).replace(/[₱,]/g, ''));
+      const salesOf = n => view.locator('[data-rows] tr').nth(n).locator('td[data-label="Sales"]');
+      assert.equal(await pesos(services.locator('[data-services-total]')), await pesos(salesOf(0)), 'services add up to the sales of the period');
+      assert.match(await services.locator('[data-services-period]').textContent(), /Sep 2026/);
+      await view.locator('[data-bar="4"]').click();
+      await page.waitForFunction(() => /Aug 2026/.test(document.querySelector('#view-analytics [data-services-period]').textContent));
+      assert.equal(await pesos(services.locator('[data-services-total]')), await pesos(salesOf(1)), 'the totals follow the chosen bar');
+      await view.locator('[data-bar="5"]').click();
+      const soldBars = await rows.first().locator('[data-spark]').getAttribute('aria-label');
+      await services.locator('[data-measure="sales"]').click();
+      assert.notEqual(await rows.first().locator('[data-spark]').getAttribute('aria-label'), soldBars, 'the trend bars switch to pesos');
+      assert.match(await rows.first().locator('[data-spark]').getAttribute('aria-label'), /₱/);
+      await view.locator('[data-grain="week"]').click();
+      await page.waitForFunction(() => document.querySelector('#view-analytics [data-service] [data-spark]')?.querySelectorAll('span').length === 8);
+      assert.equal(await services.locator('[data-measure="sales"]').getAttribute('aria-pressed'), 'true', 'the choice survives a change of period');
+      await services.locator('[data-measure="sold"]').click();
+      await view.locator('[data-grain="month"]').click();
+      await page.waitForFunction(() => document.querySelector('#view-analytics [data-service] [data-spark]')?.querySelectorAll('span').length === 6);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert.ok(overflow <= 0, `page scrolls sideways by ${overflow}px`);
       await shot('08b-analytics');
@@ -1839,6 +1869,18 @@ async function launch() {
         .filter(b => { const r = b.getBoundingClientRect(); return r.left < -1 || r.right > window.innerWidth + 1; }).map(b => b.textContent.trim()));
       assert.deepEqual(offscreen, [], 'payroll buttons cut off on mobile');
       await shot('13-mobile-payroll');
+      // Analytics (owner): the services list fits a phone.
+      await page.click('#nav [data-view="analytics"]');
+      await page.locator('#view-analytics [data-date]').fill('2026-09-30');
+      await page.locator('#view-analytics [data-date]').dispatchEvent('change');
+      await page.locator('#view-analytics [data-service]').first().waitFor();
+      await page.locator('#view-analytics [data-grain="week"]').click();
+      await page.waitForFunction(() => / vs /.test(document.querySelector('#view-analytics [data-services-compare]').textContent));
+      assert.ok(await page.locator('#view-analytics [data-services-compare]').isVisible(), 'a phone shows which periods Change compares');
+      const analyticsSideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(analyticsSideways <= 1, `analytics scrolls sideways by ${analyticsSideways}px on mobile`);
+      await page.locator('#view-analytics [data-services]').scrollIntoViewIfNeeded();
+      await shot('13b-mobile-analytics');
       await shot('12-mobile');
     });
 

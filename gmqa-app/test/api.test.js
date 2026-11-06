@@ -1519,6 +1519,71 @@ test('analytics: every period matches Finance, is owner-only and flags days with
   assert.equal(week.change.perCar, Math.round((now.perCar - before.perCar) / before.perCar * 1000) / 10);
 });
 
+test('analytics services: each service by period, adding up to Finance, rising or falling per day with sales', async () => {
+  const AS_OF = '2031-03-12'; // a Wednesday; 2031 is used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const wax = await catalogItem('Wash and Wax: MTX NanoSil');
+  const coat = await catalogItem('Wash and Wax: Soft99 Fusso Coat');
+  const addon = await catalogItem('Bac 2 Zero');
+  const sale = (job_date, items, extra = {}) => ok(api(STAFF, 'POST', '/jobs', {
+    job_date, vehicle_class: 'S', plate: 'SVC 001', payment_method: 'Cash', payment_received: true, items, ...extra,
+  }));
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').name;
+  await ok(api(OWNER, 'POST', '/inventory/import', { date: '2031-03-01', rows: [{ name: 'Trend Bulb', price: 1000, stock: 5, unit_cost: 400, tags: [autoParts] }] }));
+  const bulb = (await ok(api(OWNER, 'GET', '/inventory'))).find(p => p.name === 'Trend Bulb');
+
+  // Week of Mar 2, two days with sales: Premium on the 3rd (one with a discount), Wax and a custom line on the 4th.
+  const first = await sale('2031-03-03', [{ catalog_item_id: premium.id }, { catalog_item_id: addon.id }]);
+  await sale('2031-03-03', [{ catalog_item_id: premium.id }], { discount: 100 });
+  await sale('2031-03-04', [{ catalog_item_id: wax.id }, { name: 'Scratch removal', price: 500, commission: 0 }]);
+  // Week of Mar 9, one day with sales: Premium paid, unpaid and voided, a new service and a parts job.
+  await sale('2031-03-10', [{ catalog_item_id: premium.id }]);
+  await sale('2031-03-10', [{ catalog_item_id: premium.id }], { payment_received: false });
+  const voided = await sale('2031-03-10', [{ catalog_item_id: premium.id }]);
+  await ok(api(OWNER, 'POST', `/jobs/${voided.id}/void`, { reason: 'Entered twice' }));
+  await sale('2031-03-10', [{ catalog_item_id: coat.id }]);
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2031-03-10', department: 'parts', payment_received: true, job_done: true, payment_method: 'Cash',
+    items: [{ part_id: bulb.id, quantity: 2 }, { labor: 300 }] }));
+
+  for (const grain of ['day', 'week', 'month', 'quarter']) {
+    const { periods, services } = await ok(api(OWNER, 'GET', `/analytics?grain=${grain}&date=${AS_OF}`));
+    for (const [i, p] of periods.entries()) {
+      const f = await ok(api(OWNER, 'GET', `/finance/summary?start=${p.start}&end=${p.end}`));
+      const lines = services.items.reduce((t, s) => t + s.periods[i].sales, 0) + services.other[i] - services.discounts[i];
+      assert.equal(Math.round(lines * 100) / 100, f.income.gross, `${grain} ${p.label}: services, other and discounts add up to Finance`);
+    }
+    for (const s of services.items) assert.equal(s.periods.length, periods.length, `${grain} ${s.name} has every period`);
+  }
+
+  const { periods, services } = await ok(api(OWNER, 'GET', `/analytics?grain=week&date=${AS_OF}`));
+  const [before, now] = [periods.length - 2, periods.length - 1];
+  const named = name => services.items.find(s => s.name === name);
+  assert.deepEqual(services.compare, { now: 'Mar 9–15', before: 'Mar 2–8' });
+  assert.ok(!named('Scratch removal'), 'custom lines are not trended');
+  assert.ok(!named('Trend Bulb') && !named('Labor'), 'parts and labor are not services');
+  assert.equal(named('Bac 2 Zero').kind, 'addon');
+  assert.equal(named('Premium Wash').kind, 'service');
+
+  const price = first.items[0].price;
+  const p = named('Premium Wash');
+  assert.deepEqual(p.periods[before], { sold: 2, sales: price * 2 });
+  assert.deepEqual(p.periods[now], { sold: 2, sales: price }, 'sold counts the unpaid job like Cars, sales only the paid one, and the voided job is out');
+  assert.equal(p.sold, 4);
+  assert.equal(p.sales, price * 3);
+  assert.equal(services.discounts[before], 100);
+  assert.equal(services.other[before], 500);
+  assert.equal(services.other[now], 2300, 'two bulbs and the labor');
+
+  // Compared per day with sales: Premium went from 2 in 2 days to 2 in 1 day.
+  assert.deepEqual([p.change, p.trend], [100, 'up']);
+  const waxRow = named('Wash and Wax: MTX NanoSil');
+  assert.deepEqual([waxRow.change, waxRow.trend], [-100, 'down']);
+  const coatRow = named('Wash and Wax: Soft99 Fusso Coat');
+  assert.deepEqual([coatRow.change, coatRow.trend], [null, 'new']);
+  assert.ok(services.items.every((s, i, all) => !i || all[i - 1].sales >= s.sales), 'biggest earner first');
+  assert.deepEqual(Object.keys(p).sort(), ['change', 'kind', 'name', 'periods', 'sales', 'sold', 'trend'], 'no costs or commission');
+});
+
 test('consignment: a supplier payment leaves the drawer but is not a second cost', async () => {
   const D = '2030-02-04';
   const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').name;
