@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost, periodBuckets, pctChange } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost, periodBuckets, pctChange, serviceTrends } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -360,4 +360,29 @@ test('pctChange: rounded percent, nothing to compare with gives null', () => {
   assert.equal(pctChange(75, 100), -25);
   assert.equal(pctChange(1, 3), -66.7);
   assert.equal(pctChange(100, 0), null);
+});
+
+// Lines are grouped by the name on the sale. Standard Wash is the old name of Regular Wash, so they are one service.
+test('serviceTrends: a renamed service stays one row, and empty periods are skipped when comparing', () => {
+  const line = (name, price, kind = 'service') => ({ kind, name, price, quantity: 1 });
+  const job = (job_date, ...items) => ({ job_date, vehicle_class: 'S', payment_received: true, discount: 0, items });
+  const periods = [
+    { label: 'A', start: '2026-01-01', end: '2026-01-07', salesDays: 2 },
+    { label: 'B', start: '2026-01-08', end: '2026-01-14', salesDays: 1 },
+    { label: 'C', start: '2026-01-15', end: '2026-01-15', salesDays: 0 },
+  ];
+  const { items, compare } = serviceTrends(periods, [
+    job('2026-01-02', line('Standard Wash', 300)),
+    job('2026-01-03', line(' regular wash', 400), line('Regular Wash', 400, 'addon')),
+    job('2026-01-09', line('Regular Wash', 400)),
+  ]);
+  assert.deepEqual(compare, { now: 'B', before: 'A' }, 'a day with no sales yet is not a fall');
+  assert.deepEqual(items.map(s => [s.kind, s.name, s.sold, s.sales]), [['service', 'Regular Wash', 3, 1100], ['addon', 'Regular Wash', 1, 400]]);
+  assert.deepEqual(items[0].periods.map(p => p.sold), [2, 1, 0]);
+  assert.deepEqual([items[0].change, items[0].trend], [0, 'flat']);
+  assert.deepEqual([items[1].change, items[1].trend], [-100, 'down']);
+
+  const lonely = serviceTrends(periods.slice(0, 1), [job('2026-01-02', line('Regular Wash', 400))]);
+  assert.equal(lonely.compare, null);
+  assert.deepEqual([lonely.items[0].change, lonely.items[0].trend], [null, null]);
 });

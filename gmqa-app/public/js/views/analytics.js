@@ -8,6 +8,7 @@ let root;
 let grain = 'week';
 let data = null;
 let selected = -1;
+let measure = 'sold'; // what the services' trend bars show: 'sold' or 'sales'
 let lastRequest = 0;
 
 function mount(el) {
@@ -29,6 +30,18 @@ function mount(el) {
       <div data-chart></div>
       <div class="analytics-note" data-chart-note></div>
     </div>
+    <div class="card analytics-services" data-services>
+      <div class="analytics-services-head">
+        <div><h2>Services</h2><div class="analytics-note" data-services-period aria-live="polite"></div></div>
+        <div class="segmented compact" role="group" aria-label="Trend bars show">
+          <button type="button" data-measure="sold">Sold</button><button type="button" data-measure="sales">Brought in</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table class="weekly-table service-table">
+        <thead><tr><th>Service</th><th>Trend</th><th class="num">Sold</th><th class="num">Brought in</th><th class="num">Change<small data-services-compare></small></th></tr></thead>
+        <tbody data-service-rows></tbody>
+      </table></div>
+    </div>
     <div class="card">
       <div class="table-wrap"><table class="weekly-table">
         <thead><tr><th>Period</th><th class="num">Days with sales</th><th class="num">Cars</th><th class="num">Sales</th><th class="num">Per day</th><th class="num">Per car</th>
@@ -44,6 +57,9 @@ function mount(el) {
         <li><b>Per day</b>: sales ÷ days with sales. Use it to compare periods, because a period still running has fewer days. <b>Per car</b>: sales ÷ cars.</li>
         <li><b>Net profit</b>: sales − commission − parts cost − expenses − payroll − bills, the same as Finance. Bills count on the day they are paid, so one big bill can make a single day or week look bad.</li>
         <li><b>To check</b>: someone was marked present at the carwash on a day with no sales. If those jobs were never entered, sales and profit for that period are too low.</li>
+        <li><b>Services</b>: every Pricing Matrix service and add-on sold in the periods shown, biggest earner first, under the name on the sale (Standard Wash counts as Regular Wash). Tap a bar in the chart above to see another period.</li>
+        <li><b>Sold</b>: how many, paid or not, like Cars. <b>Brought in</b>: list price of the paid ones, like Sales. <b>Other</b> is custom items, parts and labor. Discounts are on the whole job, so they have their own line, and everything adds up to Sales.</li>
+        <li><b>Trend</b>: each service's bars use its own scale, so they show its shape, not its size next to other services. <b>Change</b>: how many sold per day with sales in the last two periods with sales. <b>New</b> means none sold in the period before. Few sales swing the percentage a lot.</li>
       </ul>
     </details>`;
   $('[data-date]', root).value = todayLocal();
@@ -51,6 +67,10 @@ function mount(el) {
   $$('[data-grain]', root).forEach(b => b.addEventListener('click', () => {
     grain = b.dataset.grain;
     load();
+  }));
+  $$('[data-measure]', root).forEach(b => b.addEventListener('click', () => {
+    measure = b.dataset.measure;
+    renderServices();
   }));
 }
 
@@ -134,6 +154,44 @@ function paintSelection() {
   const p = data.periods[selected];
   $$('[data-bar]', root).forEach(bar => bar.classList.toggle('selected', Number(bar.dataset.bar) === selected));
   $('[data-readout]', root).textContent = `${p.label}${p.partial ? ' so far' : ''}: ${peso(p.sales)} · ${plural(p.cars, 'car')} · net profit ${peso(p.netProfit)}`;
+  renderServices();
+}
+
+const CHANGE_TEXT = { up: pct => `▲ ${pct}%`, down: pct => `▼ ${Math.abs(pct)}%`, flat: () => 'Same', new: () => 'New' };
+
+// One bar per period, on the service's own scale.
+function spark(s) {
+  const { periods } = data;
+  const show = v => (measure === 'sales' ? peso(v) : String(v));
+  const top = Math.max(...s.periods.map(c => c[measure]), 1);
+  const bars = s.periods.map((c, i) => `<span class="${[periods[i].partial && 'partial', i === selected && 'selected'].filter(Boolean).join(' ')}"
+    style="height:${(c[measure] / top * 100).toFixed(1)}%" title="${esc(periods[i].label)}: ${esc(show(c[measure]))}"></span>`).join('');
+  const said = s.periods.map((c, i) => `${periods[i].label} ${show(c[measure])}`).join(', ');
+  return `<div class="service-spark" data-spark role="img" aria-label="${esc(`${measure === 'sales' ? 'Brought in' : 'Sold'}: ${said}`)}">${bars}</div>`;
+}
+
+function renderServices() {
+  const { items, other, discounts, compare } = data.services;
+  const p = data.periods[selected];
+  $$('[data-measure]', root).forEach(b => {
+    const active = b.dataset.measure === measure;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  });
+  $('[data-services-period]', root).textContent = `Sold and brought in: ${p.label}${p.partial ? ' so far' : ''}. Tap a bar in the chart above for another period.`;
+  $('[data-services-compare]', root).textContent = compare ? `${compare.now} vs ${compare.before}` : '';
+  const rows = items.map(s => `<tr data-service>
+    <td><strong>${esc(s.name)}</strong>${s.kind === 'addon' ? ' <span class="muted small">Add-on</span>' : ''}</td>
+    <td data-label="Trend">${spark(s)}</td>
+    <td class="num" data-label="Sold">${s.periods[selected].sold}</td>
+    <td class="num money" data-label="Brought in">${peso(s.periods[selected].sales)}</td>
+    <td class="num service-change ${s.trend || ''}" data-label="Change">${s.trend ? CHANGE_TEXT[s.trend](s.change) : '–'}</td></tr>`).join('');
+  const line = (label, amount, attr = '') => `<tr class="weekly-total"><td colspan="3">${label}</td>
+    <td class="num money" data-label="Brought in" ${attr}>${amount}</td><td></td></tr>`;
+  $('[data-service-rows]', root).innerHTML = (rows || '<tr><td colspan="5" class="muted">No services sold in these periods.</td></tr>')
+    + line('Other: custom items, parts, labor', peso(other[selected]))
+    + line('Discounts', `−${peso(discounts[selected])}`)
+    + line('Sales', peso(p.sales), 'data-services-total');
 }
 
 export default { mount, show };
