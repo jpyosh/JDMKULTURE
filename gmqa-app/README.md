@@ -11,7 +11,7 @@ Auth, deployed on Vercel.
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
 | Parts — job orders (open, done, paid; labor, itemized) and the auto parts for sale | ✓ | ✓ (no costs) |
-| Inventory — everything stocked, tags, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
+| Inventory — everything stocked, tags, department containers, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
 | Analytics — daily, weekly, monthly, quarterly trends | ✓ | — |
@@ -163,6 +163,16 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Inventory** tab: everything the shop stocks — auto parts for sale, carwash and detailing chemicals,
   wash mitts, drying towels, microfibers, machines — with SKU, unit, tags, stock and a reorder level
   (low-stock warning). Machines are counted like any other item.
+- **Containers**: stock sits in four places: **Overall**, **Carwash**, **Detailing** and **Tint & PPF**. Deliveries and
+  pasted stock land in Overall, and auto parts stay there, where they are sold. Tags only label an item; a container
+  holds a quantity of it. The chips above the tags show All stock or one container (its items, stock and value).
+  **Send** (owner, on an item's details or its Sheet row) moves a quantity between any two containers, back to Overall
+  and between departments too. Auto Parts cannot be sent, and an item with stock in a department cannot be tagged Auto
+  Parts until that stock is back in Overall. A move is never a cost: Finance, EOD and the drawer do not change, and
+  the item's total and average cost stay. Stock value counts every container at the item's average cost, and the
+  low-stock warning looks at the total of all four. A move shows once in the item's history (it is stored as two lines
+  that cancel out, kind `transfer`), with who did it. Migration 018 adds `department_stock` and
+  `stock_movements.department` (null = Overall); `parts.stock` is Overall.
 - **Tags** group items (any number per item; owner adds, renames, recolours, deletes them). The built-in
   **Auto Parts** tag is what makes an item *for sale*: only those appear on the **Parts** tab and in a
   job's "+ Add part". It can be renamed but not deleted, and an item tagged with it needs a selling price.
@@ -173,16 +183,19 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Sheet** (Inventory's List / Sheet switch, remembered per device, starts on List): every item in a grid edited
   in place like Excel. Click a cell and type to replace it; Enter saves and moves down, Tab saves and moves
   right (Shift goes back), Escape cancels, arrow keys move, F2 or double-click edits. Column headers sort; the
-  item name stays frozen. The owner edits every field except Avg cost and Value; staff only the Stock column.
-  Typing in Stock opens a count with a reason, it never just overwrites the number. Double-click Tags to pick
-  tags. Each row keeps Receive, Count, History (with Correct cost) and Edit.
-- **Export CSV** opens in Excel / Google Sheets (what is shown, costs only for the owner).
+  item name stays frozen. The owner edits every field except Avg cost, Total and Value; staff only the container
+  columns (Overall, Carwash, Detailing, Tint & PPF). Typing in a container column opens a count there with a reason,
+  it never just overwrites the number. Double-click Tags to pick tags. Each row keeps Receive, Send (not for Auto
+  Parts), Count, History (with Correct cost) and Edit.
+- **Export CSV** opens in Excel / Google Sheets (what is shown, costs only for the owner), with a column per
+  container and the total.
   **Paste from Excel** (owner): copy rows with their header row from Excel or Sheets; it shows a preview
-  and any row errors, then adds all rows or none. Stock is added as opening stock at its cost; new tag
+  and any row errors, then adds all rows or none. Stock goes into Overall as opening stock at its cost; new tag
   names are created. It only adds new items (an existing name or SKU is refused); edit those in the sheet.
 - **Counting is how usage is tracked**: chemicals and supplies are not logged per job. Anyone (staff too)
-  records what is on the shelf; the difference is recorded as **Used** (or Damaged / Lost, or a Recount
-  correction up or down). A count never just overwrites the number.
+  records what is on the shelf, in any container (Auto Parts: Overall only); the difference is recorded as **Used**
+  (or Damaged / Lost, or a Recount correction) in that container. Only the owner can raise a number; staff who find
+  more than the record ask the owner to correct it. A count never just overwrites the number.
 - **Receive** (owner) adds a delivery and updates the weighted average cost. **Paid with**: drawer cash,
   GCash or the cash fund records the amount as that day's expense (it shows on EOD as "from Inventory"
   and can only be undone from Inventory; the cash fund refuses more than it holds), or **Already paid /

@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -529,7 +529,7 @@ test('017 makes every existing counter sale a finished job on its own day, so no
   const rest = 'id, department, jo_number, job_date, payment_received, payment_method, voided_at, void_reason, sale_date';
   const before = await all(driver, `select ${rest} from jobs order by id`);
 
-  assert.deepEqual(await migrate(driver, quiet), ['017']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '017' }), ['017']);
   assert.deepEqual(await all(driver, `select ${rest} from jobs order by id`), before, 'same sale days, same payment, same void');
   assert.deepEqual((await all(driver, 'select jo_number, closed_on, paid_on from jobs order by id')).map(j => [j.jo_number, j.closed_on, j.paid_on]), [
     ['PC-1', '2027-05-01', '2027-05-01'], // paid when it was made
@@ -565,4 +565,43 @@ test('012 records the GCash tips given to the crew each day, leaving earlier day
   await assert.rejects(driver.query('update daily_meta set gcash_tips_passed = -1'), /check/i);
   await driver.query("update daily_meta set gcash_tips_passed = 25 where job_date = '2026-11-02'");
   assert.ok((await one(driver, "select count(*)::int as n from audit_log where table_name = 'daily_meta' and (new_row->>'gcash_tips_passed')::numeric = 25")).n >= 1, 'audited');
+});
+
+test('018 adds the department containers: every item keeps all its stock in Overall and no history changes', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '017' });
+  const part = await one(driver, "insert into parts (name, stock, avg_cost) values ('Shampoo', 10, 120) returning id");
+  await driver.query("insert into stock_movements (part_id, moved_on, kind, quantity, unit_cost) values ($1, '2027-06-01', 'receive', 10, 120)", [part.id]);
+  const parts = await all(driver, 'select * from parts order by id');
+  const moves = await all(driver, 'select * from stock_movements order by id');
+
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '018' }), ['018']);
+  assert.deepEqual(await all(driver, 'select * from parts order by id'), parts, 'items are unchanged');
+  assert.deepEqual((await all(driver, 'select * from stock_movements order by id')).map(({ department, ...m }) => m), moves, 'history is unchanged');
+  assert.deepEqual((await all(driver, 'select department from stock_movements')).map(m => m.department), [null], 'older changes were in Overall');
+  assert.equal((await one(driver, 'select count(*)::int n from department_stock')).n, 0, 'nothing has been sent anywhere');
+
+  // Only the three departments are containers, one row per item and department, never below zero.
+  await driver.query("insert into department_stock (part_id, department, stock) values ($1, 'carwash', 2), ($1, 'detailing', 0), ($1, 'tint_ppf', 1)", [part.id]);
+  await assert.rejects(driver.query("insert into department_stock (part_id, department, stock) values ($1, 'parts', 1)", [part.id]), /check/i);
+  await assert.rejects(driver.query("insert into department_stock (part_id, department, stock) values ($1, 'carwash', 1)", [part.id]), /duplicate|unique/i);
+  await assert.rejects(driver.query('update department_stock set stock = -1 where part_id = $1', [part.id]), /check/i);
+
+  // A move is a 'transfer', up or down. Only moves, use and counts happen in a department.
+  const insert = (kind, quantity, department) => driver.query(
+    'insert into stock_movements (part_id, moved_on, kind, quantity, department) values ($1, $2, $3, $4, $5)', [part.id, '2027-06-02', kind, quantity, department]);
+  await insert('transfer', -2, null);
+  await insert('transfer', 2, 'carwash');
+  await insert('use', -1, 'carwash');
+  await insert('adjust', 1, 'detailing');
+  await assert.rejects(insert('receive', 1, 'carwash'), /check/i, 'deliveries land in Overall');
+  await assert.rejects(insert('sale', -1, 'carwash'), /check/i, 'sales come out of Overall');
+  await assert.rejects(insert('return', 1, 'carwash'), /check/i, 'returns go back to Overall');
+  await assert.rejects(insert('transfer', 1, 'parts'), /check/i, 'not a container');
+  await assert.rejects(insert('transfer', 0, null), /check/i);
+
+  // Every change is audited, and the public API cannot reach the table.
+  const audited = await all(driver, "select action from audit_log where table_name = 'department_stock'");
+  assert.ok(audited.length >= 3, 'department stock changes are in the audit log');
+  assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'department_stock'")).rls, true);
 });

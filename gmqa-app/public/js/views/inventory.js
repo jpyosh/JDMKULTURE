@@ -1,15 +1,16 @@
 // Inventory: everything the shop stocks (parts for sale, chemicals, mitts, towels, machines), two ways: a simple
 // list (name and tags, price, stock; tap an item for its details and what can be done with it) or a sheet edited
 // in place like Excel. Tags group items; the ones tagged Auto Parts are for sale (Parts tab and job orders).
-// Everyone can record a stock count (the difference is what was used); the owner edits items and tags, receives
-// deliveries, and sees costs and history.
+// Stock sits in four containers: Overall (deliveries land here, auto parts sell from here), Carwash, Detailing and
+// Tint & PPF. Everyone can record a stock count in any of them (the difference is what was used); the owner edits
+// items and tags, receives deliveries, moves stock between containers, and sees costs and history.
 import { $, $$, api, esc, peso, toast, busy, todayLocal, openModal, closeModal, modalHeader, isOwner, loadCatalog } from '../ui.js';
 import { toCsv, parsePasted, importRows } from '../components/sheet-io.js';
 
 let root;
 let items = [];
 let tags = [];
-const filter = { tag: '', search: '' };
+const filter = { tag: '', search: '', container: '' };
 const sort = { field: 'name', dir: 1 };
 let editing = null;
 
@@ -31,35 +32,52 @@ const COLUMNS = [
   { field: 'set_size', label: 'Set of', type: 'qty', edit: 'owner', optional: true },
   { field: 'set_price', label: 'Set price', type: 'money', edit: 'owner', optional: true },
   { field: 'avg_cost', label: 'Avg cost', type: 'money', ownerOnly: true },
-  { field: 'stock', label: 'Stock', type: 'qty', edit: 'count' },
+  // One column per container; typing in any of them records a count there.
+  { field: 'stock', label: 'Overall', type: 'qty', edit: 'count', container: 'overall' },
+  { field: 'carwash', label: 'Carwash', type: 'qty', edit: 'count', container: 'carwash', optional: true },
+  { field: 'detailing', label: 'Detailing', type: 'qty', edit: 'count', container: 'detailing', optional: true },
+  { field: 'tint_ppf', label: 'Tint & PPF', type: 'qty', edit: 'count', container: 'tint_ppf', optional: true },
+  { field: 'total_stock', label: 'Total', type: 'qty' },
   { field: 'reorder_level', label: 'Reorder at', type: 'qty', edit: 'owner' },
   { field: 'value', label: 'Value', type: 'money', ownerOnly: true },
 ];
 const columns = () => COLUMNS.filter(c => !c.ownerOnly || isOwner());
-const editable = col => col.edit === 'count' || (col.edit === 'owner' && isOwner());
+// Auto parts stay in Overall, so a department's cell is not theirs to count.
+const editable = (col, item) => (col.edit === 'count' && !(item.for_sale && col.container !== 'overall')) || (col.edit === 'owner' && isOwner());
 
 const PAID_FROM = [['cash', 'Drawer cash'], ['gcash', 'GCash'], ['fund', 'Cash fund (abono)'], ['none', 'Already paid / opening stock']];
 const COUNT_REASONS = [['used', 'Used'], ['damaged', 'Damaged'], ['lost', 'Lost'], ['recount', 'Recount (correct the number)']];
-const MOVE_LABEL = { receive: 'Received', sale: 'Sold', return: 'Returned', adjust: 'Adjusted', use: 'Used' };
+const MOVE_LABEL = { receive: 'Received', sale: 'Sold', return: 'Returned', adjust: 'Adjusted', use: 'Used', transfer: 'Moved' };
+// Same list as the server (lib/inventory.js).
+const CONTAINERS = [['overall', 'Overall'], ['carwash', 'Carwash'], ['detailing', 'Detailing'], ['tint_ppf', 'Tint & PPF']];
 // Same list and order as the server (routes/inventory.js); new tags get the first colour no other tag has.
 const TAG_COLORS = ['red', 'blue', 'amber', 'green', 'violet', 'orange', 'teal', 'pink', 'lime', 'indigo', 'coral', 'mint', 'grape', 'sky', 'brown', 'rose', 'olive', 'slate'];
 
 const qty = n => String(Math.round(Number(n || 0) * 100) / 100);
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
-const valueOf = item => Math.round(Number(item.stock) * Number(item.avg_cost || 0) * 100) / 100;
+const containerName = key => CONTAINERS.find(c => c[0] === key)[1];
+const stockIn = (item, key) => (key === 'overall' ? Number(item.stock) : Number(item.departments[key] || 0));
+// What the item is worth: everything the shop holds of it, or what is in the container being viewed.
+const valueOf = (item, stock = item.total_stock) => Math.round(Number(stock) * Number(item.avg_cost || 0) * 100) / 100;
+const shownStock = item => (filter.container ? stockIn(item, filter.container) : item.total_stock);
+const heldIn = item => CONTAINERS.filter(([key]) => stockIn(item, key) > 0);
+const inDepartment = item => Object.keys(item.departments).length > 0;
 const tagOf = tagId => tags.find(t => t.id === tagId);
 const tagChip = tag => tag ? `<span class="tag-chip c-${esc(tag.color)}">${esc(tag.name)}</span>` : '';
 const tagChips = item => item.tags.map(t => tagChip(tagOf(t))).join('');
 const hasSet = item => Number(item.set_size) > 1 && Number(item.set_price) > 0;
-const rawValue = (item, field) => (field === 'value' ? valueOf(item) : item[field]);
+const rawValue = (item, field) => (field === 'value' ? valueOf(item, shownStock(item))
+  : CONTAINERS.some(c => c[0] === field) ? stockIn(item, field) : item[field]);
+const emptyText = () => (filter.container && items.length && !filter.search && !filter.tag ? `Nothing in ${containerName(filter.container)} yet.`
+  : items.length ? 'Nothing matches.' : `No items yet.${isOwner() ? ' Add one with “+ New item”, or paste your list from Excel.' : ''}`);
 
 function mount(el) {
   root = el;
-  Object.assign(filter, { tag: '', search: '' });
+  Object.assign(filter, { tag: '', search: '', container: '' });
   const owner = isOwner();
   root.innerHTML = `
     <div class="view-header">
-      <div><h1>Inventory</h1><div class="desc">Everything the shop stocks. Tap an item to count${owner ? ', receive or edit' : ''} it${owner ? ', or use <b>Sheet</b> to edit right in the cells' : ''}.
+      <div><h1>Inventory</h1><div class="desc">Everything the shop stocks. Tap an item to count${owner ? ', receive, send to a department or edit' : ''} it${owner ? ', or use <b>Sheet</b> to edit right in the cells' : ''}.
         Tag an item <b>Auto Parts</b> to sell it.</div></div>
       <div class="header-actions">
         <div class="segmented compact" role="group" aria-label="View">
@@ -73,6 +91,7 @@ function mount(el) {
     <div data-low></div>
     <div class="list-toolbar">
       <input type="text" enterkeyhint="search" data-search placeholder="Search item or SKU" aria-label="Search item or SKU">
+      <div class="chip-row" data-container-filters role="group" aria-label="Container"></div>
       <div class="chip-row" data-tag-filters></div>
     </div>
     <div class="card list-card" data-list-card>
@@ -109,10 +128,10 @@ async function reload({ catalog = false } = {}) {
   if (catalog) await loadCatalog(true);
 }
 
-// Sorted by name (the API's order), filtered by the tag chip and the search box.
+// Sorted by name (the API's order), filtered by the container, the tag chip and the search box.
 function visibleItems() {
   const tagId = Number(filter.tag) || null;
-  return items.filter(i => (!tagId || i.tags.includes(tagId))
+  return items.filter(i => (!filter.container || stockIn(i, filter.container) > 0) && (!tagId || i.tags.includes(tagId))
     && (!filter.search || i.name.toLowerCase().includes(filter.search) || (i.sku || '').toLowerCase().includes(filter.search)));
 }
 
@@ -128,7 +147,11 @@ function render() {
   editing = null;
   const low = items.filter(i => i.low);
   $('[data-low]', root).innerHTML = low.length
-    ? `<div class="banner"><span>Low stock: ${low.map(i => `<b>${esc(i.name)}</b> (${qty(i.stock)} ${esc(i.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
+    ? `<div class="banner"><span>Low stock: ${low.map(i => `<b>${esc(i.name)}</b> (${qty(i.total_stock)} ${esc(i.unit)})`).join(', ')}. Time to reorder.</span></div>` : '';
+  $('[data-container-filters]', root).innerHTML = [['', 'All stock'], ...CONTAINERS].map(([key, label]) => `<button type="button"
+      class="filter-chip ${filter.container === key ? 'active' : ''}" data-container="${key}" aria-pressed="${filter.container === key}">${label}
+      <span>${key ? items.filter(i => stockIn(i, key) > 0).length : items.length}</span></button>`).join('');
+  $$('[data-container]', root).forEach(b => b.addEventListener('click', () => { filter.container = b.dataset.container; render(); }));
   $('[data-tag-filters]', root).innerHTML = [`<button type="button" class="filter-chip ${filter.tag ? '' : 'active'}" data-tag-filter="">All <span>${items.length}</span></button>`,
     ...tags.map(t => `<button type="button" class="filter-chip ${Number(filter.tag) === t.id ? 'active' : ''}" data-tag-filter="${t.id}">
       <i class="dot c-${esc(t.color)}"></i>${esc(t.name)} <span>${items.filter(i => i.tags.includes(t.id)).length}</span></button>`)].join('');
@@ -144,14 +167,18 @@ function renderList() {
   const list = visibleItems();
   $('[data-list]', root).innerHTML = list.length ? list.map(item => `<button type="button" class="list-row" data-item="${item.id}">
       <span class="list-main"><span class="list-name">${esc(item.name)}</span>
-        <span class="list-sub">${tagChips(item)}${hasSet(item) ? `<span class="muted small">set of ${qty(item.set_size)} · ${peso(item.set_price)}</span>` : ''}</span></span>
+        <span class="list-sub">${tagChips(item)}${hasSet(item) ? `<span class="muted small">set of ${qty(item.set_size)} · ${peso(item.set_price)}</span>` : ''}
+          ${!filter.container && inDepartment(item) ? `<span class="muted small" data-spread>${heldIn(item).map(([key, label]) => `${label} ${qty(stockIn(item, key))}`).join(' · ')}</span>` : ''}</span></span>
       <span class="list-price" data-price>${item.for_sale ? peso(item.price) : ''}</span>
-      <span class="list-stock"><span data-stock>${qty(item.stock)} ${esc(item.unit)}</span>${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}</span>
+      <span class="list-stock"><span data-stock>${qty(shownStock(item))} ${esc(item.unit)}</span>${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}</span>
     </button>`).join('')
-    : `<div class="empty-state small">${items.length ? 'Nothing matches.' : `No items yet.${owner ? ' Add one with “+ New item”, or paste your list from Excel.' : ''}`}</div>`;
+    : `<div class="empty-state small">${emptyText()}</div>`;
   $('[data-foot]', root).innerHTML = `<span>${list.length} item${list.length === 1 ? '' : 's'}</span>
-    ${owner ? `<span>Stock value <b class="money" data-total-value>${peso(list.reduce((s, i) => s + valueOf(i), 0))}</b></span>` : ''}`;
+    ${owner ? valueFoot(list) : ''}`;
 }
+
+const valueFoot = list => `<span>${filter.container ? `${containerName(filter.container)} stock value` : 'Stock value'}
+  <b class="money" data-total-value>${peso(list.reduce((s, i) => s + valueOf(i, shownStock(i)), 0))}</b></span>`;
 
 // ---------------------------------------------------------------- sheet
 
@@ -160,7 +187,7 @@ function cellHtml(item, col) {
   if (col.type === 'tags') return tagChips(item) || '<span class="muted">—</span>';
   if (v == null || ((col.field === 'price' || col.field === 'commission' || col.optional) && !Number(v))) return '<span class="muted">—</span>';
   if (col.type === 'money') return peso(v);
-  if (col.type === 'qty') return col.field === 'stock' && item.low ? `${qty(v)} <span class="status-pill waiting">Low</span>` : qty(v);
+  if (col.type === 'qty') return col.field === 'total_stock' && item.low ? `${qty(v)} <span class="status-pill waiting">Low</span>` : qty(v);
   return v ? esc(v) : '<span class="muted">—</span>';
 }
 
@@ -174,11 +201,11 @@ function renderSheet() {
       aria-sort="${sort.field === c.field ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button">${c.label}${arrow(c.field)}</button></th>`).join('')}
       <th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>${list.length ? list.map(item => `<tr data-item="${item.id}">${cols.map(c => `<td data-field="${c.field}" tabindex="-1"
-        class="${c.type === 'money' || c.type === 'qty' ? 'num' : ''} ${editable(c) ? 'editable' : ''} ${c.field === 'sku' ? 'mono' : ''}">${cellHtml(item, c)}</td>`).join('')}
+        class="${c.type === 'money' || c.type === 'qty' ? 'num' : ''} ${editable(c, item) ? 'editable' : ''} ${c.field === 'sku' ? 'mono' : ''}">${cellHtml(item, c)}</td>`).join('')}
       <td class="row-actions"><div class="actions">${rowButtons(item)}</div></td></tr>`).join('')
-    : `<tr><td colspan="${cols.length + 1}"><div class="empty-state small">${items.length ? 'Nothing matches.' : `No items yet.${owner ? ' Add one with “+ New item”, or paste your list from Excel.' : ''}`}</div></td></tr>`}</tbody>
+    : `<tr><td colspan="${cols.length + 1}"><div class="empty-state small">${emptyText()}</div></td></tr>`}</tbody>
     <tfoot><tr><td colspan="${cols.length + 1}"><div class="sheet-foot"><span>${list.length} item${list.length === 1 ? '' : 's'}</span>
-      ${owner ? `<span>Stock value <b class="money" data-total-value>${peso(list.reduce((s, i) => s + valueOf(i), 0))}</b></span>` : ''}</div></td></tr></tfoot>`;
+      ${owner ? valueFoot(list) : ''}</div></td></tr></tfoot>`;
   const first = $('[data-sheet] tbody td[data-field]', root);
   if (first) first.tabIndex = 0;
   $$('[data-sheet] th[data-sort] button', root).forEach(b => b.addEventListener('click', () => {
@@ -189,12 +216,13 @@ function renderSheet() {
   }));
   $$('[data-sheet] [data-act]', root).forEach(b => b.addEventListener('click', () => {
     const item = items.find(i => i.id === Number(b.closest('tr').dataset.item));
-    ({ receive: receiveModal, count: countModal, history: historyModal, edit: itemModal })[b.dataset.act](item);
+    ITEM_ACTIONS[b.dataset.act](item);
   }));
 }
 
 function rowButtons(item) {
   return isOwner() ? `<button class="btn small" type="button" data-act="receive">Receive</button>
+      ${item.for_sale ? '' : '<button class="btn ghost small" type="button" data-act="move">Send</button>'}
       <button class="btn ghost small" type="button" data-act="count">Count</button>
       <button class="btn ghost small" type="button" data-act="history">History</button>
       <button class="btn ghost small" type="button" data-act="edit">Edit</button>`
@@ -260,14 +288,14 @@ function installSheetKeys(table) {
 function startEdit(td, typed = null) {
   const col = COLUMNS.find(c => c.field === td.dataset.field);
   const item = items.find(i => i.id === Number(td.closest('tr').dataset.item));
-  if (!col || !item || !editable(col)) return;
+  if (!col || !item || !editable(col, item)) return;
   if (col.type === 'tags') return typed == null ? tagsPicker(item) : undefined;
   const input = document.createElement('input');
   input.type = 'text';
   input.inputMode = col.type === 'text' ? 'text' : 'decimal';
   input.className = 'cell-input';
   input.setAttribute('aria-label', col.label);
-  input.value = typed ?? String(item[col.field] ?? '');
+  input.value = typed ?? String(rawValue(item, col.field) ?? '');
   td.replaceChildren(input);
   editing = { td, input, item, col };
   input.focus();
@@ -297,7 +325,7 @@ async function commit(target) {
 
   if (col.edit === 'count') {
     done();
-    if (raw !== '' && Number(raw) !== Number(item.stock)) countModal(item, raw);
+    if (raw !== '' && Number(raw) !== stockIn(item, col.container)) countModal(item, raw, col.container);
     return;
   }
   let value = raw;
@@ -333,6 +361,8 @@ function tagsPicker(item) {
 
 // ---------------------------------------------------------------- modals
 
+const ITEM_ACTIONS = { receive: receiveModal, move: moveModal, count: countModal, history: historyModal, edit: itemModal };
+
 // An item's details with what can be done with it (staff: count only).
 function itemPanel(item) {
   const owner = isOwner();
@@ -340,7 +370,8 @@ function itemPanel(item) {
   openModal(`${modalHeader(item.name)}
     <div class="panel" data-panel>
       ${item.sku ? row('SKU', `<span class="mono">${esc(item.sku)}</span>`) : ''}
-      ${row('Stock', `${qty(item.stock)} ${esc(item.unit)}${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}`)}
+      ${row('Stock', `${qty(item.total_stock)} ${esc(item.unit)}${item.low ? ' <span class="status-pill waiting">Low</span>' : ''}`)}
+      ${inDepartment(item) ? heldIn(item).map(([key, label]) => row(label, `${qty(stockIn(item, key))} ${esc(item.unit)}`)).join('') : ''}
       ${row('Reorder at', qty(item.reorder_level))}
       ${item.for_sale ? row('Price', `${peso(item.price)} per ${esc(item.unit)}`) : ''}
       ${hasSet(item) ? row('Set', `set of ${qty(item.set_size)} · ${peso(item.set_price)}`) : ''}
@@ -350,12 +381,12 @@ function itemPanel(item) {
     </div>
     <div class="panel-actions">
       ${owner ? '<button class="btn" type="button" data-act="receive">Receive</button>' : ''}
+      ${owner && !item.for_sale ? '<button class="btn ghost" type="button" data-act="move">Send</button>' : ''}
       <button class="btn ${owner ? 'ghost' : ''}" type="button" data-act="count">Count</button>
       ${owner ? `<button class="btn ghost" type="button" data-act="history">History</button>
         <button class="btn ghost" type="button" data-act="edit">Edit</button>` : ''}
     </div>`,
-  card => $$('[data-act]', card).forEach(b => b.addEventListener('click', () =>
-    ({ receive: receiveModal, count: countModal, history: historyModal, edit: itemModal })[b.dataset.act](item))));
+  card => $$('[data-act]', card).forEach(b => b.addEventListener('click', () => ITEM_ACTIONS[b.dataset.act](item))));
 }
 
 
@@ -404,7 +435,7 @@ function itemModal(item) {
 }
 
 function receiveModal(item) {
-  openModal(`${modalHeader(`Receive ${item.name}`, `In stock: ${qty(item.stock)} ${item.unit} at an average cost of ${peso(item.avg_cost)}.`)}
+  openModal(`${modalHeader(`Receive ${item.name}`, `In stock: ${qty(item.total_stock)} ${item.unit} at an average cost of ${peso(item.avg_cost)}. It goes into Overall.`)}
     <div class="form-grid modal-form-grid">
       <div><label>Date</label><input type="date" data-r="date" value="${todayLocal()}"></div>
       <div><label>Quantity (${esc(item.unit)})</label><input type="number" min="0.01" step="any" data-r="quantity"></div>
@@ -438,9 +469,50 @@ function receiveModal(item) {
   });
 }
 
-function countModal(item, counted = '') {
-  openModal(`${modalHeader(`Count ${item.name}`, `On record: ${qty(item.stock)} ${item.unit}. Enter what is on the shelf now.`)}
+// Stock moved between containers: nothing bought or sold, so no money is recorded. Starts from the container in view.
+function moveModal(item) {
+  const held = heldIn(item).map(([key]) => key);
+  const start = held.includes(filter.container) ? filter.container : held[0] || 'overall';
+  const options = picked => CONTAINERS.map(([key, label]) => `<option value="${key}" ${key === picked ? 'selected' : ''}>${label} (${qty(stockIn(item, key))} ${esc(item.unit)})</option>`).join('');
+  openModal(`${modalHeader(`Send ${item.name}`, 'Move stock between Overall and the departments.')}
     <div class="form-grid modal-form-grid">
+      <div><label>From</label><select data-m="from">${options(start)}</select></div>
+      <div><label>To</label><select data-m="to">${options(start === 'overall' ? 'carwash' : 'overall')}</select></div>
+      <div><label>Quantity (${esc(item.unit)})</label><input type="number" min="0.01" step="any" data-m="quantity"></div>
+      <div><label>Date</label><input type="date" data-m="date" value="${todayLocal()}"></div>
+      <div class="span-2"><label>Note (optional)</label><input type="text" data-m="note" maxlength="160"></div>
+    </div>
+    <p class="hint" data-m-hint></p>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Send stock</button></div>`,
+  card => {
+    const get = k => $(`[data-m="${k}"]`, card).value;
+    const hint = () => {
+      const [from, to, quantity] = [get('from'), get('to'), round2(get('quantity'))];
+      const change = (key, by) => `${containerName(key)} ${qty(stockIn(item, key))} → ${qty(stockIn(item, key) + by)}`;
+      $('[data-m-hint]', card).textContent = from === to ? 'Choose two different places.'
+        : quantity > stockIn(item, from) ? `Only ${qty(stockIn(item, from))} ${item.unit} in ${containerName(from)}.`
+          : `${quantity > 0 ? `${change(from, -quantity)} · ${change(to, quantity)}. ` : ''}No money is recorded: the total stock and Finance stay the same.`;
+      $('[data-confirm]', card).disabled = from === to || !(quantity > 0) || quantity > stockIn(item, from);
+    };
+    $$('[data-m]', card).forEach(el => el.addEventListener('input', hint));
+    hint();
+    $('[data-m="quantity"]', card).focus();
+    $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
+      await api('POST', `/inventory/${item.id}/move`, { date: get('date'), from: get('from'), to: get('to'), quantity: Number(get('quantity') || 0), note: get('note').trim() });
+      closeModal();
+      toast('Stock moved');
+      await reload();
+    }));
+  });
+}
+
+// A count in one container: the one given (a sheet cell), the one in view, or the first that holds any, so stock that
+// is all in a department is not counted again in an empty Overall. Auto parts are only in Overall.
+function countModal(item, counted = '', container = filter.container || heldIn(item)[0]?.[0] || 'overall') {
+  const start = item.for_sale ? 'overall' : container;
+  openModal(`${modalHeader(`Count ${item.name}`, item.for_sale ? `On record: ${qty(item.stock)} ${item.unit}. Enter what is on the shelf now.` : 'Enter what is on the shelf now, in the place you counted.')}
+    <div class="form-grid modal-form-grid">
+      ${item.for_sale ? '' : `<div class="span-2"><label>Where</label><select data-c="container">${CONTAINERS.map(([key, label]) => `<option value="${key}" ${key === start ? 'selected' : ''}>${label} (${qty(stockIn(item, key))} ${esc(item.unit)} on record)</option>`).join('')}</select></div>`}
       <div><label>Date</label><input type="date" data-c="date" value="${todayLocal()}"></div>
       <div><label>On the shelf (${esc(item.unit)})</label><input type="number" min="0" step="any" data-c="counted" value="${esc(counted)}"></div>
       <div class="span-2"><label>The difference is</label><select data-c="reason">${COUNT_REASONS.map(([k, label]) => `<option value="${k}">${label}</option>`).join('')}</select></div>
@@ -451,21 +523,33 @@ function countModal(item, counted = '') {
   card => {
     const get = k => $(`[data-c="${k}"]`, card).value;
     const reason = $('[data-c="reason"]', card);
+    const where = () => $('[data-c="container"]', card)?.value || 'overall';
     const summary = () => {
-      const diff = Math.round((Number(get('counted')) - Number(item.stock)) * 100) / 100;
+      const diff = Math.round((Number(get('counted')) - stockIn(item, where())) * 100) / 100;
       const amount = `${qty(Math.abs(diff))} ${item.unit}`;
+      const refused = diff > 0 && !isOwner();
+      $('[data-confirm]', card).disabled = refused;
       $('[data-c-summary]', card).textContent = get('counted') === '' || !Number.isFinite(diff) ? ''
         : diff === 0 ? 'That matches the record; nothing to save.'
+          : refused ? `${amount} more than on record. Only the owner can raise a count, so ask them to correct it.`
           : diff > 0 ? `${amount} more than on record (a recount).`
             : `${amount} ${reason.value === 'recount' ? 'less than on record (a recount)' : reason.value}.`;
     };
-    const suggest = () => { if (Number(get('counted')) > Number(item.stock)) reason.value = 'recount'; summary(); };
+    // More than on record can only be a recount. The reason it replaced comes back once that no longer holds.
+    let replaced = null;
+    const suggest = () => {
+      const over = Number(get('counted')) > stockIn(item, where());
+      if (over && reason.value !== 'recount') { replaced = reason.value; reason.value = 'recount'; }
+      else if (!over && replaced) { reason.value = replaced; replaced = null; }
+      summary();
+    };
     $('[data-c="counted"]', card).addEventListener('input', suggest);
-    reason.addEventListener('change', summary);
+    $('[data-c="container"]', card)?.addEventListener('change', suggest);
+    reason.addEventListener('change', () => { replaced = null; summary(); });
     suggest();
     $('[data-c="counted"]', card).focus();
     $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
-      await api('POST', `/inventory/${item.id}/count`, { date: get('date'), counted: get('counted') === '' ? '' : Number(get('counted')), reason: reason.value, note: get('note').trim() });
+      await api('POST', `/inventory/${item.id}/count`, { date: get('date'), container: where(), counted: get('counted') === '' ? '' : Number(get('counted')), reason: reason.value, note: get('note').trim() });
       closeModal();
       toast('Count saved');
       await reload({ catalog: true });
@@ -477,11 +561,17 @@ async function historyModal(item) {
   const moves = await api('GET', `/inventory/${item.id}/movements`);
   const last = moves.at(-1);
   const paid = m => (m.paid_from ? ` · paid ${peso(m.paid_amount)} from ${PAID_FROM.find(p => p[0] === m.paid_from)[1].toLowerCase()}` : '');
-  openModal(`${modalHeader(`${item.name} stock history`, `${moves.length} change${moves.length === 1 ? '' : 's'}`)}
-    <div class="history-list">${moves.slice().reverse().map(m => `<div class="history-entry">
+  const place = m => containerName(m.department || 'overall');
+  // A move is two lines, out of one container and into another: shown once, on the line it went into.
+  const entries = moves.filter(m => m.kind !== 'transfer' || m.quantity > 0);
+  const amount = m => (m.kind === 'transfer'
+    ? `<b>${qty(m.quantity)} ${esc(item.unit)}</b> · ${esc(place(moves[moves.indexOf(m) - 1]))} → ${esc(place(m))}`
+    : `<b>${m.quantity > 0 ? '+' : ''}${qty(m.quantity)} ${esc(item.unit)}</b>${m.department ? ` · ${esc(place(m))}` : ''}`);
+  openModal(`${modalHeader(`${item.name} stock history`, `${entries.length} change${entries.length === 1 ? '' : 's'}`)}
+    <div class="history-list">${entries.slice().reverse().map(m => `<div class="history-entry">
       <div class="history-meta"><span>${esc(m.moved_on)}</span><span>${esc(m.created_by || '')}</span></div>
-      <div><span class="kind-pill ${m.quantity > 0 ? 'service' : 'custom'}">${MOVE_LABEL[m.kind]}</span>
-        <b>${m.quantity > 0 ? '+' : ''}${qty(m.quantity)} ${esc(item.unit)}</b>${m.unit_cost != null ? ` @ ${peso(m.unit_cost)}` : ''}${paid(m)}
+      <div><span class="kind-pill ${m.kind === 'transfer' ? 'addon' : m.quantity > 0 ? 'service' : 'custom'}">${MOVE_LABEL[m.kind]}</span>
+        ${amount(m)}${m.unit_cost != null ? ` @ ${peso(m.unit_cost)}` : ''}${paid(m)}
         ${m.jo_number ? ` · ${esc(m.jo_number)}` : ''}${m.supplier ? ` · ${esc(m.supplier)}` : ''}${m.note ? ` · ${esc(m.note)}` : ''}
         ${m.kind === 'receive' ? `<button class="btn ghost small" type="button" data-correct-cost="${m.id}">Correct cost</button>` : ''}
         ${m === last && m.kind === 'receive' ? `<button class="btn ghost small" type="button" data-undo="${m.id}">Undo</button>` : ''}</div>
@@ -594,7 +684,7 @@ function pasteModal() {
   openModal(`${modalHeader('Paste from Excel or Sheets', 'Select your rows in Excel / Google Sheets (include the header row), copy, and paste here.')}
     <textarea data-paste-text rows="7" placeholder="SKU&#9;Item&#9;Unit&#9;Selling price&#9;Reorder at&#9;Tags&#9;Stock&#9;Cost"></textarea>
     <p class="hint">Columns it understands: SKU, Item (or Name), Unit, Selling price, Commission, Set of, Set price, Reorder at, Tags (separate with , or ;), Stock, Cost.
-      Other columns are ignored. Stock is added as opening stock at its cost; no money is recorded.</p>
+      Other columns are ignored. Stock goes into Overall as opening stock at its cost; no money is recorded.</p>
     <div data-paste-errors></div>
     <div class="table-wrap"><table class="simple-table" data-preview></table></div>
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm disabled>Add items</button></div>`,
@@ -628,11 +718,11 @@ function pasteModal() {
 
 function exportCsv() {
   const owner = isOwner();
-  const header = ['SKU', 'Item', 'Unit', 'Tags', 'Price', 'Commission', 'Set of', 'Set price', ...(owner ? ['Avg cost'] : []), 'Stock', 'Reorder at',
-    ...(owner ? ['Value'] : [])];
+  const header = ['SKU', 'Item', 'Unit', 'Tags', 'Price', 'Commission', 'Set of', 'Set price', ...(owner ? ['Avg cost'] : []),
+    ...CONTAINERS.map(c => c[1]), 'Total stock', 'Reorder at', ...(owner ? ['Value'] : [])];
   const rows = visibleItems().map(i => [i.sku || '', i.name, i.unit, i.tags.map(t => tagOf(t)?.name).filter(Boolean).join(', '),
     Number(i.price), Number(i.commission), i.set_size ?? '', i.set_price ?? '',
-    ...(owner ? [Number(i.avg_cost)] : []), Number(i.stock), Number(i.reorder_level), ...(owner ? [valueOf(i)] : [])]);
+    ...(owner ? [Number(i.avg_cost)] : []), ...CONTAINERS.map(([key]) => stockIn(i, key)), Number(i.total_stock), Number(i.reorder_level), ...(owner ? [valueOf(i)] : [])]);
   const url = URL.createObjectURL(new Blob([toCsv([header, ...rows])], { type: 'text/csv;charset=utf-8' }));
   const link = Object.assign(document.createElement('a'), { href: url, download: `Inventory_${todayLocal()}.csv` });
   document.body.append(link);

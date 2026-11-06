@@ -1101,12 +1101,12 @@ test('inventory: tags decide what is sold, staff count usage, deliveries paid fr
   day = await ok(api(OWNER, 'GET', `/days/${D}`));
   assert.equal(day.expenses.some(e => /Snow foam/.test(e.description)), false, 'its expense is gone too');
 
-  // Staff count what is left. Lower = used (or damaged/lost); a recount can go either way.
-  assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 5, reason: 'used' })).status, 400, 'cannot use more than you had');
+  // Staff count what is left. Lower = used (or damaged/lost); a recount can go either way, up for the owner only.
+  assert.equal((await api(OWNER, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 5, reason: 'used' })).status, 400, 'cannot use more than you had');
   assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 4, reason: 'used' })).status, 400, 'matches: nothing to record');
   assert.equal((await api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 3, reason: 'stolen' })).status, 400);
   assert.equal((await ok(api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 2.5, reason: 'used' }))).stock, 2.5);
-  assert.equal((await ok(api(STAFF, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 3, reason: 'recount', note: 'Found one in the back' }))).stock, 3);
+  assert.equal((await ok(api(OWNER, 'POST', `/inventory/${foam.id}/count`, { date: D, counted: 3, reason: 'recount', note: 'Found one in the back' }))).stock, 3);
   moves = await ok(api(OWNER, 'GET', `/inventory/${foam.id}/movements`));
   assert.deepEqual(moves.slice(-2).map(m => [m.kind, m.quantity, m.note]), [['use', -1.5, 'Used'], ['adjust', 0.5, 'Recount: Found one in the back']]);
   assert.equal((await api(STAFF, 'GET', `/inventory/${foam.id}/movements`)).status, 403);
@@ -1619,4 +1619,166 @@ test('consignment: a supplier payment leaves the drawer but is not a second cost
   await ok(api(OWNER, 'DELETE', `/expenses/${day.expenses[0].id}`));
   f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
   assert.deepEqual([f.opex.partsBought, f.cashflow.drawerExpenses], [0, 90]);
+});
+
+test('inventory containers: stock moves between Overall and the department containers, and no stock or money appears or disappears', async () => {
+  const D = '2028-03-01';
+  const inv = async (id, as = OWNER) => (await ok(api(as, 'GET', '/inventory'))).find(i => i.id === id);
+  const move = (body, as = OWNER, id = shampoo.id) => api(as, 'POST', `/inventory/${id}/move`, { date: D, ...body });
+  const tagsNow = await ok(api(OWNER, 'GET', '/tags'));
+  const autoParts = tagsNow.find(t => t.system_key === 'auto_parts');
+
+  const shampoo = await ok(api(OWNER, 'POST', '/inventory', { name: 'Car shampoo', unit: 'gal', reorder_level: 5 }));
+  assert.deepEqual([shampoo.stock, shampoo.total_stock, shampoo.departments], [0, 0, {}], 'a new item has nothing anywhere');
+  await ok(api(OWNER, 'POST', `/inventory/${shampoo.id}/receive`, { date: D, quantity: 10, unit_cost: 100, paid_from: 'none' }));
+  const money = async () => [await ok(api(OWNER, 'GET', `/days/${D}`)), await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`))];
+  const moneyBefore = await money();
+
+  // Only the owner sends stock.
+  assert.equal((await move({ from: 'overall', to: 'carwash', quantity: 1 }, STAFF)).status, 403);
+
+  // Overall goes down, the department goes up, the total and the average cost stay.
+  let item = await ok(move({ from: 'overall', to: 'carwash', quantity: 4, note: 'For the wash bay' }));
+  assert.deepEqual([item.stock, item.departments, item.total_stock, item.avg_cost], [6, { carwash: 4 }, 10, 100]);
+  assert.deepEqual(await inv(shampoo.id), item, 'the Inventory list shows the same');
+
+  // What cannot be moved is refused, and leaves everything as it was.
+  assert.match((await move({ from: 'overall', to: 'carwash', quantity: 7 })).data.error, /Only 6 gal/);
+  assert.match((await move({ from: 'detailing', to: 'carwash', quantity: 1 })).data.error, /Only 0 gal.*Detailing/);
+  assert.match((await move({ from: 'carwash', to: 'carwash', quantity: 1 })).data.error, /different/i);
+  assert.equal((await move({ from: 'overall', to: 'carwash', quantity: 0 })).status, 400);
+  for (const blank of [null, '', undefined]) {
+    assert.match((await move({ from: 'overall', to: 'carwash', quantity: blank })).data.error, /Quantity must be/, 'a blank quantity is refused in plain words');
+  }
+  assert.equal((await move({ from: 'overall', to: 'parts', quantity: 1 })).status, 400, 'not a container');
+  assert.equal((await move({ from: 'overall', to: 'carwash', quantity: 1, date: 'soon' })).status, 400);
+  assert.deepEqual(await inv(shampoo.id), item);
+
+  // Between departments, and back to Overall. A department emptied out drops off the item.
+  await ok(move({ from: 'carwash', to: 'detailing', quantity: 1.5 }));
+  await ok(move({ from: 'carwash', to: 'tint_ppf', quantity: 1 }));
+  item = await ok(move({ from: 'detailing', to: 'overall', quantity: 1.5 }));
+  assert.deepEqual([item.stock, item.departments, item.total_stock], [7.5, { carwash: 1.5, tint_ppf: 1 }, 10]);
+
+  // The low-stock warning looks at the whole shop: sending most of it away is not a reason to reorder.
+  item = await ok(move({ from: 'overall', to: 'carwash', quantity: 7.5 }));
+  assert.deepEqual([item.stock, item.departments.carwash, item.low], [0, 9, false]);
+
+  // A move is never a cost: the day and Finance do not change.
+  assert.deepEqual(await money(), moneyBefore, 'moving stock changes no money');
+
+  // Counts work inside each container, for staff too. Used stock leaves that container only.
+  const count = (body, as = STAFF) => api(as, 'POST', `/inventory/${shampoo.id}/count`, { date: D, ...body });
+  item = await ok(count({ container: 'carwash', counted: 8, reason: 'used' }));
+  assert.deepEqual([item.stock, item.departments.carwash, item.total_stock], [0, 8, 9]);
+  assert.match((await count({ container: 'carwash', counted: 9, reason: 'used' }, OWNER)).data.error, /more than the 8 gal/);
+  assert.match((await count({ container: 'carwash', counted: 8, reason: 'used' })).data.error, /matches/);
+  assert.equal((await count({ container: 'parts', counted: 1, reason: 'used' })).status, 400);
+  item = await ok(count({ container: 'tint_ppf', counted: 0, reason: 'damaged', note: 'Spilled' }));
+  assert.deepEqual(item.departments, { carwash: 8 });
+  item = await ok(count({ container: 'detailing', counted: 2, reason: 'recount', note: 'Found on the shelf' }, OWNER));
+  assert.deepEqual([item.departments, item.total_stock], [{ carwash: 8, detailing: 2 }, 10]);
+  item = await ok(count({ counted: 1, reason: 'recount' }, OWNER));
+  assert.deepEqual([item.stock, item.total_stock], [1, 11], 'no container named: Overall, as before');
+
+  // A delivery lands in Overall; its average counts the stock held in the departments too.
+  item = await ok(api(OWNER, 'POST', `/inventory/${shampoo.id}/receive`, { date: D, quantity: 11, unit_cost: 200, paid_from: 'none' }));
+  assert.deepEqual([item.stock, item.departments, item.avg_cost], [12, { carwash: 8, detailing: 2 }, 150]);
+
+  // Correcting a delivery's cost replays over the moves as well: stock in a department still weighs.
+  let moves = await ok(api(OWNER, 'GET', `/inventory/${shampoo.id}/movements`));
+  item = await ok(api(OWNER, 'POST', `/inventory/movements/${moves[0].id}/cost`, { unit_cost: 200 }));
+  assert.equal(item.avg_cost, 200, 'both deliveries at ₱200');
+
+  // The history: each move is two lines that cancel out, saying where and who.
+  moves = await ok(api(OWNER, 'GET', `/inventory/${shampoo.id}/movements`));
+  const [out, into] = moves.filter(m => m.kind === 'transfer');
+  assert.deepEqual([out.department, out.quantity, out.created_by, out.moved_on], [null, -4, OWNER, D]);
+  assert.deepEqual([into.department, into.quantity, into.created_by, into.note], ['carwash', 4, OWNER, 'For the wash bay']);
+  const used = moves.find(m => m.kind === 'use');
+  assert.deepEqual([used.department, used.quantity, used.created_by], ['carwash', -1, STAFF]);
+  const total = place => moves.filter(m => m.department === place).reduce((s, m) => s + m.quantity, 0);
+  assert.deepEqual([total(null), total('carwash'), total('detailing'), total('tint_ppf')], [12, 8, 2, 0], 'each container is the sum of its history');
+  assert.equal(moves.filter(m => m.kind === 'transfer').reduce((s, m) => s + m.quantity, 0), 0, 'moves neither add nor remove stock');
+
+  // A delivery cannot be undone once stock has moved on from it.
+  await ok(move({ from: 'overall', to: 'carwash', quantity: 1 }));
+  const delivery = (await ok(api(OWNER, 'GET', `/inventory/${shampoo.id}/movements`))).filter(m => m.kind === 'receive').at(-1);
+  assert.match((await api(OWNER, 'POST', `/inventory/movements/${delivery.id}/undo`)).data.error, /latest/);
+
+  // Staff see every container, never the cost.
+  const seen = await inv(shampoo.id, STAFF);
+  assert.deepEqual([seen.departments, seen.total_stock, 'avg_cost' in seen], [{ carwash: 9, detailing: 2 }, 22, false]);
+
+  // Auto Parts stay in Overall, where they are sold: they cannot be sent, or counted in a department.
+  const horn = await ok(api(OWNER, 'POST', '/inventory', { name: 'Container horn', price: 500, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 3, unit_cost: 100, paid_from: 'none' }));
+  assert.match((await move({ from: 'overall', to: 'detailing', quantity: 1 }, OWNER, horn.id)).data.error, /auto part/i);
+  assert.match((await api(STAFF, 'POST', `/inventory/${horn.id}/count`, { date: D, container: 'detailing', counted: 1, reason: 'recount' })).data.error, /auto part/i);
+  assert.deepEqual([(await inv(horn.id)).stock, (await inv(horn.id)).departments], [3, {}]);
+
+  // So an item with stock in a department cannot become an auto part until it is back in Overall.
+  const refused = await api(OWNER, 'PATCH', `/inventory/${shampoo.id}`, { price: 300, tags: [autoParts.id] });
+  assert.match(refused.data.error, /back to Overall/);
+  assert.equal((await inv(shampoo.id)).for_sale, false);
+  await ok(move({ from: 'carwash', to: 'overall', quantity: 9 }));
+  await ok(move({ from: 'detailing', to: 'overall', quantity: 2 }));
+  assert.equal((await ok(api(OWNER, 'PATCH', `/inventory/${shampoo.id}`, { price: 300, tags: [autoParts.id] }))).for_sale, true);
+
+  // An archived item has nowhere to go.
+  await ok(api(OWNER, 'PATCH', `/inventory/${horn.id}`, { tags: [], active: false }));
+  assert.equal((await move({ from: 'overall', to: 'detailing', quantity: 1 }, OWNER, horn.id)).status, 404);
+
+  // Pasted stock is opening stock in Overall.
+  const { created } = await ok(api(OWNER, 'POST', '/inventory/import', { date: D, rows: [{ name: 'Pasted wax', stock: 3, unit_cost: 50 }] }));
+  assert.equal(created, 1);
+  const wax = (await ok(api(OWNER, 'GET', '/inventory'))).find(i => i.name === 'Pasted wax');
+  assert.deepEqual([wax.stock, wax.departments, wax.total_stock], [3, {}, 3]);
+});
+
+test('a required amount left blank is refused, not saved as zero', async () => {
+  const D = '2028-04-01';
+  const count = async () => (await ok(api(OWNER, 'GET', `/days/${D}`))).expenses.length;
+  const before = await count();
+  for (const amount of [null, '', undefined]) {
+    const r = await api(OWNER, 'POST', `/days/${D}/expenses`, { amount, description: 'Nothing', side: 'cash' });
+    assert.equal(r.status, 400);
+    assert.match(r.data.error, /Amount must be/);
+  }
+  assert.equal(await count(), before, 'no ₱0 expense on the day');
+  const item = await ok(api(OWNER, 'POST', '/inventory', { name: 'Blank delivery' }));
+  assert.match((await api(OWNER, 'POST', `/inventory/${item.id}/receive`, { date: D, quantity: '', unit_cost: 5, paid_from: 'none' })).data.error, /Quantity must be/);
+});
+
+test('only the owner can raise a count', async () => {
+  const D = '2028-04-02';
+  const item = await ok(api(OWNER, 'POST', '/inventory', { name: 'Raise check', unit: 'gal' }));
+  await ok(api(OWNER, 'POST', `/inventory/${item.id}/receive`, { date: D, quantity: 10, unit_cost: 100, paid_from: 'none' }));
+  await ok(api(OWNER, 'POST', `/inventory/${item.id}/move`, { date: D, from: 'overall', to: 'carwash', quantity: 4 }));
+  const count = (body, as = STAFF) => api(as, 'POST', `/inventory/${item.id}/count`, { date: D, reason: 'recount', ...body });
+  const held = async () => {
+    const now = (await ok(api(OWNER, 'GET', '/inventory'))).find(i => i.id === item.id);
+    return [now.stock, now.departments.carwash || 0, now.total_stock];
+  };
+  const moves = async () => (await ok(api(OWNER, 'GET', `/inventory/${item.id}/movements`))).length;
+  const before = await moves();
+
+  // Staff cannot add stock, in Overall or in a department, whatever reason they pick.
+  for (const body of [{ counted: 7 }, { container: 'carwash', counted: 5 }, { container: 'detailing', counted: 1 }, { counted: 7, reason: 'used' }]) {
+    const r = await count(body);
+    assert.equal(r.status, 403);
+    assert.match(r.data.error, /Only the owner can raise a count/);
+  }
+  assert.deepEqual(await held(), [6, 4, 10], 'nothing changed');
+  assert.equal(await moves(), before, 'nothing in the history');
+
+  // Staff can still count down. Two recounts no longer carry stock across to a department, which only the owner can send.
+  await ok(count({ counted: 5 }));
+  assert.equal((await count({ container: 'carwash', counted: 5 })).status, 403);
+  assert.deepEqual(await held(), [5, 4, 9]);
+
+  // The owner corrects it upwards.
+  await ok(count({ counted: 6 }, OWNER));
+  await ok(count({ container: 'carwash', counted: 5 }, OWNER));
+  assert.deepEqual(await held(), [6, 5, 11]);
 });

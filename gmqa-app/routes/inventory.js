@@ -1,11 +1,12 @@
 // Inventory: everything the shop stocks (parts for sale, chemicals, towels, machines), its tags,
-// deliveries (weighted average cost) and stock counts. Everyone sees stock and can record a count;
-// only the owner adds or edits items and tags, receives deliveries and sees costs and history.
+// deliveries (weighted average cost), stock counts and moves between containers (Overall and the departments).
+// Everyone sees stock and can record a count; only the owner adds or edits items and tags, receives deliveries,
+// moves stock and sees costs and history.
 // The Parts tab and job orders use /parts: the active items tagged Auto Parts.
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { FOR_SALE, loadItems, loadPart, receiveStock, countStock, COUNT_REASONS } = require('../lib/inventory');
+const { FOR_SALE, CONTAINERS, CONTAINER_NAMES, loadItems, loadPart, receiveStock, moveStock, countStock, COUNT_REASONS } = require('../lib/inventory');
 const { assertFundCovers } = require('../lib/cash-fund');
 const { replayAvgCost } = require('../lib/calc');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
@@ -122,10 +123,13 @@ async function setTags(q, partId, ids) {
   await q.query('insert into part_tags (part_id, tag_id) select $1, unnest($2::bigint[]) on conflict do nothing', [partId, ids]);
 }
 
-// An item for sale needs a selling price (checked after every change, inside the transaction).
+// An item for sale needs a selling price, and all its stock in Overall, where it sells from (checked after every
+// change, inside the transaction).
 async function checkedItem(q, partId) {
   const part = await loadPart(q, partId);
   if (part.for_sale && !(part.price > 0)) throw bad(`Set a selling price for ${part.name} before tagging it as an auto part`);
+  const held = Object.keys(part.departments).map(d => `${part.departments[d]} ${part.unit} from ${CONTAINER_NAMES[d]}`);
+  if (part.for_sale && held.length) throw bad(`Move ${held.join(' and ')} back to Overall before tagging ${part.name} as an auto part`);
   return part;
 }
 
@@ -150,6 +154,7 @@ router.patch('/inventory/:id', requireOwner, async (req, res) => {
   const cols = Object.keys(item);
   if (!cols.length && !tags) throw bad('Nothing to save');
   res.json(await db.tx(req.user.email, async q => {
+    await lockItem(q, partId);
     await loadPart(q, partId);
     if (cols.length) await q.query(`update parts set ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} where id = $1`, [partId, ...cols.map(c => item[c])]);
     if (tags) await setTags(q, partId, tags);
@@ -172,7 +177,23 @@ router.post('/inventory/:id/receive', requireOwner, async (req, res) => {
   }));
 });
 
-// Stock count: anyone can record what is on the shelf (the difference is recorded with its reason).
+// A move between containers (Overall, Carwash, Detailing, Tint & PPF). Never a cost: only stock moves.
+router.post('/inventory/:id/move', requireOwner, async (req, res) => {
+  const partId = id(req.params.id, 'item');
+  const day = date(req.body.date, 'Date');
+  const from = oneOf(req.body.from, CONTAINERS, 'From');
+  const to = oneOf(req.body.to, CONTAINERS, 'To');
+  const quantity = money(req.body.quantity, 'Quantity', { min: 0.01 });
+  const note = text(req.body.note, 'Note', { max: 160 });
+  res.json(await db.tx(req.user.email, async q => {
+    await lockItem(q, partId);
+    await moveStock(q, await loadPart(q, partId, { activeOnly: true }), { day, from, to, quantity, note });
+    return loadPart(q, partId);
+  }));
+});
+
+// Stock count: anyone can record what is on the shelf in a container, Overall if none is named (the difference is
+// recorded with its reason). Only the owner can raise a number: stock comes in by delivery and moves by Send.
 router.post('/inventory/:id/count', async (req, res) => {
   const partId = id(req.params.id, 'item');
   const day = date(req.body.date, 'Date');
@@ -180,9 +201,10 @@ router.post('/inventory/:id/count', async (req, res) => {
   const counted = money(req.body.counted, 'Counted');
   const reason = oneOf(req.body.reason, Object.keys(COUNT_REASONS), 'Reason');
   const note = text(req.body.note, 'Note', { max: 160 });
+  const container = req.body.container === undefined ? 'overall' : oneOf(req.body.container, CONTAINERS, 'Container');
   res.json(await db.tx(req.user.email, async q => {
     await lockItem(q, partId);
-    await countStock(q, await loadPart(q, partId), { day, counted, reason, note });
+    await countStock(q, await loadPart(q, partId), { day, counted, reason, note, container, canRaise: req.user.role === 'owner' });
     return loadPart(q, partId);
   }));
 });
@@ -190,7 +212,7 @@ router.post('/inventory/:id/count', async (req, res) => {
 router.get('/inventory/:id/movements', requireOwner, async (req, res) => {
   const partId = id(req.params.id, 'item');
   await loadPart(db, partId);
-  res.json(await db.many(`select m.id, m.moved_on, m.kind, m.quantity, m.unit_cost, m.prev_avg_cost, m.supplier, m.note, m.created_by, j.jo_number,
+  res.json(await db.many(`select m.id, m.moved_on, m.kind, m.quantity, m.department, m.unit_cost, m.prev_avg_cost, m.supplier, m.note, m.created_by, j.jo_number,
       e.side as paid_from, e.amount as paid_amount
     from stock_movements m left join jobs j on j.id = m.job_id left join expenses e on e.id = m.expense_id
     where m.part_id = $1 order by m.id`, [partId]));
