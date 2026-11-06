@@ -1074,8 +1074,15 @@ async function launch() {
     });
 
     await step('analytics: daily, weekly, monthly and quarterly', async () => {
+      // The Sold / Brought in buttons can be tapped while the figures are still loading.
+      await page.route('**/api/analytics*', async route => { await new Promise(r => setTimeout(r, 800)); await route.continue(); });
       await page.click('#nav [data-view="analytics"]');
       const view = page.locator('#view-analytics');
+      await view.locator('[data-measure="sales"]').click();
+      await view.locator('[data-measure="sold"]').click();
+      assert.deepEqual(problems, [], 'tapping before the figures arrive');
+      await view.locator('[data-bar]').first().waitFor();
+      await page.unroute('**/api/analytics*');
       await view.locator('[data-date]').fill('2026-09-30');
       await view.locator('[data-date]').dispatchEvent('change');
       assert.deepEqual((await view.locator('[data-grain]').allTextContents()).map(t => t.trim()), ['Daily', 'Weekly', 'Monthly', 'Quarterly']);
@@ -1867,6 +1874,9 @@ async function launch() {
       await page.locator('#view-analytics [data-date]').fill('2026-09-30');
       await page.locator('#view-analytics [data-date]').dispatchEvent('change');
       await page.locator('#view-analytics [data-service]').first().waitFor();
+      await page.locator('#view-analytics [data-grain="week"]').click();
+      await page.waitForFunction(() => / vs /.test(document.querySelector('#view-analytics [data-services-compare]').textContent));
+      assert.ok(await page.locator('#view-analytics [data-services-compare]').isVisible(), 'a phone shows which periods Change compares');
       const analyticsSideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(analyticsSideways <= 1, `analytics scrolls sideways by ${analyticsSideways}px on mobile`);
       await page.locator('#view-analytics [data-services]').scrollIntoViewIfNeeded();

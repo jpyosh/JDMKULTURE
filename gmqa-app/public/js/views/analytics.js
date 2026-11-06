@@ -32,13 +32,13 @@ function mount(el) {
     </div>
     <div class="card analytics-services" data-services>
       <div class="analytics-services-head">
-        <div><h2>Services</h2><div class="analytics-note" data-services-period aria-live="polite"></div></div>
+        <div><h2>Services</h2><div class="analytics-note" data-services-period aria-live="polite"></div><div class="analytics-note" data-services-compare></div></div>
         <div class="segmented compact" role="group" aria-label="Trend bars show">
           <button type="button" data-measure="sold">Sold</button><button type="button" data-measure="sales">Brought in</button>
         </div>
       </div>
       <div class="table-wrap"><table class="weekly-table service-table">
-        <thead><tr><th>Service</th><th>Trend</th><th class="num">Sold</th><th class="num">Brought in</th><th class="num">Change<small data-services-compare></small></th></tr></thead>
+        <thead><tr><th>Service</th><th>Trend</th><th class="num">Sold</th><th class="num">Brought in</th><th class="num">Change</th></tr></thead>
         <tbody data-service-rows></tbody>
       </table></div>
     </div>
@@ -58,7 +58,7 @@ function mount(el) {
         <li><b>Net profit</b>: sales − commission − parts cost − expenses − payroll − bills, the same as Finance. Bills count on the day they are paid, so one big bill can make a single day or week look bad.</li>
         <li><b>To check</b>: someone was marked present at the carwash on a day with no sales. If those jobs were never entered, sales and profit for that period are too low.</li>
         <li><b>Services</b>: every Pricing Matrix service and add-on sold in the periods shown, biggest earner first, under the name on the sale (Standard Wash counts as Regular Wash). Tap a bar in the chart above to see another period.</li>
-        <li><b>Sold</b>: how many, paid or not, like Cars. <b>Brought in</b>: list price of the paid ones, like Sales. <b>Other</b> is custom items, parts and labor. Discounts are on the whole job, so they have their own line, and everything adds up to Sales.</li>
+        <li><b>Sold</b>: how many, paid or not, like Cars. <b>Brought in</b>: the price on the sale of the paid ones, before discounts, like Sales. <b>Other</b> is custom items, parts and labor. Discounts are on the whole job, so they have their own line, and everything adds up to Sales.</li>
         <li><b>Trend</b>: each service's bars use its own scale, so they show its shape, not its size next to other services. <b>Change</b>: how many sold per day with sales in the last two periods with sales. <b>New</b> means none sold in the period before. Few sales swing the percentage a lot.</li>
       </ul>
     </details>`;
@@ -70,7 +70,7 @@ function mount(el) {
   }));
   $$('[data-measure]', root).forEach(b => b.addEventListener('click', () => {
     measure = b.dataset.measure;
-    renderServices();
+    if (data) renderServices(); // still loading: the first render uses the choice
   }));
 }
 
@@ -179,7 +179,9 @@ function renderServices() {
     b.setAttribute('aria-pressed', String(active));
   });
   $('[data-services-period]', root).textContent = `Sold and brought in: ${p.label}${p.partial ? ' so far' : ''}. Tap a bar in the chart above for another period.`;
-  $('[data-services-compare]', root).textContent = compare ? `${compare.now} vs ${compare.before}` : '';
+  $('[data-services-compare]', root).textContent = compare
+    ? `Change is always ${compare.now} vs ${compare.before}, whichever bar is picked.`
+    : 'Change needs two periods with sales.';
   const rows = items.map(s => `<tr data-service>
     <td><strong>${esc(s.name)}</strong>${s.kind === 'addon' ? ' <span class="muted small">Add-on</span>' : ''}</td>
     <td data-label="Trend">${spark(s)}</td>

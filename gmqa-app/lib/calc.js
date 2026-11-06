@@ -517,7 +517,7 @@ function periodBuckets(grain, date, count = PERIOD_COUNTS[grain]) {
 const pctChange = (now, before) => (before ? Math.round((now - before) / before * 1000) / 10 : null);
 
 // Old sale names that are the same service as a current one, so a rename does not look like a trend.
-const SERVICE_RENAMES = { 'standard wash': 'Regular Wash' };
+const SERVICE_RENAMES = new Map([['standard wash', 'Regular Wash']]);
 
 // What each service and add-on sold, period by period, under the name on the sale. periods: analyticsRow results.
 // sold counts every job of the period, paid or not (like Cars); sales counts paid jobs at the line's price (like
@@ -541,7 +541,7 @@ function serviceTrends(periods, jobs) {
         continue;
       }
       const onSale = line.name.trim();
-      const name = SERVICE_RENAMES[onSale.toLowerCase()] || onSale;
+      const name = SERVICE_RENAMES.get(onSale.toLowerCase()) || onSale;
       const key = `${line.kind}:${name.toLowerCase()}`;
       if (!rows.has(key)) rows.set(key, { kind: line.kind, name, periods: periods.map(() => ({ sold: 0, sales: 0 })) });
       const cell = rows.get(key).periods[at];

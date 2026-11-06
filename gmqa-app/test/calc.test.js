@@ -382,6 +382,10 @@ test('serviceTrends: a renamed service stays one row, and empty periods are skip
   assert.deepEqual([items[0].change, items[0].trend], [0, 'flat']);
   assert.deepEqual([items[1].change, items[1].trend], [-100, 'down']);
 
+  // Any name the owner types is safe, even one that matches a built-in JavaScript property.
+  const odd = serviceTrends(periods, [job('2026-01-02', line('Constructor', 100), line('__proto__', 50))]);
+  assert.deepEqual(odd.items.map(s => s.name), ['Constructor', '__proto__']);
+
   const lonely = serviceTrends(periods.slice(0, 1), [job('2026-01-02', line('Regular Wash', 400))]);
   assert.equal(lonely.compare, null);
   assert.deepEqual([lonely.items[0].change, lonely.items[0].trend], [null, null]);
