@@ -1158,6 +1158,25 @@ async function launch() {
       await shot('08d-finance-undone');
     });
 
+    await step('EOD: the owner records a supplier payment; it is labelled, and the box resets', async () => {
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-15');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => document.querySelector('#view-eod [data-date]').value === '2026-09-15');
+      await eod.locator('[data-e="for_resale"]').check();
+      assert.match(await eod.locator('[data-fund-hint]').textContent(), /not counted twice/i, 'the hint says what the box does');
+      await eod.locator('[data-e="description"]').fill('Remit H95 x1');
+      await eod.locator('[data-e="amount"]').fill('7200');
+      await eod.locator('[data-add-expense]').click();
+      await expectToast(/Expense added/);
+      const row = eod.locator('[data-expenses] .row-line', { hasText: 'Remit H95 x1' });
+      await row.waitFor();
+      assert.match(await row.textContent(), /Supplier payment/);
+      assert.equal(await eod.locator('[data-e="for_resale"]').isChecked(), false, 'the next expense starts as an ordinary one');
+      await row.locator('[data-del-expense]').click();
+      await expectToast(/Expense deleted/);
+    });
+
     await step('cash fund: start it, abono at EOD (drawer untouched), itemized list, replenish, undo', async () => {
       // Empty fund: an abono is refused with a clear message.
       await page.click('#nav [data-view="eod"]');
@@ -1729,6 +1748,9 @@ async function launch() {
       await signIn('staff@sandbox');
       assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix']);
       assert.ok(await page.locator('.theme-switch').isVisible(), 'staff can pick a theme too');
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-add-expense]').waitFor();
+      assert.equal(await eod.locator('[data-e="for_resale"]').count(), 0, 'only the owner records a supplier payment');
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
