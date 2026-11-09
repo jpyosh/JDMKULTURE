@@ -127,13 +127,22 @@ async function loadPayroll(start, end, q = db) {
   };
 }
 
-// Net pay for the work of start..end, from a loadPayroll covering at least those days.
-function payrollNetBetween({ rows, otRules }, start, end) {
-  const dates = datesBetween(start, end);
+// Net pay for the work of exactly these days, from a loadPayroll covering at least those days.
+function payrollNetOn({ rows, otRules }, dates) {
+  const onDates = new Set(dates);
   return round2(rows.reduce((total, row) => total + payrollForRange({
     dates, days: row.days, rates: row.rates, otRules,
-    adjustments: row.adjustments.filter(a => a.adj_date >= start && a.adj_date <= end),
+    adjustments: row.adjustments.filter(a => onDates.has(a.adj_date)),
   }).net, 0));
+}
+
+// Every day with something on payroll that affects pay: paid work, overtime or an adjustment.
+function payrollEntryDates({ rows }) {
+  const paid = d => ['P', '0.5P', 'CN', '0.5CN'].includes(d.code) || Number(d.cw_ot_hours) > 0 || Number(d.cn_ot_hours) > 0;
+  return rows.flatMap(row => [
+    ...Object.entries(row.days).filter(([, d]) => paid(d)).map(([day]) => day),
+    ...row.adjustments.map(a => a.adj_date),
+  ]);
 }
 
 // Days anyone worked the carwash (construction work is not a carwash day).
@@ -141,4 +150,4 @@ function carwashWorkDays({ rows }) {
   return new Set(rows.flatMap(row => Object.entries(row.days).filter(([, d]) => ['P', '0.5P'].includes(d.code)).map(([day]) => day)));
 }
 
-module.exports = { loadPayroll, payrollNetBetween, carwashWorkDays, loadOtRules, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY };
+module.exports = { loadPayroll, payrollNetOn, payrollEntryDates, carwashWorkDays, loadOtRules, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY };

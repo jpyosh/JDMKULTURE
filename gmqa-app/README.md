@@ -114,9 +114,15 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Finance** shows any period (week, month, custom): sales by department, commission, net sales,
   payroll (net pay for work done in the period), bills paid, drawer expenses and **net profit**,
   plus a money in/out view of the drawer.
+- **Finance and Analytics count a day only once it is closed at EOD.** Sales, commission, expenses, payroll, bills
+  and drawer money dated on a day still open wait until it is closed, and reopening a day takes it back out. A banner
+  names the open days that have something on them. Fund balances and the **Bills paid** list stay live, because that
+  money has really moved and a bill must stay undoable.
 - **Bill funds** (Meralco, Maynilad, Internet, Rent, Business permit, or any you add) each have a usual
-  amount and due date. The system works out a **weekly target** = what is still needed ÷ weeks left.
-- At EOD, the **Bill envelopes** card lists each bill that has an amount with this week's share and one
+  amount and due date. The owner chooses per bill whether to **set money aside every week or every month**
+  (`funds.set_aside_every`, weekly by default). The **target** = what is still needed ÷ weeks left, or ÷ calendar
+  months left counting this one.
+- At EOD, the **Bill envelopes** card lists each bill that has an amount with this week's or month's share and one
   button ("Put ₱800.00 aside"); "Other amount" allows a different amount or GCash. It leaves the drawer:
   the money goes in a labelled envelope handed to the owner with the day's tape.
 - When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that

@@ -54,6 +54,15 @@ export const weekday = date => new Date(`${date}T00:00:00Z`).toLocaleDateString(
 export const prettyDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 export const prettyTime = ts => new Date(ts).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
+// Finance and Analytics count closed days only: this names the days still waiting to be closed.
+export function openDaysBanner(days) {
+  if (!days.length) return '';
+  const list = days.map(d => prettyDate(d).replace(/^\w+, /, '').replace(/, \d{4}$/, '')).join(', ');
+  const one = days.length === 1;
+  return `<div class="banner tips-reminder"><span><b>${one ? '1 day is' : `${days.length} days are`} still open and not counted:</b> ${esc(list)}.
+    Close ${one ? 'it' : 'them'} in EOD Closing to count ${one ? 'it' : 'them'}.</span></div>`;
+}
+
 // ---------------------------------------------------------------- toast
 
 let toastTimer;

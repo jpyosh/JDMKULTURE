@@ -3,16 +3,16 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { fundStatus, splitBill, periodTotals, profitAndLoss, datesBetween, mondayOf, addDays, round2 } = require('../lib/calc');
+const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries, periodTotals, profitAndLoss, datesBetween, round2 } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
-const { loadPayroll } = require('../lib/payroll-data');
+const { loadPayroll, payrollNetOn, payrollEntryDates } = require('../lib/payroll-data');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
 const MAX_SUMMARY_DAYS = 400;
 const SIDES = ['cash', 'gcash'];
 
-const FUND_BALANCES = `select f.id, f.name, f.amount, f.frequency, f.due_day, f.due_month, f.active, f.sort_order,
+const FUND_BALANCES = `select f.id, f.name, f.amount, f.frequency, f.set_aside_every, f.due_day, f.due_month, f.active, f.sort_order,
     round(coalesce(sa.total, 0) - coalesce(bp.total, 0), 2) as balance
   from funds f
   left join (select fund_id, sum(amount) as total from fund_set_asides group by fund_id) sa on sa.fund_id = f.id
@@ -28,32 +28,36 @@ async function fundBalance(q, fundId) {
   return row;
 }
 
-// Funds with balance and this week's set-aside target, as of `date` (default: today).
+// Funds with balance and the set-aside target of this week or month (each bill's choice), as of `date` (default: today).
 router.get('/funds', async (req, res) => {
   const day = req.query.date ? date(req.query.date) : await shopToday();
-  const weekStart = mondayOf(day);
-  const [funds, week, onDay] = await Promise.all([
+  const week = setAsidePeriod({ set_aside_every: 'weekly' }, day);
+  const month = setAsidePeriod({ set_aside_every: 'monthly' }, day);
+  const [funds, recent, onDay] = await Promise.all([
     db.many(`${FUND_BALANCES} where f.active order by f.sort_order, f.id`),
-    db.many('select fund_id, sum(amount) as total from fund_set_asides where entry_date between $1 and $2 group by fund_id',
-      [weekStart, addDays(weekStart, 6)]),
+    db.many('select fund_id, entry_date, amount from fund_set_asides where entry_date between $1 and $2',
+      [week.start < month.start ? week.start : month.start, week.end > month.end ? week.end : month.end]),
     db.many('select id, fund_id, side, amount, note from fund_set_asides where entry_date = $1 order by id', [day]),
   ]);
   res.json(funds.map(fund => {
-    const setAsideThisWeek = week.find(w => w.fund_id === fund.id)?.total || 0;
+    const { start, end } = setAsidePeriod(fund, day);
+    const setAsideThisPeriod = round2(recent.filter(s => s.fund_id === fund.id && s.entry_date >= start && s.entry_date <= end)
+      .reduce((total, s) => total + s.amount, 0));
     return {
-      ...fund, setAsideThisWeek,
+      ...fund, setAsideThisPeriod,
       setAsidesOnDate: onDay.filter(s => s.fund_id === fund.id),
-      ...fundStatus({ fund, balance: fund.balance, setAsideThisWeek, today: day }),
+      ...fundStatus({ fund, balance: fund.balance, setAsideThisPeriod, today: day }),
     };
   }));
 });
 
 function cleanFund(body, partial) {
-  const f = pick(body, ['name', 'amount', 'frequency', 'due_day', 'due_month', 'active']);
+  const f = pick(body, ['name', 'amount', 'frequency', 'set_aside_every', 'due_day', 'due_month', 'active']);
   const out = {};
   if (!partial || 'name' in f) out.name = text(f.name, 'Name', { required: true, max: 80 });
   if (!partial || 'amount' in f) out.amount = money(f.amount, 'Usual bill amount');
   if (!partial || 'frequency' in f) out.frequency = oneOf(f.frequency, ['monthly', 'quarterly', 'yearly'], 'Frequency');
+  if (!partial || 'set_aside_every' in f) out.set_aside_every = oneOf(f.set_aside_every ?? 'weekly', ['weekly', 'monthly'], 'Set aside');
   if (!partial || 'due_day' in f) {
     out.due_day = Number(f.due_day);
     if (!Number.isInteger(out.due_day) || out.due_day < 1 || out.due_day > 31) throw bad('Due day must be 1 to 31');
@@ -162,16 +166,24 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     loadPayroll(start, end),
   ]);
 
-  // Same per-day rules as EOD, added up over the period.
-  const t = periodTotals({ dates, jobs, expenses, metas });
+  // Same per-day rules as EOD, added up over the days closed at EOD. A day still open is not counted yet.
+  const countedDates = closedDates(dates, metas);
+  const counted = new Set(countedDates);
+  const openDays = openDatesWithEntries(dates, metas, [
+    ...jobs.filter(j => !j.voided_at).flatMap(j => [j.sale_date, j.paid_on]),
+    ...expenses.map(e => e.expense_date), ...payouts.map(p => p.payout_date), ...setAsides.map(s => s.entry_date),
+    ...bills.map(b => b.paid_on), ...payrollEntryDates(payroll),
+  ]);
+  const t = periodTotals({ dates: countedDates, jobs, expenses, metas });
   const r = n => round2(n);
+  const countedBills = bills.filter(b => counted.has(b.paid_on));
   const billsByFund = [];
-  for (const b of bills) {
+  for (const b of countedBills) {
     const existing = billsByFund.find(x => x.fund_id === b.fund_id);
     if (existing) existing.amount = r(existing.amount + b.amount);
     else billsByFund.push({ fund_id: b.fund_id, name: b.name, amount: b.amount });
   }
-  const pl = profitAndLoss(t, { payroll: payroll.totalNet, billsTotal: r(bills.reduce((sum, b) => sum + b.amount, 0)) });
+  const pl = profitAndLoss(t, { payroll: payrollNetOn(payroll, countedDates), billsTotal: r(countedBills.reduce((sum, b) => sum + b.amount, 0)) });
   const { income, netProfit } = pl;
   const opex = { ...pl.opex, bills: billsByFund };
 
@@ -179,15 +191,18 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   const cashflow = {
     // Everything paid out of the drawer, parts bought to sell included.
     cashIn: r(t.cashIn), gcashIn: r(t.gcashIn), commissionPaid: income.commission, drawerExpenses: r(t.drawerExpenses),
-    payrollPayouts: sumOf(payouts), setAsides: sumOf(setAsides), billTopUps: r(bills.reduce((s, b) => s + b.from_drawer, 0)),
+    payrollPayouts: sumOf(payouts.filter(p => counted.has(p.payout_date))),
+    setAsides: sumOf(setAsides.filter(s => counted.has(s.entry_date))),
+    billTopUps: r(countedBills.reduce((s, b) => s + b.from_drawer, 0)),
   };
   cashflow.net = r(cashflow.cashIn + cashflow.gcashIn - cashflow.commissionPaid - cashflow.drawerExpenses
     - cashflow.payrollPayouts - cashflow.setAsides - cashflow.billTopUps);
 
   res.json({
-    start, end, income, opex, netProfit, cashflow,
-    // Each bill paid in the period, so one recorded by mistake can be found and undone.
+    start, end, income, opex, netProfit, cashflow, openDays,
+    // Each bill paid in the period, even on a day still open, so one recorded by mistake can be found and undone.
     billPayments: bills,
+    // Fund money is real as soon as it moves, so these stay live whether or not the day is closed.
     funds: funds.map(f => ({
       id: f.id, name: f.name, amount: f.amount, balance: f.balance, active: f.active,
       setAside: sumOf(setAsides.filter(s => s.fund_id === f.id)),

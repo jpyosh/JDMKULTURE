@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -513,6 +513,19 @@ test('016 books a running job on the day it is finished, and changes nothing els
   assert.equal(moved.sale_date, '2027-04-09');
   const indexes = (await all(driver, "select indexname from pg_indexes where tablename = 'jobs'")).map(i => i.indexname);
   assert.ok(indexes.includes('jobs_sale_date_idx') && indexes.includes('jobs_active_running_idx'));
+});
+
+test('019 lets each bill be saved weekly or monthly, and every existing bill stays weekly', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '018' });
+  await driver.query("update funds set amount = 1599 where name = 'Internet'");
+  const before = await all(driver, 'select id, name, amount, frequency, due_day, due_month, active, sort_order from funds order by id');
+
+  assert.deepEqual(await migrate(driver, quiet), ['019']);
+  assert.deepEqual(await all(driver, 'select id, name, amount, frequency, due_day, due_month, active, sort_order from funds order by id'), before);
+  assert.ok((await all(driver, 'select set_aside_every from funds')).every(f => f.set_aside_every === 'weekly'));
+  await driver.query("update funds set set_aside_every = 'monthly' where name = 'Rent'");
+  await assert.rejects(driver.query("update funds set set_aside_every = 'daily' where name = 'Rent'"), /check/i);
 });
 
 test('017 makes every existing counter sale a finished job on its own day, so no day changes', async () => {
