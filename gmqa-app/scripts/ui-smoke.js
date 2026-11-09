@@ -1248,6 +1248,8 @@ async function launch() {
         assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
       }
       assert.equal(await view.locator('.weekly-stat').count(), 4);
+      assert.match(await view.locator('[data-open-days]').textContent(), /not counted/i, 'days still open are named, not silently missing');
+      assert.match(await view.locator('[data-help]').textContent(), /closed/i);
       assert.match(await view.locator('[data-help]').textContent(), /How to read/);
       // Services: one trend per service; the figures follow the period picked on the chart and add up to its sales.
       const services = view.locator('[data-services]');
@@ -1316,7 +1318,17 @@ async function launch() {
       await page.selectOption('#modal [data-bill-side]', 'cash');
       await page.click('#modal [data-confirm]');
       await expectToast(/Bill recorded/);
+      // The bill's day is still open, so it is not counted yet and the page says why.
+      const openDays = fin.locator('[data-open-days]');
+      await page.waitForFunction(() => /Sep 25/.test(document.querySelector('#view-finance [data-open-days]')?.textContent || ''));
+      assert.match(await openDays.textContent(), /not counted/i);
+      assert.doesNotMatch(await fin.locator('[data-pl]').textContent(), /Bill: Meralco/);
+      assert.equal(await fin.locator('[data-bills-paid] tr', { hasText: 'Meralco' }).count(), 1, 'it can still be undone');
+      // Close the day and it counts.
+      await page.evaluate(() => fetch('/api/days/2026-09-25/close', { method: 'POST', headers: { Authorization: 'Bearer owner@sandbox', 'Content-Type': 'application/json' }, body: '{}' }));
+      await fin.locator('[data-end]').dispatchEvent('change');
       await page.waitForFunction(() => /Meralco[\s\S]*₱3,000\.00/.test(document.querySelector('#view-finance [data-pl]').textContent));
+      assert.doesNotMatch(await openDays.textContent(), /Sep 25/);
       await shot('08c-finance');
 
       // New users get step-by-step directions on the page.
@@ -1333,6 +1345,33 @@ async function launch() {
       await page.waitForFunction(() => !/Bill: Meralco/.test(document.querySelector('#view-finance [data-pl]').textContent));
       assert.equal(await fin.locator('[data-bills-paid] tr', { hasText: 'Meralco' }).count(), 0);
       await shot('08d-finance-undone');
+      await page.evaluate(() => fetch('/api/days/2026-09-25/reopen', { method: 'POST', headers: { Authorization: 'Bearer owner@sandbox' } }));
+    });
+
+    await step('bill funds: the owner picks weekly or monthly, and EOD follows', async () => {
+      const fin = page.locator('#view-finance');
+      const meralco = () => fin.locator('[data-funds-table] tr', { hasText: 'Meralco' });
+      const setEvery = async every => {
+        await meralco().locator('[data-act="edit-fund"]').click();
+        await page.selectOption('#modal [data-fund-every]', every);
+        await page.click('#modal [data-confirm]');
+        await expectToast(/Fund saved/);
+      };
+      await meralco().locator('[data-act="edit-fund"]').click();
+      assert.equal(await page.inputValue('#modal [data-fund-every]'), 'weekly', 'an existing bill starts weekly');
+      await page.click('#modal [data-close]');
+      await setEvery('monthly');
+      await page.waitForFunction(() => /per month/.test(document.querySelector('#view-finance [data-funds-table]').textContent));
+
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-16');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /aside this month/i.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
+      await shot('08e-envelope-monthly');
+
+      await page.click('#nav [data-view="finance"]');
+      await setEvery('weekly');
+      await page.waitForFunction(() => /per week/.test(document.querySelector('#view-finance [data-funds-table]').textContent));
     });
 
     await step('EOD: the owner records a supplier payment; it is labelled, and the box resets', async () => {
@@ -1440,7 +1479,8 @@ async function launch() {
       // Next week: the Sunday–Saturday week after the range shown, even from a half week.
       await setPayrollRange('2026-09-27', '2026-10-03');
       await payroll.locator('[data-preset="next-week"]').click();
-      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-04');
+      // The date boxes change before the table has loaded, so wait for the table itself.
+      await page.waitForFunction(() => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === '2026-10-04');
       assert.deepEqual(await dayHeads(), ['Sun10-04', 'Mon10-05', 'Tue10-06', 'Wed10-07', 'Thu10-08', 'Fri10-09', 'Sat10-10']);
       await setPayrollRange('2026-10-04', '2026-10-07');
       await payroll.locator('[data-preset="next-week"]').click();
@@ -1996,7 +2036,13 @@ async function launch() {
         await row.waitFor();
         const sideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(sideways <= 1, `${view} scrolls sideways by ${sideways}px on mobile`);
-        assert.ok((await row.boundingBox()).height >= 44, `${view} rows are at least 44px tall`);
+        // The list redraws as the view opens, so measure a row that is really on screen.
+        let box = null;
+        for (let i = 0; i < 30 && !box; i += 1) {
+          box = await row.boundingBox();
+          if (!box) await page.waitForTimeout(100);
+        }
+        assert.ok(box && box.height >= 44, `${view} rows are at least 44px tall`);
         await shot(`12b-mobile-${view}`);
       }
       // The Sheet scrolls inside its own box on a phone; the page never scrolls sideways.
@@ -2021,7 +2067,15 @@ async function launch() {
         .filter(b => { const r = b.getBoundingClientRect(); return r.left < -1 || r.right > window.innerWidth + 1; }).map(b => b.textContent.trim()));
       assert.deepEqual(offscreen, [], 'payroll buttons cut off on mobile');
       await shot('13-mobile-payroll');
-      // Analytics (owner): the services list fits a phone.
+      // Analytics (owner): the services list fits a phone. Change compares two periods with closed days.
+      for (const day of ['2026-09-08', '2026-09-22']) {
+        await page.evaluate(async d => {
+          const headers = { Authorization: 'Bearer owner@sandbox', 'Content-Type': 'application/json' };
+          await fetch('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ job_date: d, vehicle_class: 'S', payment_method: 'Cash', payment_received: true,
+            items: [{ name: 'Compare wash', price: 300, commission: 0 }] }) });
+          await fetch(`/api/days/${d}/close`, { method: 'POST', headers, body: '{}' });
+        }, day);
+      }
       await page.click('#nav [data-view="analytics"]');
       await page.locator('#view-analytics [data-date]').fill('2026-09-30');
       await page.locator('#view-analytics [data-date]').dispatchEvent('change');
@@ -2044,8 +2098,14 @@ async function launch() {
         await pickTheme(theme);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 1, `${theme}: page scrolls sideways by ${overflow}px on mobile`);
-        const short = await page.evaluate(() => [...document.querySelectorAll('#nav button, #view-carwash .date-nav .btn, #view-carwash [data-review]')]
+        const shortNow = () => page.evaluate(() => [...document.querySelectorAll('#nav button, #view-carwash .date-nav .btn, #view-carwash [data-review]')]
           .filter(el => el.offsetParent).filter(el => el.getBoundingClientRect().height < 44).map(el => el.textContent.trim() || el.getAttribute('aria-label')));
+        // A button can be mid-change just after the theme switches; only one that stays short fails.
+        let short = await shortNow();
+        for (let i = 0; i < 30 && short.length; i += 1) {
+          await page.waitForTimeout(100);
+          short = await shortNow();
+        }
         assert.deepEqual(short, [], `${theme}: buttons shorter than 44px on mobile`);
         const spill = await page.evaluate(() => [...document.querySelectorAll('#view-carwash .card input, #view-carwash .card select')]
           .filter(el => el.offsetParent).filter(el => {

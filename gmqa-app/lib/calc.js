@@ -337,18 +337,32 @@ function nextDueDate(fund, from) {
   return null;
 }
 
-// How much to set aside per week so the fund holds the bill amount by its next due date.
-// balance includes this week's set-asides; the target is based on the balance at the start of the week.
-function fundStatus({ fund, balance, setAsideThisWeek = 0, today }) {
+// The week (Monday to Sunday) or calendar month, by the bill's choice, that `date` falls in.
+function setAsidePeriod(fund, date) {
+  if (fund.set_aside_every === 'monthly') {
+    const [y, m] = date.split('-').map(Number);
+    return { start: `${y}-${pad2(m)}-01`, end: `${y}-${pad2(m)}-${pad2(lastDayOf(y, m))}` };
+  }
+  const start = mondayOf(date);
+  return { start, end: addDays(start, 6) };
+}
+
+// How much to set aside per week or month so the fund holds the bill amount by its next due date.
+// balance includes this period's set-asides; the target is based on the balance when the period began.
+function fundStatus({ fund, balance, setAsideThisPeriod = 0, today }) {
   const amount = Number(fund.amount) || 0;
   const nextDue = nextDueDate(fund, today);
   const daysLeft = daysUntil(today, nextDue);
-  const weeksLeft = Math.max(1, Math.ceil(daysLeft / 7));
-  const needed = Math.max(0, amount - (balance - setAsideThisWeek));
-  const weeklyTarget = Math.ceil(needed / weeksLeft);
+  const monthly = fund.set_aside_every === 'monthly';
+  const [y, m] = today.split('-').map(Number);
+  const [dueY, dueM] = nextDue.split('-').map(Number);
+  // A monthly bill counts this calendar month and each one up to the month it is due.
+  const periodsLeft = monthly ? (dueY - y) * 12 + dueM - m + 1 : Math.max(1, Math.ceil(daysLeft / 7));
+  const needed = Math.max(0, amount - (balance - setAsideThisPeriod));
+  const target = Math.ceil(needed / periodsLeft);
   return {
-    nextDue, daysLeft, weeksLeft, weeklyTarget,
-    remainingThisWeek: Math.max(0, round2(weeklyTarget - setAsideThisWeek)),
+    nextDue, daysLeft, periodsLeft, target, periodWord: monthly ? 'month' : 'week',
+    remaining: Math.max(0, round2(target - setAsideThisPeriod)),
     shortBy: Math.max(0, round2(amount - balance)),
   };
 }
@@ -406,6 +420,19 @@ function salesReport({ date, summary: s }) {
 
 // ---------------------------------------------------------------- periods (Finance and Analytics)
 
+// Finance and Analytics count a day only once it is closed at EOD. These are the days in `dates` that count.
+function closedDates(dates, metas) {
+  const closed = new Set(metas.filter(m => m.closed_at).map(m => m.job_date));
+  return dates.filter(d => closed.has(d));
+}
+
+// The days in `dates` still open that have something on them: `entryDates` lists the date of every entry.
+function openDatesWithEntries(dates, metas, entryDates) {
+  const counted = new Set(closedDates(dates, metas));
+  const withEntries = new Set(entryDates);
+  return dates.filter(d => withEntries.has(d) && !counted.has(d));
+}
+
 // The EOD rules of each day in `dates`, added up. jobs, expenses and metas may cover more days than `dates`.
 function periodTotals({ dates, jobs, expenses, metas }) {
   const t = { departments: Object.fromEntries(DEPARTMENT_KEYS.map(k => [k, 0])), gross: 0, commission: 0, receivables: 0, partsSales: 0, partsCost: 0,
@@ -457,13 +484,14 @@ function profitAndLoss(t, { payroll, billsTotal }) {
 }
 
 // One row of Analytics. staffDays: days someone worked the carwash; such a day without sales may mean
-// the jobs were never entered, which would make the period's profit look too low.
-function analyticsRow(period, t, { payroll, billsTotal, staffDays }) {
+// the jobs were never entered, which would make the period's profit look too low. A day still open is
+// not checked: it has not been counted yet, and is listed in openDays instead.
+function analyticsRow(period, t, { payroll, billsTotal, staffDays, countedDates, openDays }) {
   const { income, opex, netProfit } = profitAndLoss(t, { payroll, billsTotal });
   const salesDays = t.salesDays.length;
   return {
-    ...period, salesDays, cars: t.vehicles,
-    staffNoSales: datesBetween(period.start, period.end).filter(d => staffDays.has(d) && !t.salesDays.includes(d)),
+    ...period, salesDays, cars: t.vehicles, openDays,
+    staffNoSales: countedDates.filter(d => staffDays.has(d) && !t.salesDays.includes(d)),
     sales: income.gross, departments: income.departments, receivables: income.receivables,
     commission: income.commission, expenses: round2(opex.drawerExpenses + opex.fundExpenses),
     payroll: opex.payroll, bills: opex.billsTotal, partsCost: income.partsCost, netProfit,
@@ -571,7 +599,7 @@ module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
-  nextDueDate, fundStatus, splitBill,
+  nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
 };

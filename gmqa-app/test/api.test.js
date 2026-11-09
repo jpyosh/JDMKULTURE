@@ -44,6 +44,15 @@ async function catalogItem(name) {
   return items.find(i => i.name === name);
 }
 
+const closeDays = async days => { for (const day of days) await ok(api(OWNER, 'POST', `/days/${day}/close`, { tips_later: true })); };
+// Finance counts closed days only: close these days, read it, and leave them open for the rest of the test.
+async function financeOfClosed(start, end, days = [start]) {
+  await closeDays(days);
+  const summary = await ok(api(OWNER, 'GET', `/finance/summary?start=${start}&end=${end}`));
+  for (const day of days) await ok(api(OWNER, 'POST', `/days/${day}/reopen`));
+  return summary;
+}
+
 test('authentication and roles', async () => {
   assert.equal((await api(null, 'GET', '/catalog')).status, 401);
   assert.equal((await api('bogus-token', 'GET', '/catalog')).status, 401);
@@ -803,9 +812,9 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   assert.equal(day2.expectedCash, -1500);
   let status = (await ok(api(STAFF, 'GET', '/funds?date=2026-11-02'))).find(f => f.id === meralco.id);
   assert.equal(status.balance, 1500);
-  assert.equal(status.setAsideThisWeek, 1500);
+  assert.equal(status.setAsideThisPeriod, 1500);
   assert.equal(status.nextDue, '2026-11-25');
-  assert.equal(status.weeklyTarget, Math.ceil(8000 / 4));
+  assert.equal(status.target, Math.ceil(8000 / 4));
 
   await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-09', side: 'gcash', amount: 4500 }));
   const extra = await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-09', side: 'cash', amount: 1 }));
@@ -834,6 +843,7 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: '2026-11-15', period_start: '2026-11-09', period_end: '2026-11-15', side: 'cash', amount: 1000 }));
 
   assert.equal((await api(STAFF, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30')).status, 403);
+  await closeDays(['2026-11-02', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-15', '2026-11-25']);
   const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-11-01&end=2026-11-30'));
   assert.deepEqual(f.income, {
     departments: { carwash: 600, detailing: 0, tint_ppf: 0, parts: 0 }, gross: 600, commission: 100, net: 500,
@@ -907,7 +917,7 @@ test('cash fund: abonos are costs that never touch the drawer; replenishment clo
     [[D, 'Chemicals: Soft99 5L', 1500], ['2027-06-08', 'Crew lunch', 300]]);
 
   // Finance: the abonos are operating costs, but not money out of the drawer.
-  const f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=2027-06-13`));
+  const f = await financeOfClosed(D, '2027-06-13', [D, '2027-06-08', '2027-06-09', '2027-06-10', '2027-06-11', '2027-06-12', '2027-06-13']);
   assert.deepEqual([f.opex.drawerExpenses, f.opex.fundExpenses, f.opex.total], [50, 1800, 1850]);
   assert.equal(f.cashflow.drawerExpenses, 50);
   assert.equal((await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=2027-06-08`))).totals.expenses, 1850);
@@ -1014,7 +1024,7 @@ test('parts: inventory, average cost, selling on jobs and over the counter, stoc
   assert.equal(eod.departments.parts.collected, 1350);
   assert.equal(eod.gcashReceived, 1350);
   assert.deepEqual([eod.partsCashReceived, eod.partsGcashReceived], [0, 1350], 'EOD shows the counter sale under GCash');
-  const f = await ok(api(OWNER, 'GET', '/finance/summary?start=2026-12-01&end=2026-12-31'));
+  const f = await financeOfClosed('2026-12-01', '2026-12-31', ['2026-12-03']);
   assert.equal(f.income.partsSales, 1350);
   assert.equal(f.income.partsCost, 690);
   assert.equal(f.netProfit, f.income.net - f.income.partsCost - f.opex.total);
@@ -1081,7 +1091,7 @@ test('inventory: tags decide what is sold, staff count usage, deliveries paid fr
   assert.match(day.expenses[0].description, /2 gal Snow foam/);
   assert.deepEqual([day.summary.cashExpenses, day.summary.gcashExpenses], [700, 2100]);
   assert.match((await api(OWNER, 'DELETE', `/expenses/${day.expenses[0].id}`)).data.error, /Inventory/, 'undo it from Inventory, not EOD');
-  let f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  let f = await financeOfClosed(D, D);
   assert.deepEqual([f.opex.drawerExpenses, f.opex.partsBought, f.cashflow.drawerExpenses], [700, 2100, 2800]);
 
   // Paid from the cash fund: refused beyond what the fund holds; otherwise it is on the fund's list.
@@ -1089,7 +1099,7 @@ test('inventory: tags decide what is sold, staff count usage, deliveries paid fr
   await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: D, amount: 5000 }));
   await ok(api(OWNER, 'POST', `/inventory/${horn.id}/receive`, { date: D, quantity: 1, unit_cost: 700, paid_from: 'fund' }));
   assert.ok((await ok(api(OWNER, 'GET', '/cash-fund'))).pending.some(e => /Horn/.test(e.description) && e.amount === 700));
-  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  f = await financeOfClosed(D, D);
   assert.deepEqual([f.opex.fundExpenses, f.opex.partsBought], [0, 2800], 'a part bought with the fund is stock, not a cost');
 
   // Undo: only an item's latest stock change; stock, average cost and the expense all go back.
@@ -1480,6 +1490,7 @@ test('analytics: every period matches Finance, is owner-only and flags days with
   }
   await ok(api(OWNER, 'PUT', `/payroll/attendance/${emp.id}/2029-03-08`, { code: 'CN' }));
   await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: emp.id, date: '2029-03-13', kind: 'deduction', amount: 50, note: 'Advance' }));
+  await closeDays(['2029-03-05', '2029-03-06', '2029-03-07', '2029-03-08', '2029-03-12', '2029-03-13']);
 
   for (const grain of ['day', 'week', 'month', 'quarter']) {
     const { periods } = await ok(api(OWNER, 'GET', `/analytics?grain=${grain}&date=${AS_OF}`));
@@ -1544,6 +1555,7 @@ test('analytics services: each service by period, adding up to Finance, rising o
   await sale('2031-03-10', [{ catalog_item_id: coat.id }]);
   await ok(api(STAFF, 'POST', '/jobs', { job_date: '2031-03-10', department: 'parts', payment_received: true, job_done: true, payment_method: 'Cash',
     items: [{ part_id: bulb.id, quantity: 2 }, { labor: 300 }] }));
+  await closeDays(['2031-03-03', '2031-03-04', '2031-03-10']);
 
   for (const grain of ['day', 'week', 'month', 'quarter']) {
     const { periods, services } = await ok(api(OWNER, 'GET', `/analytics?grain=${grain}&date=${AS_OF}`));
@@ -1607,17 +1619,17 @@ test('consignment: a supplier payment leaves the drawer but is not a second cost
   const drawer = s => s.cashFloat + s.cashReceived - s.commissionCash - s.cashExpenses;
   assert.equal(drawer(day.summary), drawer(before) - 7200, 'expected cash goes down by what was remitted');
 
-  let f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  let f = await financeOfClosed(D, D);
   assert.equal(f.income.partsCost, 7200, 'the cost was counted when the part sold');
   assert.deepEqual([f.opex.drawerExpenses, f.opex.partsBought, f.cashflow.drawerExpenses], [0, 7200, 7200]);
   assert.equal(f.netProfit, 3790, 'profit is SRP less dealer price, counted once');
 
   // An ordinary expense is still a cost, and a supplier payment can be deleted like any other expense.
   await ok(api(OWNER, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Ice', amount: 90 }));
-  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  f = await financeOfClosed(D, D);
   assert.deepEqual([f.opex.drawerExpenses, f.netProfit], [90, 3700]);
   await ok(api(OWNER, 'DELETE', `/expenses/${day.expenses[0].id}`));
-  f = await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`));
+  f = await financeOfClosed(D, D);
   assert.deepEqual([f.opex.partsBought, f.cashflow.drawerExpenses], [0, 90]);
 });
 
@@ -1631,7 +1643,8 @@ test('inventory containers: stock moves between Overall and the department conta
   const shampoo = await ok(api(OWNER, 'POST', '/inventory', { name: 'Car shampoo', unit: 'gal', reorder_level: 5 }));
   assert.deepEqual([shampoo.stock, shampoo.total_stock, shampoo.departments], [0, 0, {}], 'a new item has nothing anywhere');
   await ok(api(OWNER, 'POST', `/inventory/${shampoo.id}/receive`, { date: D, quantity: 10, unit_cost: 100, paid_from: 'none' }));
-  const money = async () => [await ok(api(OWNER, 'GET', `/days/${D}`)), await ok(api(OWNER, 'GET', `/finance/summary?start=${D}&end=${D}`))];
+  // meta is left out: reading Finance closes and reopens the day, which only stamps that record's times.
+  const money = async () => { const finance = await financeOfClosed(D, D); const { meta, ...day } = await ok(api(OWNER, 'GET', `/days/${D}`)); return [day, finance]; };
   const moneyBefore = await money();
 
   // Only the owner sends stock.
@@ -1781,4 +1794,91 @@ test('only the owner can raise a count', async () => {
   await ok(count({ counted: 6 }, OWNER));
   await ok(count({ container: 'carwash', counted: 5 }, OWNER));
   assert.deepEqual(await held(), [6, 5, 11]);
+});
+
+test('finance and analytics count a day only once it is closed, and name the days still open', async () => {
+  const [D1, D2, EMPTY] = ['2033-03-07', '2033-03-08', '2033-03-09'];
+  const summary = () => ok(api(OWNER, 'GET', `/finance/summary?start=${D1}&end=${EMPTY}`));
+  const dayRow = async date => (await ok(api(OWNER, 'GET', `/analytics?grain=day&date=${EMPTY}`))).periods.find(p => p.start === date);
+  const soldOn = async date => {
+    const { periods, services } = await ok(api(OWNER, 'GET', `/analytics?grain=day&date=${EMPTY}`));
+    const at = periods.findIndex(p => p.start === date);
+    return services.items.reduce((total, s) => total + s.periods[at].sold, 0);
+  };
+  const premium = await catalogItem('Premium Wash');
+  const sale = job_date => ok(api(STAFF, 'POST', '/jobs', { job_date, vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  const fund = (await ok(api(OWNER, 'GET', `/funds?date=${D1}`))).find(x => x.name === 'Internet');
+  const worker = await ok(api(OWNER, 'POST', '/employees', { name: 'Closed Day Tester', rate_per_day: 500, construction_rate: 0 }));
+
+  await sale(D1);
+  await sale(D2);
+  await ok(api(STAFF, 'POST', `/days/${D2}/expenses`, { side: 'cash', description: 'Soap', amount: 150 }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/${D1}`, { code: 'P' }));
+  await ok(api(OWNER, 'PUT', `/payroll/attendance/${worker.id}/${D2}`, { code: 'P' }));
+  await ok(api(OWNER, 'POST', '/payroll/adjustments', { employee_id: worker.id, date: D2, kind: 'deduction', amount: 50, note: 'Advance' }));
+  await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: D2, period_start: D1, period_end: D2, side: 'cash', amount: 950 }));
+  await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: D2, side: 'cash', amount: 400 }));
+  await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: D2, amount: 1000, drawer_side: 'cash' }));
+
+  // Nothing closed yet: no money is counted, but the owner is told why, and the bill can still be undone.
+  let f = await summary();
+  assert.deepEqual(f.openDays, [D1, D2], 'an empty day is not worth a warning');
+  assert.deepEqual([f.income.gross, f.income.commission, f.opex.payroll, f.opex.billsTotal, f.opex.drawerExpenses, f.netProfit], [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(f.opex.bills, []);
+  assert.deepEqual(f.cashflow, { cashIn: 0, gcashIn: 0, commissionPaid: 0, drawerExpenses: 0, payrollPayouts: 0, setAsides: 0, billTopUps: 0, net: 0 });
+  assert.deepEqual(f.billPayments.map(b => b.paid_on), [D2]);
+  const liveFund = f.funds.find(x => x.id === fund.id);
+  assert.deepEqual([liveFund.setAside, liveFund.paid], [400, 1000], 'the fund itself is real money, so it stays live');
+  assert.deepEqual([(await dayRow(D1)).sales, (await dayRow(D1)).payroll, (await dayRow(D1)).openDays], [0, 0, [D1]]);
+  assert.deepEqual((await dayRow(D1)).staffNoSales, [], 'an open day is listed as open, not as a day with no sales');
+  assert.equal(await soldOn(D1), 0, 'the services list waits for the day to close as well');
+
+  // Closing one day counts that day only.
+  await closeDays([D1]);
+  f = await summary();
+  const oneSale = f.income.gross;
+  assert.ok(oneSale > 0);
+  assert.deepEqual(f.openDays, [D2]);
+  assert.deepEqual([f.opex.payroll, f.opex.billsTotal, f.opex.drawerExpenses, f.cashflow.payrollPayouts, f.cashflow.setAsides], [500, 0, 0, 0, 0]);
+  assert.equal((await dayRow(D1)).sales, oneSale);
+  assert.deepEqual((await dayRow(D1)).openDays, []);
+  assert.equal(await soldOn(D1), 1);
+
+  // Closing the other brings in everything dated that day.
+  await closeDays([D2]);
+  f = await summary();
+  assert.deepEqual(f.openDays, []);
+  assert.equal(f.income.gross, oneSale * 2);
+  assert.deepEqual([f.opex.payroll, f.opex.billsTotal, f.opex.drawerExpenses], [950, 1000, 150]);
+  assert.deepEqual([f.cashflow.payrollPayouts, f.cashflow.setAsides, f.cashflow.billTopUps], [950, 400, 600]);
+
+  // Reopening takes the day back out until it is closed again.
+  await ok(api(OWNER, 'POST', `/days/${D2}/reopen`));
+  f = await summary();
+  assert.deepEqual(f.openDays, [D2]);
+  assert.equal(f.income.gross, oneSale);
+  assert.equal(f.opex.billsTotal, 0);
+});
+
+test('bill funds: the owner picks weekly or monthly for each bill, and the target follows', async () => {
+  const fundIn = async (id, date) => (await ok(api(STAFF, 'GET', `/funds?date=${date}`))).find(f => f.id === id);
+  const created = await ok(api(OWNER, 'POST', '/funds', { name: 'Monthly saver', amount: 8000, frequency: 'monthly', due_day: 25, set_aside_every: 'monthly' }));
+  assert.equal(created.set_aside_every, 'monthly');
+  const weekly = await ok(api(OWNER, 'POST', '/funds', { name: 'No choice given', amount: 700, frequency: 'monthly', due_day: 25 }));
+  assert.equal(weekly.set_aside_every, 'weekly', 'weekly unless the owner says otherwise');
+  assert.equal((await api(OWNER, 'POST', '/funds', { name: 'Bad choice', amount: 1, frequency: 'monthly', due_day: 2, set_aside_every: 'daily' })).status, 400);
+  assert.equal((await api(STAFF, 'PATCH', `/funds/${created.id}`, { set_aside_every: 'weekly' })).status, 403);
+
+  // Two different weeks of one month both count towards that month's share. May 2032 is used by no other test.
+  await ok(api(STAFF, 'POST', `/funds/${created.id}/set-asides`, { date: '2032-05-03', side: 'cash', amount: 3000 }));
+  await ok(api(STAFF, 'POST', `/funds/${created.id}/set-asides`, { date: '2032-05-20', side: 'cash', amount: 1000 }));
+  const monthly = await fundIn(created.id, '2032-05-20');
+  assert.deepEqual([monthly.periodWord, monthly.periodsLeft, monthly.target, monthly.setAsideThisPeriod, monthly.remaining], ['month', 1, 8000, 4000, 4000]);
+
+  // The same bill switched to weekly only looks at this week.
+  const changed = await ok(api(OWNER, 'PATCH', `/funds/${created.id}`, { set_aside_every: 'weekly' }));
+  assert.equal(changed.set_aside_every, 'weekly');
+  const nowWeekly = await fundIn(created.id, '2032-05-20');
+  assert.deepEqual([nowWeekly.periodWord, nowWeekly.setAsideThisPeriod], ['week', 1000]);
+  for (const f of [created, weekly]) await ok(api(OWNER, 'PATCH', `/funds/${f.id}`, { active: false }));
 });

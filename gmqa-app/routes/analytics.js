@@ -2,9 +2,9 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { analyticsRow, datesBetween, periodBuckets, periodTotals, pctChange, round2, serviceTrends, PERIOD_COUNTS } = require('../lib/calc');
+const { analyticsRow, closedDates, datesBetween, openDatesWithEntries, periodBuckets, periodTotals, pctChange, round2, saleDate, serviceTrends, PERIOD_COUNTS } = require('../lib/calc');
 const { loadJobs } = require('../lib/store');
-const { loadPayroll, payrollNetBetween, carwashWorkDays, SHOP_TODAY } = require('../lib/payroll-data');
+const { loadPayroll, payrollNetOn, payrollEntryDates, carwashWorkDays, SHOP_TODAY } = require('../lib/payroll-data');
 const { date, oneOf } = require('../lib/http');
 
 const router = express.Router();
@@ -23,22 +23,29 @@ router.get('/analytics', requireOwner, async (req, res) => {
     loadPayroll(...between),
   ]);
   const staffDays = carwashWorkDays(payroll);
+  const entryDates = [
+    ...jobs.filter(j => !j.voided_at).flatMap(j => [j.sale_date, j.paid_on]),
+    ...expenses.map(e => e.expense_date), ...bills.map(b => b.paid_on), ...payrollEntryDates(payroll),
+  ];
 
-  const periods = buckets.map(period => analyticsRow(
-    period,
-    periodTotals({ dates: datesBetween(period.start, period.end), jobs, expenses, metas }),
-    {
-      payroll: payrollNetBetween(payroll, period.start, period.end),
-      billsTotal: round2(bills.filter(b => b.paid_on >= period.start && b.paid_on <= period.end).reduce((t, b) => t + b.amount, 0)),
-      staffDays,
-    },
-  ));
+  // Like Finance, a day counts only once it is closed at EOD.
+  const periods = buckets.map(period => {
+    const dates = datesBetween(period.start, period.end);
+    const countedDates = closedDates(dates, metas);
+    return analyticsRow(period, periodTotals({ dates: countedDates, jobs, expenses, metas }), {
+      payroll: payrollNetOn(payroll, countedDates),
+      billsTotal: round2(bills.filter(b => countedDates.includes(b.paid_on)).reduce((t, b) => t + b.amount, 0)),
+      staffDays, countedDates,
+      openDays: openDatesWithEntries(dates, metas, entryDates),
+    });
+  });
+  const closed = new Set(closedDates(datesBetween(...between), metas));
   const [before, now] = periods.slice(-2);
   res.json({
     grain, date: day, periods,
     // Per day with sales and per car, so a period still running is compared fairly with a finished one.
     change: { perDay: pctChange(now.perDay, before.perDay), perCar: pctChange(now.perCar, before.perCar) },
-    services: serviceTrends(periods, jobs),
+    services: serviceTrends(periods, jobs.filter(job => closed.has(saleDate(job)))),
   });
 });
 

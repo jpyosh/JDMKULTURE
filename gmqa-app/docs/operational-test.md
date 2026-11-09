@@ -112,6 +112,8 @@ Press **Replenish ₱1,200.00** → date **Oct 11** → **Record**.
 - [ ] Cash in the fund back to **₱20,000.00**, nothing waiting; History shows ₱1,200.00 with "1 item"
 
 ### 7. Finance for the week (owner)
+Finance counts closed days only, so first close each of **Oct 5–11** in EOD Closing.
+
 Finance, From **Oct 5** To **Oct 11**:
 
 | Profit & loss | Expected |
@@ -158,7 +160,7 @@ Finance, From **Oct 5** To **Oct 11**:
 | 6 | Detailing → Completed (Since Oct 5) | DT-100526-001 → **Not done**, then **Undo payment**, then **✕ Void** (reason `Operational test`) |
 | 7 | Carwash, Oct 5 and Oct 6 | **✕ Void** TST 001–004 (reason `Operational test`) |
 | 8 | EOD Closing, Oct 5 (owner) | **Reopen** the day, press ✕ on "₱800.00 cash today" in Bill envelopes, **Delete** the ₱300 soap expense, set float, actual cash and actual GCash back to 0 / blank |
-| 9 | EOD Closing, Oct 6 and Oct 7 | Delete the ₱1,200 cash-fund expense on Oct 6; set both cash floats back to 0 |
+| 9 | EOD Closing, Oct 6 to Oct 11 | **Reopen** each day; delete the ₱1,200 cash-fund expense on Oct 6; set the Oct 6 and Oct 7 cash floats back to 0 |
 | 10 | Finance → Internet → Edit | Usual amount back to `0` |
 | 11 | Cash fund | **Undo** the ₱20,000.00 starting fund in History; **Set fund size** back to `0` |
 

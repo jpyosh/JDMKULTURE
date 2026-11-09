@@ -22,9 +22,9 @@ function mount(el) {
     <div class="card"><h2>Sales by department</h2><div class="table-wrap"><table class="simple-table dept-table" data-departments></table></div></div>
     <div class="card envelopes" data-envelopes>
       <h2>Bill envelopes</h2>
-      <p class="hint">Save a little for each bill every week, so the full amount is ready when the bill comes.</p>
+      <p class="hint">Save a little for each bill every week or month, so the full amount is ready when the bill comes.</p>
       <ol class="plain-steps">
-        <li>Each bill below shows how much to put aside <b>this week</b>. Press its button.</li>
+        <li>Each bill below shows how much to put aside <b>this week</b> or <b>this month</b>. Press its button.</li>
         <li>Take that money out of the drawer and put it in an <b>envelope</b>. Write the bill name, the amount and today's date on it.</li>
         <li>Hand the envelope to the <b>owner</b> together with today's tape. The app already took it out of the expected drawer.</li>
       </ol>
@@ -175,7 +175,7 @@ function renderFundHint() {
     : 'The cash fund is empty. The owner records the money for it in the Cash fund tab.';
 }
 
-// Bill envelopes: one row per bill with its amount for this week filled in, so putting money aside is one press.
+// Bill envelopes: one row per bill with its amount for this week or month filled in, so putting money aside is one press.
 function renderEnvelopes() {
   const off = locked() ? 'disabled' : '';
   const withAmount = current.funds.filter(f => f.amount > 0);
@@ -184,9 +184,9 @@ function renderEnvelopes() {
   $('[data-envelope-list]', root).innerHTML = withAmount.map(f => {
     const todays = f.setAsidesOnDate.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'} today
       ${off ? '' : `<button class="icon-btn" type="button" data-del-sa="${x.id}" title="Undo" aria-label="Undo ${peso(x.amount)}">✕</button>`}</span>`).join('');
-    const status = f.remainingThisWeek > 0
-      ? `Put <b>${peso(f.remainingThisWeek)}</b> aside this week${f.setAsideThisWeek ? ` (${peso(f.setAsideThisWeek)} of ${peso(f.weeklyTarget)} done)` : ''}`
-      : '<span class="variance-ok">Done for this week ✓</span>';
+    const status = f.remaining > 0
+      ? `Put <b>${peso(f.remaining)}</b> aside this ${f.periodWord}${f.setAsideThisPeriod ? ` (${peso(f.setAsideThisPeriod)} of ${peso(f.target)} done)` : ''}`
+      : `<span class="variance-ok">Done for this ${f.periodWord} ✓</span>`;
     return `<div class="envelope" data-envelope data-fund="${f.id}">
       <div class="envelope-main">
         <div><b>${esc(f.name)}</b> <span class="muted small">bill ${peso(f.amount)} · due ${esc(shortDate(f.nextDue))} · ${peso(f.balance)} saved so far</span></div>
@@ -194,7 +194,7 @@ function renderEnvelopes() {
         ${todays ? `<div class="envelope-today">${todays}</div>` : ''}
       </div>
       <div class="envelope-actions">
-        ${f.remainingThisWeek > 0 ? `<button class="btn" type="button" data-put-aside ${off}>Put ${peso(f.remainingThisWeek)} aside</button>` : ''}
+        ${f.remaining > 0 ? `<button class="btn" type="button" data-put-aside ${off}>Put ${peso(f.remaining)} aside</button>` : ''}
         <button class="btn ghost small" type="button" data-other ${off}>Other amount</button>
       </div>
       <div class="envelope-other" hidden>
@@ -216,7 +216,7 @@ function renderEnvelopes() {
   };
   $$('[data-envelope]', root).forEach(row => {
     const fund = current.funds.find(f => f.id === Number(row.dataset.fund));
-    $('[data-put-aside]', row)?.addEventListener('click', e => busy(e.currentTarget, () => putAside(row, fund.remainingThisWeek, 'cash')));
+    $('[data-put-aside]', row)?.addEventListener('click', e => busy(e.currentTarget, () => putAside(row, fund.remaining, 'cash')));
     $('[data-other]', row).addEventListener('click', () => {
       const other = $('.envelope-other', row);
       other.hidden = !other.hidden;

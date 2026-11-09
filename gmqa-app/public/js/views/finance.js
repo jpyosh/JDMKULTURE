@@ -1,11 +1,12 @@
 // Owner's money view for any period: what came in, what went out, net profit, and the bill funds
 // (weekly set-asides for Meralco, Maynilad, rent, ...).
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, mondayOf, openModal, closeModal, modalHeader, DEPARTMENTS } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, mondayOf, openModal, closeModal, modalHeader, openDaysBanner, DEPARTMENTS } from '../ui.js';
 
 let root;
 let range = null;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const FREQ = { monthly: 'Monthly', quarterly: 'Every 3 months', yearly: 'Yearly' };
+const SET_ASIDE_EVERY = { weekly: 'Every week', monthly: 'Every month' };
 const GUIDE_KEY = 'gmqa.finance.guide';
 
 // Step-by-step directions for someone opening Finance for the first time. Open until they close it.
@@ -14,7 +15,7 @@ const GUIDE = `
     <summary>How Finance works <span class="muted small">New here? Start with these steps.</span></summary>
     <ol class="guide-steps">
       <li><b>Pick the period.</b> Use From / To, or the <b>This week</b>, <b>This month</b> and <b>Last month</b> buttons.
-        Every number on this page is for those days only.</li>
+        Every number on this page is for those days only, and <b>a day counts once it is closed in EOD Closing</b>. Days still open are named at the top.</li>
       <li><b>Profit &amp; loss: is the shop making money?</b>
         <p>Sales from every department, minus commission, minus the costs of the period: payroll for the days worked,
           bills paid, drawer expenses from EOD and anything bought with the cash fund. <b>Net profit</b> is what is left. Red means the costs were bigger than the sales.</p></li>
@@ -22,11 +23,11 @@ const GUIDE = `
         <p>Money actually received, minus everything taken out. <b>Payroll paid out</b> is the wages handed out on days in this period
           (it can include last week's work), so it can differ from the payroll cost in Profit &amp; loss.
           <b>Left over for the owner</b> is what should remain.</p></li>
-      <li><b>Bill funds: save for big bills a little each week.</b>
+      <li><b>Bill funds: save for big bills a little at a time.</b>
         <ul>
-          <li>Press <b>Edit</b> on a bill to set its usual amount and due day (or <b>+ Add fund</b> for a new bill).
-            The <b>weekly target</b> is worked out for you.</li>
-          <li>Every week, in <b>EOD Closing → Bill envelopes</b>, set aside the weekly target with one press. The money goes in a labelled envelope for the owner and waits in the fund.</li>
+          <li>Press <b>Edit</b> on a bill to set its usual amount, due day and whether to set money aside <b>every week or every month</b> (or <b>+ Add fund</b> for a new bill).
+            The <b>target</b> is worked out for you.</li>
+          <li>Each week or month, in <b>EOD Closing → Bill envelopes</b>, set aside the target with one press. The money goes in a labelled envelope for the owner and waits in the fund.</li>
           <li>When the bill arrives, press <b>Pay bill</b> here. It is paid from the fund first; anything missing comes out of that
             day's Cash or GCash drawer.</li>
         </ul></li>
@@ -68,19 +69,20 @@ function mount(el) {
       <button class="btn ghost small" type="button" data-preset="last-month">Last month</button>
     </div>
     ${GUIDE}
+    <div data-open-days></div>
     <div class="two-col">
       <div class="card"><h2>Profit &amp; loss</h2><div data-pl></div></div>
       <div class="card"><h2>Money in &amp; out of the drawer</h2><div data-cashflow></div></div>
     </div>
     <div class="card">
       <div class="section-header"><h2>Bill funds</h2><button class="btn ghost" type="button" data-add-fund>+ Add fund</button></div>
-      <p class="hint">Each week, set aside the <b>weekly target</b> for each bill at EOD (EOD Closing → Bill envelopes). When the bill comes,
+      <p class="hint">Each week or month, by what you chose for the bill, set aside its <b>target</b> at EOD (EOD Closing → Bill envelopes). When the bill comes,
         pay it here: it is taken from its fund, and any shortfall is taken from that day's drawer.</p>
       <div class="table-wrap"><table class="simple-table funds-table" data-funds-table></table></div>
     </div>
     <div class="card">
       <div class="section-header"><h2>Bills paid</h2></div>
-      <p class="hint">Every bill paid in this period. Recorded one by mistake? Press <b>Undo</b> to remove it completely.</p>
+      <p class="hint">Every bill paid in this period. It counts in profit once its day is closed. Recorded one by mistake? Press <b>Undo</b> to remove it completely.</p>
       <div class="table-wrap"><table class="simple-table funds-table" data-bills-paid></table></div>
     </div>`;
   const guide = $('[data-guide]', root);
@@ -122,6 +124,7 @@ const line = (label, value, cls = '') => `<div class="row-line ${cls}"><span cla
 
 function render(s, fundStatus) {
   const { income: i, opex: o, cashflow: c } = s;
+  $('[data-open-days]', root).innerHTML = openDaysBanner(s.openDays);
   $('[data-pl]', root).innerHTML = `
     <div class="pl-section">Income</div>
     ${DEPARTMENTS.map(d => line(`${esc(d.label)} sales`, peso(i.departments[d.key]))).join('')}
@@ -152,7 +155,7 @@ function render(s, fundStatus) {
 
   const rows = s.funds.filter(f => f.active).map(f => ({ ...f, ...(fundStatus.find(x => x.id === f.id) || {}) }));
   $('[data-funds-table]', root).innerHTML = `
-    <thead><tr><th>Fund</th><th class="num">Usual bill</th><th>Due</th><th class="num">Balance now</th><th class="num">Weekly target</th>
+    <thead><tr><th>Fund</th><th class="num">Usual bill</th><th>Due</th><th class="num">Balance now</th><th class="num">Set-aside target</th>
       <th class="num">Set aside (period)</th><th class="num">Paid (period)</th><th></th></tr></thead>
     <tbody>${rows.map(f => `
       <tr data-fund="${f.id}">
@@ -160,7 +163,7 @@ function render(s, fundStatus) {
         <td class="num money">${f.amount ? peso(f.amount) : '<span class="amber-text">set amount</span>'}</td>
         <td>${esc(FREQ[f.frequency] || '')}<div class="muted small">next ${esc(f.nextDue || '—')}${f.daysLeft != null ? ` · ${f.daysLeft} day(s)` : ''}</div></td>
         <td class="num money">${peso(f.balance)}${f.shortBy ? `<div class="muted small">short ${peso(f.shortBy)}</div>` : ''}</td>
-        <td class="num money">${peso(f.weeklyTarget || 0)}${f.remainingThisWeek ? `<div class="muted small">${peso(f.remainingThisWeek)} left this week</div>` : ''}</td>
+        <td class="num money">${peso(f.target || 0)}<div class="muted small">per ${esc(f.periodWord || 'week')}${f.remaining ? ` · ${peso(f.remaining)} left this ${esc(f.periodWord)}` : ''}</div></td>
         <td class="num money">${peso(f.setAside)}</td>
         <td class="num money">${peso(f.paid)}</td>
         <td class="row-actions"><button class="btn ghost small" type="button" data-act="edit-fund">Edit</button>
@@ -201,11 +204,12 @@ async function undoBill(bill) {
 }
 
 function fundModal(fund) {
-  openModal(`${modalHeader(fund ? `Edit ${fund.name}` : 'Add bill fund', 'The weekly target is worked out from the usual amount and the due date.')}
+  openModal(`${modalHeader(fund ? `Edit ${fund.name}` : 'Add bill fund', 'The set-aside target is worked out from the usual amount and the due date.')}
     <div class="form-grid modal-form-grid">
       <div><label>Name</label><input type="text" data-fund-name maxlength="80" value="${esc(fund?.name || '')}"></div>
       <div><label>Usual bill amount</label><input type="number" min="0" step="0.01" data-fund-amount value="${fund?.amount ?? ''}"></div>
       <div><label>How often</label><select data-fund-frequency>${Object.entries(FREQ).map(([k, v]) => `<option value="${k}" ${k === (fund?.frequency || 'monthly') ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+      <div><label>Set money aside</label><select data-fund-every>${Object.entries(SET_ASIDE_EVERY).map(([k, v]) => `<option value="${k}" ${k === (fund?.set_aside_every || 'weekly') ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
       <div><label>Due day of month</label><input type="number" min="1" max="31" data-fund-day value="${fund?.due_day ?? 1}"></div>
       <div><label>Due month (yearly / 3-monthly)</label><select data-fund-month><option value="">—</option>
         ${MONTHS.map((m, i) => `<option value="${i + 1}" ${fund?.due_month === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
@@ -218,6 +222,7 @@ function fundModal(fund) {
         name: $('[data-fund-name]', card).value.trim(),
         amount: Number($('[data-fund-amount]', card).value || 0),
         frequency: $('[data-fund-frequency]', card).value,
+        set_aside_every: $('[data-fund-every]', card).value,
         due_day: Number($('[data-fund-day]', card).value),
         due_month: $('[data-fund-month]', card).value || null,
       };

@@ -1,6 +1,6 @@
 // Owner's trends: sales, cars and net profit by day, pay week, month or quarter. Every figure comes from
 // the server (GET /analytics) and matches Finance for the same days.
-import { $, $$, api, esc, peso, prettyDate, todayLocal } from '../ui.js';
+import { $, $$, api, esc, peso, prettyDate, todayLocal, openDaysBanner } from '../ui.js';
 
 const GRAINS = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly'], ['quarter', 'Quarterly']];
 
@@ -23,6 +23,7 @@ function mount(el) {
       </div>
       <div><label>Up to</label><input type="date" data-date></div>
     </div>
+    <div data-open-days></div>
     <div data-warning></div>
     <div class="weekly-summary" data-summary></div>
     <div class="card analytics-chart">
@@ -52,6 +53,7 @@ function mount(el) {
     <details class="card help-card" data-help>
       <summary>How to read Analytics</summary>
       <ul>
+        <li><b>Only closed days count</b>, the same as Finance. A day is added once it is closed in EOD Closing; days still open are named at the top.</li>
         <li><b>Daily / Weekly / Monthly / Quarterly</b>: weeks are the Sunday-to-Saturday pay weeks, quarters are calendar quarters (Q1 is January to March).</li>
         <li><b>Sales</b>: paid sales booked in the period, every department together. <b>Cars</b>: every job of the period, paid or not, as in the sales report.</li>
         <li><b>Per day</b>: sales ÷ days with sales. Use it to compare periods, because a period still running has fewer days. <b>Per car</b>: sales ÷ cars.</li>
@@ -104,6 +106,7 @@ function render() {
   const before = periods[periods.length - 2];
   const running = now.partial ? ' so far' : '';
 
+  $('[data-open-days]', root).innerHTML = openDaysBanner(periods.flatMap(p => p.openDays));
   const toCheck = periods.flatMap(p => p.staffNoSales);
   $('[data-warning]', root).innerHTML = toCheck.length ? `<div class="banner tips-reminder" data-to-check>
     <span><b>Check these numbers.</b> Someone was marked present at the carwash on ${plural(toCheck.length, 'day')} with no sales logged
