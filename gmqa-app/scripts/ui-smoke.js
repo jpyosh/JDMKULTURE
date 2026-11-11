@@ -515,10 +515,16 @@ async function launch() {
       await eod.locator('[data-date]').fill(DAY);
       await eod.locator('[data-date]').dispatchEvent('change');
       await page.waitForFunction(() => /Vehicles\s*20/.test(document.querySelector('#view-eod [data-metrics]').textContent));
+      // Numbers typed but not saved yet stay on screen while an expense is added.
+      const typed = async () => [await eod.locator('[data-m="cash_float"]').inputValue(), await eod.locator('[data-m="actual_cash"]').inputValue()];
+      await eod.locator('[data-m="cash_float"]').fill('777');
+      await eod.locator('[data-m="actual_cash"]').fill('4321');
       await eod.locator('[data-e="description"]').fill('Soap');
       await eod.locator('[data-e="amount"]').fill('120');
       await eod.locator('[data-add-expense]').click();
       await expectToast(/Expense added/);
+      assert.deepEqual(await typed(), ['777', '4321'], 'adding an expense keeps the float and count typed in');
+      assert.match(await eod.locator('[data-cash]').textContent(), /Cash float\s*₱777\.00/, 'and the drawer math still uses them');
       // Bill envelopes: plain steps, one button per bill with this week's amount filled in.
       const envelopes = eod.locator('[data-envelopes]');
       assert.match(await envelopes.textContent(), /no amount yet/i, 'bills without an amount are explained, not shown as rows');
@@ -537,6 +543,15 @@ async function launch() {
       await page.waitForFunction(() => /Done for this week/i.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
       const cashBox = await eod.locator('[data-cash]').textContent();
       assert.ok(/Put aside for bills/.test(cashBox) && cashBox.includes(target), `drawer shows the ${target} put aside`);
+      assert.deepEqual(await typed(), ['777', '4321'], 'putting money aside keeps them too');
+      // They were never saved, so leaving the day drops them: another day never shows this day's typing.
+      await eod.locator('[data-shift="1"]').click();
+      await page.waitForFunction(() => !/Soap/.test(document.querySelector('#view-eod [data-expenses]').textContent)); // the next day is up
+      assert.deepEqual(await typed(), ['0', '']);
+      await eod.locator('[data-shift="-1"]').click();
+      await page.waitForFunction(() => /Soap/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      assert.deepEqual(await typed(), ['0', '']);
+      await meralcoRow.waitFor();
       // Undo, then put a different amount aside (the "Other amount" path).
       await meralcoRow.locator('[data-del-sa]').click();
       await expectToast(/removed|undone/i);
