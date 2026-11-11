@@ -7,6 +7,9 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('playwright-core');
 const { start } = require('./sandbox');
+// Several steps work on days in 2027 so they have a day to themselves. The server refuses dates after today
+// (lib/clock.js, covered by test/api.test.js), so for this run today is pinned after them.
+require('../lib/clock').setShopToday('2099-12-31');
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';

@@ -11,6 +11,7 @@ const { db } = require('../lib/db');
 const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/calc');
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
 const { loadPart, takeStock, returnStock, piecesOf } = require('../lib/inventory');
+const { assertNotAfterToday, assertNotFarAhead } = require('../lib/clock');
 const { peso } = require('../lib/cash-fund');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
@@ -206,6 +207,10 @@ router.post('/jobs', async (req, res) => {
   const jobId = await db.tx(req.user.email, async q => {
     // A plain running job touches no day's numbers; paid or done, it does.
     if (!running || done || req.body.payment_received) await assertDayOpen(q, jobDate, req.user);
+    // A job can be entered a few days ahead (a booking); one already done or paid cannot be dated after today.
+    await assertNotFarAhead(q, jobDate, 'Job date');
+    if (done) await assertNotAfterToday(q, jobDate, 'Done date');
+    if (req.body.payment_received) await assertNotAfterToday(q, jobDate, 'Payment date');
     const fields = await cleanJobFields(q, req.body);
     if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
     if (dept === 'parts' && fields.payment_received && !fields.payment_method) throw bad('Choose how the customer paid: Cash or GCash');
@@ -242,6 +247,7 @@ router.patch('/jobs/:id', async (req, res) => {
       if (fields.payment_received) {
         fields.paid_on = req.body.paid_on == null || req.body.paid_on === '' ? job.job_date : date(req.body.paid_on, 'Payment date');
         if (fields.paid_on < job.job_date) throw bad(`Payment date cannot be before the day of the job (${job.job_date})`);
+        await assertNotAfterToday(q, fields.paid_on, 'Payment date');
         // Like a running job: recording only the payment needs the day the money came in to be open, not the day of the job.
         days = paymentOnly ? [fields.paid_on] : [...days, fields.paid_on];
       } else {
@@ -304,6 +310,7 @@ router.post('/jobs/:id/complete', async (req, res) => {
     if (job.closed_on) throw bad(`Already marked done on ${job.closed_on}`);
     const day = date(req.body.date, 'Done date');
     if (day < job.job_date) throw bad(`Done date cannot be before the job was opened (${job.job_date})`);
+    await assertNotAfterToday(q, day, 'Done date');
     await assertDayOpen(q, day, req.user);
     await q.query('update jobs set closed_on = $2 where id = $1', [job.id, day]);
   }));
@@ -322,6 +329,7 @@ router.post('/jobs/:id/pay', async (req, res) => {
     if (job.payment_received) throw bad(`Already paid${job.paid_on ? ` on ${job.paid_on}` : ''}`);
     const day = date(req.body.date, 'Payment date');
     if (day < job.job_date) throw bad(`Payment date cannot be before the job was opened (${job.job_date})`);
+    await assertNotAfterToday(q, day, 'Payment date');
     const method = oneOf(req.body.payment_method, PAYMENT_METHODS, 'Payment method');
     const tip = 'tip_gcash' in (req.body || {}) ? money(req.body.tip_gcash, 'GCash tip') : job.tip_gcash;
     await assertDaysOpen(q, [day, later(day, job.closed_on)].filter(Boolean), req.user);

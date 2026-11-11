@@ -82,6 +82,12 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   (paid or not), total sales (paid), less comms, less expenses (drawer cash + GCash, not the cash fund), total net,
   then Cash and Gcash as **actually counted** at EOD (the drawer count includes the float) and each side's variance
   (+ over, - short). A side not counted yet says so and has no variance (`salesReport` in `lib/calc.js`).
+- **Dates are checked against today** (shop time, `lib/clock.js`): a day cannot be closed, and a job cannot be
+  marked done or paid, on a date after today. A job, expense, bill set-aside, bill payment or payroll payout can
+  be dated at most 7 days ahead, so a wrong year or month is refused.
+- **Money entries are checked**: tips given to the crew cannot be more than the tips held; an identical payroll
+  payout is asked about before it is recorded twice; a set-aside that has since paid a bill, or a cash fund
+  top-up that has been spent, cannot be removed until the bill payment or purchases are undone.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
 - Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →

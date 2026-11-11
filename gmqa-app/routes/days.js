@@ -6,6 +6,7 @@ const { daySummary, tipsOwed, salesReport, TIPS_TRACKED_FROM } = require('../lib
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { bad, notFound, forbidden, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
+const { assertNotAfterToday, assertNotFarAhead } = require('../lib/clock');
 
 const router = express.Router();
 const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gcash: null,
@@ -78,6 +79,8 @@ router.put('/days/:date', async (req, res) => {
 // says they will be given later (tips_later); then they are carried over to the next day's EOD.
 router.post('/days/:date/close', async (req, res) => {
   const day = date(req.params.date);
+  // A day that has not happened yet cannot be closed: staff would be locked out of it before it starts.
+  await assertNotAfterToday(db, day, 'The day to close');
   const { meta, summary } = await loadDay(day);
   if (!meta.closed_at && summary.tipsToGive > 0 && req.body?.tips_later !== true) {
     throw conflict(`₱${summary.tipsToGive.toFixed(2)} in GCash tips has not been given to the crew yet. Give it out first, or close and give it later.`);
@@ -106,6 +109,7 @@ router.post('/days/:date/expenses', async (req, res) => {
   if (forResale && req.user.role !== 'owner') throw forbidden('Only the owner can record a supplier payment');
   await db.tx(req.user.email, async q => {
     await assertDayOpen(q, day, req.user);
+    await assertNotFarAhead(q, day, 'Expense date');
     if (side === 'fund') await assertFundCovers(q, amount);
     await q.query('insert into expenses (expense_date, side, description, amount, for_resale) values ($1, $2, $3, $4, $5)',
       [day, side, description, amount, forResale]);

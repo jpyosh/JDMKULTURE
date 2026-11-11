@@ -7,6 +7,7 @@ const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { loadPayroll, payrollNetOn, payrollEntryDates } = require('../lib/payroll-data');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
+const { assertNotFarAhead } = require('../lib/clock');
 
 const router = express.Router();
 const MAX_SUMMARY_DAYS = 400;
@@ -102,6 +103,7 @@ router.post('/funds/:id/set-asides', async (req, res) => {
   const row = await db.tx(req.user.email, async q => {
     await fundBalance(q, fundId);
     await assertDayOpen(q, day, req.user);
+    await assertNotFarAhead(q, day, 'Date');
     return q.one(`insert into fund_set_asides (fund_id, entry_date, side, amount, note) values ($1, $2, $3, $4, $5)
       returning id, fund_id, entry_date, side, amount, note`,
     [fundId, day, oneOf(req.body.side, SIDES, 'Taken from'), money(req.body.amount, 'Amount', { min: 0.01 }), text(req.body.note, 'Note', { max: 200 })]);
@@ -130,6 +132,7 @@ router.post('/funds/:id/bills', requireOwner, async (req, res) => {
   const day = date(req.body.date, 'Payment date');
   const amount = money(req.body.amount, 'Bill amount', { min: 0.01 });
   const row = await db.tx(req.user.email, async q => {
+    await assertNotFarAhead(q, day, 'Payment date');
     const { balance } = await fundBalance(q, fundId);
     const { fromFund, fromDrawer } = splitBill(amount, balance);
     if (fromDrawer > 0 && !SIDES.includes(req.body.drawer_side)) {

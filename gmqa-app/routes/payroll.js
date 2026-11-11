@@ -7,6 +7,7 @@ const { db } = require('../lib/db');
 const { ATTENDANCE_CODES, datesBetween, longDate } = require('../lib/calc');
 const { loadPayroll, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
 const signoff = require('../lib/signoff-pdf');
+const { assertNotFarAhead } = require('../lib/clock');
 const { bad, notFound, conflict, money, between, text, date, oneOf, id, pick } = require('../lib/http');
 
 const router = express.Router();
@@ -222,6 +223,7 @@ router.post('/payroll/payouts', async (req, res) => {
     money(req.body.amount, 'Amount', { min: 0.01 }), text(req.body.note, 'Note', { max: 200 }),
   ];
   const row = await db.tx(req.user.email, async q => {
+    await assertNotFarAhead(q, values[0], 'Payout date');
     // The same payout entered twice would take the wages out of the drawer twice: ask first (confirm_duplicate).
     const same = await q.one(`select 1 from payroll_payouts where payout_date = $1 and period_start = $2 and period_end = $3
       and side = $4 and amount = $5`, values.slice(0, 5));

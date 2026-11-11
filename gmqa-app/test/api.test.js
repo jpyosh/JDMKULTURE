@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { migratedDb, closeAllDrivers } = require('./helpers');
 const { createApp } = require('../server');
 const { clearUserCache } = require('../lib/auth');
+const { setShopToday } = require('../lib/clock');
 const crypto = require('crypto');
 
 // Test tokens are just the email; the fake verifier maps them to identities.
@@ -14,6 +15,8 @@ const STAFF = 'staff@test.ph';
 let server, base, driver;
 
 test.before(async () => {
+  // Date guards compare with today: these tests use dates up to 2033, so today is pinned after them all.
+  setShopToday('2099-12-31');
   driver = await migratedDb();
   await driver.query("insert into app_users (email, role) values ($1, 'owner'), ($2, 'staff')", [OWNER, STAFF]);
   server = createApp({ verifyToken }).listen(0);
@@ -2056,4 +2059,46 @@ test('money entries are checked: tips given out, a payout entered twice, a set-a
   assert.equal((await ok(api(OWNER, 'GET', '/cash-fund'))).balance, 200);
   await ok(api(STAFF, 'DELETE', `/expenses/${day.expenses.find(e => e.description === 'Guard purchase').id}`));
   assert.equal((await ok(api(OWNER, 'DELETE', `/cash-fund/topups/${topup.id}`))).balance, before);
+});
+
+test('dates: nothing is closed, finished or paid after today, and nothing is entered more than a week ahead', async () => {
+
+  setShopToday('2026-11-12');
+  try {
+    const [TODAY, TOMORROW, WEEK, TOO_FAR] = ['2026-11-12', '2026-11-13', '2026-11-19', '2026-11-20'];
+    const premium = await catalogItem('Premium Wash');
+    const wash = { vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] };
+    const refused = async (promise, re) => { const r = await promise; assert.equal(r.status, 400, JSON.stringify(r.data)); assert.match(r.data.error, re); };
+
+    // A day that has not happened cannot be closed (staff would then be locked out of it).
+    await refused(api(STAFF, 'POST', `/days/${TOMORROW}/close`, {}), /cannot be after today/);
+    assert.equal((await ok(api(OWNER, 'GET', `/days/${TOMORROW}`))).meta.closed_at, null);
+    await ok(api(STAFF, 'POST', `/days/${TODAY}/close`, { tips_later: true }));
+    await ok(api(OWNER, 'POST', `/days/${TODAY}/reopen`));
+
+    // Done and paid: today at the latest.
+    const detailing = (await ok(api(OWNER, 'GET', '/catalog'))).items.find(i => i.kind === 'service' && i.department === 'detailing');
+    const detail = { department: 'detailing', vehicle_class: 'S', items: [{ catalog_item_id: detailing.id }] };
+    const running = await ok(api(OWNER, 'POST', '/jobs', { job_date: '2026-11-10', ...detail })); // another test leaves the 10th closed
+    await refused(api(STAFF, 'POST', `/jobs/${running.id}/complete`, { date: '2027-06-01' }), /Done date cannot be after today \(2026-11-12\)/);
+    await refused(api(STAFF, 'POST', `/jobs/${running.id}/pay`, { date: TOMORROW, payment_method: 'Cash' }), /Payment date cannot be after today/);
+    const credit = await ok(api(OWNER, 'POST', '/jobs', { job_date: '2026-11-10', ...wash }));
+    await refused(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: TOMORROW }), /Payment date cannot be after today/);
+    await ok(api(STAFF, 'POST', `/jobs/${running.id}/complete`, { date: TODAY }));
+    await ok(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: TODAY }));
+
+    // Entries can be dated up to a week ahead (a booking, a planned payout), not further: a wrong year or month is caught.
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: TOO_FAR, ...wash }), /too far ahead/);
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: '2027-11-12', ...wash }), /too far ahead/);
+    const booked = await ok(api(STAFF, 'POST', '/jobs', { job_date: WEEK, ...wash }));
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: WEEK, job_done: true, ...detail }), /cannot be after today/);
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: WEEK, payment_received: true, ...wash }), /cannot be after today/);
+    await refused(api(STAFF, 'POST', `/days/${TOO_FAR}/expenses`, { side: 'cash', description: 'Soap', amount: 10 }), /too far ahead/);
+    await refused(api(STAFF, 'POST', '/funds/1/set-asides', { date: TOO_FAR, side: 'cash', amount: 10 }), /too far ahead/);
+    await refused(api(OWNER, 'POST', '/funds/1/bills', { date: TOO_FAR, amount: 10, drawer_side: 'cash' }), /too far ahead/);
+    await refused(api(OWNER, 'POST', '/payroll/payouts', { payout_date: TOO_FAR, period_start: TODAY, period_end: TODAY, side: 'cash', amount: 10 }), /too far ahead/);
+    for (const job of [running, credit, booked]) await ok(api(OWNER, 'POST', `/jobs/${job.id}/void`, { reason: 'test cleanup' }));
+  } finally {
+    setShopToday('2099-12-31');
+  }
 });
