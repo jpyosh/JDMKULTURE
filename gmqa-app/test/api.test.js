@@ -1990,3 +1990,22 @@ test('a job whose vehicle class was hidden can still be edited; a hidden class c
   assert.match(pick.data.error, /Unknown vehicle class OLDVAN/);
   assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'OLDVAN', items: [{ catalog_item_id: premium.id }] })).status, 400);
 });
+
+test('job history finds a job\'s own line items however many other changes came after', async () => {
+  const D = '2026-08-21'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const job = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }, { name: 'Wax', price: 100, commission: 10 }] }));
+  await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: job.items[0].id }] })); // the wax comes off
+  // 520 line-item changes on other jobs afterwards.
+  for (let i = 0; i < 26; i += 1) {
+    await ok(api(STAFF, 'POST', '/jobs', { job_date: '2026-08-22', vehicle_class: 'S', items: Array.from({ length: 20 }, (_, k) => ({ name: `Filler ${k}`, price: 1, commission: 0 })) }));
+  }
+  assert.equal((await api(STAFF, 'GET', `/jobs/${job.id}/history`)).status, 403);
+  const history = await ok(api(OWNER, 'GET', `/jobs/${job.id}/history`));
+  const items = history.filter(e => e.table_name === 'job_items');
+  assert.deepEqual(items.map(e => [e.action, (e.new_row || e.old_row).name]).sort(), [['DELETE', 'Wax'], ['INSERT', 'Premium Wash'], ['INSERT', 'Wax']]);
+  assert.ok(items.every(e => Number((e.new_row || e.old_row).job_id) === job.id), 'only this job');
+  assert.ok(history.some(e => e.table_name === 'jobs' && e.action === 'INSERT' && e.new_row.jo_number === job.jo_number));
+  assert.deepEqual(history.map(e => e.id), history.map(e => e.id).sort((a, b) => b - a), 'newest first');
+  assert.equal((await api(OWNER, 'GET', '/jobs/999999/history')).status, 404);
+});

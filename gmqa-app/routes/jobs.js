@@ -186,6 +186,16 @@ router.get('/jobs/completed', async (req, res) => {
   else res.json(await loadJobs('department = $1 and payment_received and sale_date = $2', [dept, date(req.query.date)]));
 });
 
+// Every recorded change to one job and its line items, newest first (owner). Line items are found by the job
+// they belong to, so the history is complete however many other changes came after.
+router.get('/jobs/:id/history', requireOwner, async (req, res) => {
+  const jobId = id(req.params.id, 'job');
+  if (!(await db.one('select 1 from jobs where id = $1', [jobId]))) throw notFound('Job');
+  res.json(await db.many(`select id, at, actor, table_name, row_pk, action, old_row, new_row from audit_log
+    where (table_name = 'jobs' and row_pk = $1) or (table_name = 'job_items' and coalesce(new_row, old_row) ->> 'job_id' = $1)
+    order by id desc limit 1000`, [String(jobId)]));
+});
+
 // ---------------------------------------------------------------- create / edit
 
 router.post('/jobs', async (req, res) => {

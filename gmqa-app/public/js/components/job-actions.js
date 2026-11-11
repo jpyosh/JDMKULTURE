@@ -102,12 +102,7 @@ export async function restoreJob(job, onDone) {
 
 export async function showHistory(job) {
   if (!isOwner()) return toast('Only the owner can view change history', 'error');
-  const [jobLog, itemLog] = await Promise.all([
-    api('GET', `/audit?table=jobs&row=${job.id}`),
-    api('GET', '/audit?table=job_items&limit=500'),
-  ]);
-  const entries = [...jobLog, ...itemLog.filter(e => Number((e.new_row || e.old_row)?.job_id) === job.id)]
-    .sort((a, b) => b.id - a.id);
+  const entries = await api('GET', `/jobs/${job.id}/history`); // the job and its line items, newest first
   const { describeChange } = await import('../views/settings.js');
   openModal(`${modalHeader(`${job.jo_number} history`, `${entries.length} change${entries.length === 1 ? '' : 's'}`)}
     <div class="history-list">${entries.map(describeChange).join('') || '<div class="empty-state">No changes recorded since the v2 upgrade.</div>'}</div>
