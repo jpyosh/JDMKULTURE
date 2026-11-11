@@ -2009,3 +2009,51 @@ test('job history finds a job\'s own line items however many other changes came 
   assert.deepEqual(history.map(e => e.id), history.map(e => e.id).sort((a, b) => b - a), 'newest first');
   assert.equal((await api(OWNER, 'GET', '/jobs/999999/history')).status, 404);
 });
+
+test('money entries are checked: tips given out, a payout entered twice, a set-aside or top-up already spent', async () => {
+  const D = '2033-06-01'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+
+  // GCash tips: no more can be given to the crew than the tips held.
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [{ catalog_item_id: premium.id }] }));
+  const over = await api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 500 });
+  assert.equal(over.status, 400);
+  assert.match(over.data.error, /Only ₱50\.00 in GCash tips/);
+  assert.equal((await ok(api(STAFF, 'GET', `/days/${D}`))).summary.tipsGiven, 0, 'nothing was saved');
+  const given = await ok(api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 50, cash_float: 1000 }));
+  assert.deepEqual([given.summary.tipsGiven, given.summary.tipsToGive], [50, 0]);
+  await ok(api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 50, cash_float: 1200, actual_cash: 1 })); // saving the rest again is fine
+
+  // The same payout entered twice is asked about, not silently doubled.
+  const payout = { payout_date: D, period_start: '2033-05-22', period_end: '2033-05-28', side: 'cash', amount: 1234 };
+  const first = await ok(api(OWNER, 'POST', '/payroll/payouts', payout));
+  const twice = await api(OWNER, 'POST', '/payroll/payouts', payout);
+  assert.equal(twice.status, 409);
+  assert.match(twice.data.error, /already recorded/);
+  assert.equal((await ok(api(OWNER, 'GET', `/days/${D}`))).summary.payrollCash, 1234);
+  const second = await ok(api(OWNER, 'POST', '/payroll/payouts', { ...payout, confirm_duplicate: true })); // two envelopes of the same amount
+  const other = await ok(api(OWNER, 'POST', '/payroll/payouts', { ...payout, amount: 500 }));
+  for (const p of [first, second, other]) await ok(api(OWNER, 'DELETE', `/payroll/payouts/${p.id}`));
+
+  // Money put aside that has since paid a bill cannot be taken back out of the fund.
+  const fund = await ok(api(OWNER, 'POST', '/funds', { name: 'Guard bill', amount: 1000, frequency: 'monthly', due_day: 25 }));
+  const aside = await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: D, side: 'cash', amount: 500 }));
+  const bill = await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: D, amount: 500 }));
+  const spent = await api(STAFF, 'DELETE', `/fund-set-asides/${aside.id}`);
+  assert.equal(spent.status, 400);
+  assert.match(spent.data.error, /already paid a bill/);
+  await ok(api(OWNER, 'DELETE', `/bill-payments/${bill.id}`));
+  await ok(api(STAFF, 'DELETE', `/fund-set-asides/${aside.id}`));
+  await ok(api(OWNER, 'PATCH', `/funds/${fund.id}`, { active: false }));
+
+  // A cash fund top-up that has been spent cannot be undone until the purchases are removed.
+  const before = (await ok(api(OWNER, 'GET', '/cash-fund'))).balance;
+  const topup = await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: '2026-01-02', amount: 1000 })); // before every purchase: replenishes none
+  const day = await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'Guard purchase', amount: before + 800 }));
+  const undo = await api(OWNER, 'DELETE', `/cash-fund/topups/${topup.id}`);
+  assert.equal(undo.status, 400);
+  assert.match(undo.data.error, /₱800\.00 of it has already been spent/);
+  assert.equal((await ok(api(OWNER, 'GET', '/cash-fund'))).balance, 200);
+  await ok(api(STAFF, 'DELETE', `/expenses/${day.expenses.find(e => e.description === 'Guard purchase').id}`));
+  assert.equal((await ok(api(OWNER, 'DELETE', `/cash-fund/topups/${topup.id}`))).balance, before);
+});

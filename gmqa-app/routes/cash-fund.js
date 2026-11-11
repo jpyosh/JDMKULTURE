@@ -39,8 +39,19 @@ router.post('/cash-fund/topups', requireOwner, async (req, res) => {
 
 // Undo: the money is taken back out and its purchases are waiting to be replenished again.
 router.delete('/cash-fund/topups/:id', requireOwner, async (req, res) => {
-  const changed = await db.tx(req.user.email, q => q.exec('delete from cash_fund_topups where id = $1', [id(req.params.id, 'replenishment')]));
-  if (!changed) throw notFound('Replenishment');
+  const topupId = id(req.params.id, 'replenishment');
+  await db.tx(req.user.email, async q => {
+    await q.query("select pg_advisory_xact_lock(hashtext('cash_fund'))");
+    const topup = await q.one('select amount from cash_fund_topups where id = $1', [topupId]);
+    if (!topup) throw notFound('Replenishment');
+    // Money already spent from the fund cannot be taken back out of it.
+    const { balance } = await loadCashFund(q);
+    const short = Math.round((topup.amount - balance) * 100) / 100;
+    if (short > 0) {
+      throw bad(`${peso(short)} of it has already been spent: the fund only holds ${peso(Math.max(balance, 0))}. Remove those purchases first, or leave this as it is and record the correction as a new entry.`);
+    }
+    await q.query('delete from cash_fund_topups where id = $1', [topupId]);
+  });
   res.json(await loadCashFund());
 });
 

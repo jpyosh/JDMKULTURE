@@ -56,9 +56,20 @@ router.put('/days/:date', async (req, res) => {
   if (!cols.length) throw bad('Nothing to save');
   await db.tx(req.user.email, async q => {
     await assertDayOpen(q, day, req.user);
+    const before = await q.one('select gcash_tips_passed, gcash_tips_to_distribute from daily_meta where job_date = $1', [day]);
     await q.query(`insert into daily_meta (job_date, ${cols.join(', ')}) values ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')})
       on conflict (job_date) do update set ${cols.map(c => `${c} = excluded.${c}`).join(', ')}`,
     [day, ...cols.map(c => clean[c])]);
+    // No more tips can be given to the crew than the GCash holds. Checked when the tips figures change, so a
+    // day that was saved before can always be saved again.
+    const changed = ['gcash_tips_passed', 'gcash_tips_to_distribute'].some(k => k in clean && clean[k] !== Number(before?.[k] || 0));
+    if (changed) {
+      const { summary: s } = await loadDay(day, q);
+      const held = Math.round((s.tipsOwedBefore + s.tips) * 100) / 100;
+      if (s.tipsTracked && s.tipsGiven > held) {
+        throw bad(`Only ₱${held.toFixed(2)} in GCash tips to give to the crew (today's and earlier days'), not ₱${s.tipsGiven.toFixed(2)}. Check "GCash tips given to crew".`);
+      }
+    }
   });
   res.json(await loadDay(day));
 });

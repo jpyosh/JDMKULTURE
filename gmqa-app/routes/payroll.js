@@ -4,7 +4,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { ATTENDANCE_CODES, datesBetween } = require('../lib/calc');
+const { ATTENDANCE_CODES, datesBetween, longDate } = require('../lib/calc');
 const { loadPayroll, previewChange, paidOutMessage, rateRowFrom, RATE_FIELDS, EMPLOYEE_SELECT, SHOP_TODAY } = require('../lib/payroll-data');
 const signoff = require('../lib/signoff-pdf');
 const { bad, notFound, conflict, money, between, text, date, oneOf, id, pick } = require('../lib/http');
@@ -217,11 +217,20 @@ router.post('/payroll/payouts', async (req, res) => {
   const periodStart = date(req.body.period_start, 'Period start');
   const periodEnd = date(req.body.period_end, 'Period end');
   if (periodStart > periodEnd) throw bad('Period start must be on or before the period end');
-  const row = await db.tx(req.user.email, q => q.one(`insert into payroll_payouts (payout_date, period_start, period_end, side, amount, note)
-    values ($1, $2, $3, $4, $5, $6) returning *`, [
+  const values = [
     date(req.body.payout_date, 'Payout date'), periodStart, periodEnd, oneOf(req.body.side, ['cash', 'gcash'], 'Paid from'),
     money(req.body.amount, 'Amount', { min: 0.01 }), text(req.body.note, 'Note', { max: 200 }),
-  ]));
+  ];
+  const row = await db.tx(req.user.email, async q => {
+    // The same payout entered twice would take the wages out of the drawer twice: ask first (confirm_duplicate).
+    const same = await q.one(`select 1 from payroll_payouts where payout_date = $1 and period_start = $2 and period_end = $3
+      and side = $4 and amount = $5`, values.slice(0, 5));
+    if (same && req.body.confirm_duplicate !== true) {
+      throw conflict(`A ${values[3] === 'cash' ? 'Cash' : 'GCash'} payout of ₱${values[4].toFixed(2)} for ${longDate(periodStart)} – ${longDate(periodEnd)} is already recorded on ${longDate(values[0])}. Record it again only if this is a second payout.`);
+    }
+    return q.one(`insert into payroll_payouts (payout_date, period_start, period_end, side, amount, note)
+      values ($1, $2, $3, $4, $5, $6) returning *`, values);
+  });
   res.status(201).json(row);
 });
 

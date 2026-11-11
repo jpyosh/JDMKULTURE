@@ -74,7 +74,14 @@ async function launch() {
   const problems = [];
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-  page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'Smoke test void' : undefined));
+  // Every dialog is accepted, except the next one after declineNext() (its text is kept in lastDeclined).
+  let declining = false;
+  let lastDeclined = '';
+  const declineNext = () => { declining = true; lastDeclined = ''; };
+  page.on('dialog', d => {
+    if (declining) { declining = false; lastDeclined = d.message(); return d.dismiss(); }
+    return d.accept(d.type() === 'prompt' ? 'Smoke test void' : undefined);
+  });
 
   const shot = async name => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true }); } };
   // Waits until the toast shows a message matching re (earlier toasts may still be visible).
@@ -1926,7 +1933,16 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Payout recorded/);
       await payroll.locator('[data-payouts] .row-line').first().waitFor();
-      const paidOut = Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
+      // The same payout entered again is asked about first; saying no records nothing.
+      await payroll.locator('[data-payout]').click();
+      await page.fill('#modal [data-payout-date]', '2026-09-20');
+      declineNext();
+      await page.click('#modal [data-confirm]');
+      await page.waitForFunction(() => !document.querySelector('#modal [data-confirm]').disabled);
+      assert.match(lastDeclined, /already recorded/);
+      await page.click('#modal [data-close]');
+      assert.equal(await payroll.locator('[data-payouts] .row-line').count(), 1, 'still one payout');
+      const paidOut =Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
       // Names stay visible while the table is scrolled sideways.
       const nameVisible = await page.evaluate(() => {
         const wrap = document.querySelector('#view-payroll .table-wrap');

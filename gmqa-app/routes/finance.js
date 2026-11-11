@@ -112,9 +112,14 @@ router.post('/funds/:id/set-asides', async (req, res) => {
 router.delete('/fund-set-asides/:id', async (req, res) => {
   const setAsideId = id(req.params.id, 'set-aside');
   await db.tx(req.user.email, async q => {
-    const row = await q.one('select entry_date from fund_set_asides where id = $1', [setAsideId]);
+    const row = await q.one('select entry_date, fund_id, amount from fund_set_asides where id = $1', [setAsideId]);
     if (!row) throw notFound('Set-aside');
     await assertDayOpen(q, row.entry_date, req.user);
+    // Money that has since paid a bill is no longer in the fund to take back.
+    const { name, balance } = await fundBalance(q, row.fund_id);
+    if (round2(balance - row.amount) < 0) {
+      throw bad(`This money already paid a bill: the ${name} fund only holds ₱${balance.toFixed(2)} now. Undo that bill payment first (Finance → Bills paid).`);
+    }
     await q.query('delete from fund_set_asides where id = $1', [setAsideId]);
   });
   res.json({ ok: true });
