@@ -1920,3 +1920,25 @@ test('carwash: a job on credit paid on a later day counts in that day\'s drawer,
   assert.equal(own.paid_on, D1);
   for (const d of [D1, D2]) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
 });
+
+test('employees: a name already on payroll is refused, never overwritten; someone removed can be added back', async () => {
+  const first = await ok(api(OWNER, 'POST', '/employees', { name: 'Juan Dela Cruz', role: 'Detailer', rate_per_day: 500, construction_rate: 700 }));
+  const again = await api(OWNER, 'POST', '/employees', { name: '  juan dela cruz ', role: 'Cashier', rate_per_day: 300 });
+  assert.equal(again.status, 409);
+  assert.match(again.data.error, /Juan Dela Cruz is already on payroll/);
+  const same = (await ok(api(OWNER, 'GET', '/employees'))).filter(e => /juan dela cruz/i.test(e.name));
+  assert.deepEqual(same.map(e => [e.id, e.role, e.rate_per_day, e.construction_rate]), [[first.id, 'Detailer', 500, 700]], 'the first Juan is untouched');
+
+  // Renaming someone to a name already on payroll is refused too; keeping their own name is fine.
+  const other = await ok(api(OWNER, 'POST', '/employees', { name: 'Pedro Santos', rate_per_day: 400 }));
+  const rename = await api(OWNER, 'PATCH', `/employees/${other.id}`, { name: 'JUAN DELA CRUZ' });
+  assert.equal(rename.status, 409);
+  assert.match(rename.data.error, /already on payroll/);
+  await ok(api(OWNER, 'PATCH', `/employees/${first.id}`, { name: 'Juan Dela Cruz', role: 'Senior detailer' }));
+
+  // Removed from payroll, then added again: the old record comes back, as before.
+  await ok(api(OWNER, 'DELETE', `/employees/${first.id}`));
+  const back = await ok(api(OWNER, 'POST', '/employees', { name: 'Juan Dela Cruz', role: 'Detailer', rate_per_day: 550 }));
+  assert.deepEqual([back.id, back.active, back.rate_per_day], [first.id, true, 550]);
+  for (const e of [first, other]) await ok(api(OWNER, 'DELETE', `/employees/${e.id}`));
+});

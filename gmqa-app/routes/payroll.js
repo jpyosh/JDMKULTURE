@@ -22,6 +22,7 @@ const RATE_UPSERT = `insert into employee_rates (employee_id, effective_from, ra
   on conflict (employee_id, effective_from) do update set rate_per_day = excluded.rate_per_day, construction_rate = excluded.construction_rate,
     carwash_hours = excluded.carwash_hours, ot_multiplier = excluded.ot_multiplier`;
 const shopToday = async q => (await q.one(`select ${SHOP_TODAY} as d`)).d;
+const nameTaken = name => `${name} is already on payroll. Edit that employee instead, or give this one a different name (e.g. add a surname).`;
 
 // The rate fields present in a body, cleaned (absent = unchanged; blank own hours / multiplier = shop rule).
 function cleanRateFields(f) {
@@ -53,7 +54,9 @@ router.post('/employees', async (req, res) => {
     cleanRateFields(pick(req.body, RATE_FIELDS));
   const employeeId = await db.tx(req.user.email, async q => {
     // Re-adding someone who was deactivated brings their old record (and history) back.
-    const existing = await q.one('select id from employees where lower(name) = lower($1)', [name]);
+    const existing = await q.one('select id, name, active from employees where lower(name) = lower($1) order by active desc, id limit 1', [name]);
+    // Someone already on payroll is never overwritten by a second entry of the same name.
+    if (existing?.active) throw conflict(nameTaken(existing.name));
     if (existing) {
       await q.query('update employees set active = true, role = $2 where id = $1', [existing.id, role]);
       await q.query(RATE_UPSERT, [existing.id, await shopToday(q), rate, cnRate, cwHours, otX]);
@@ -73,7 +76,12 @@ router.patch('/employees/:id', async (req, res) => {
   const f = pick(req.body, ['name', 'role', ...RATE_FIELDS, 'effective_from']);
   await db.tx(req.user.email, async q => {
     if (!(await q.one('select 1 from employees where id = $1', [employeeId]))) throw notFound('Employee');
-    if ('name' in f) await q.query('update employees set name = $2 where id = $1', [employeeId, text(f.name, 'Name', { required: true, max: 80 })]);
+    if ('name' in f) {
+      const name = text(f.name, 'Name', { required: true, max: 80 });
+      const taken = await q.one('select name from employees where lower(name) = lower($1) and active and id <> $2', [name, employeeId]);
+      if (taken) throw conflict(nameTaken(taken.name));
+      await q.query('update employees set name = $2 where id = $1', [employeeId, name]);
+    }
     if ('role' in f) await q.query('update employees set role = $2 where id = $1', [employeeId, text(f.role, 'Role', { max: 60 }) || '']);
     if (RATE_FIELDS.some(k => k in f)) {
       const from = f.effective_from ? date(f.effective_from, 'Effective date') : await shopToday(q);
