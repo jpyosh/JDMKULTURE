@@ -1882,3 +1882,41 @@ test('bill funds: the owner picks weekly or monthly for each bill, and the targe
   assert.deepEqual([nowWeekly.periodWord, nowWeekly.setAsideThisPeriod], ['week', 1000]);
   for (const f of [created, weekly]) await ok(api(OWNER, 'PATCH', `/funds/${f.id}`, { active: false }));
 });
+
+test('carwash: a job on credit paid on a later day counts in that day\'s drawer, and the day it was done stays as it was', async () => {
+  const [D1, D2] = ['2026-08-03', '2026-08-05']; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const sameDay = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  assert.equal(sameDay.paid_on, D1, 'paid when it was entered: paid that day');
+  const credit = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] }));
+  assert.equal(credit.paid_on, null);
+  const total = credit.totals.total;
+  const expected = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary.expectedCash; // the paid job, less both commissions
+  await ok(api(OWNER, 'PUT', `/days/${D1}`, { actual_cash: expected, actual_gcash: 0 }));
+  await ok(api(OWNER, 'POST', `/days/${D1}/close`, { tips_later: true }));
+  const closed = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([closed.cashReceived, closed.receivables, closed.cashVariance], [total, total, 0]);
+
+  // Staff record the payment on the day the money came in, although the day of the job is closed.
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: '2026-08-02' })).status, 400, 'not before the job day');
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D1 })).status, 403, 'the job day is closed');
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D2, plate: 'X' })).status, 403, 'only the payment, nothing else on a closed day');
+  const paid = await ok(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D2, payment_method: 'GCash', tip_gcash: 30 }));
+  assert.deepEqual([paid.payment_received, paid.paid_on, paid.sale_date, paid.payment_method], [true, D2, D1, 'GCash']);
+
+  const saleDay = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([saleDay.cashReceived, saleDay.cashVariance, saleDay.paidLater], [total, 0, total], 'the closed day\'s drawer is untouched');
+  assert.deepEqual([saleDay.collected, saleDay.receivables], [total * 2, 0], 'its sale is now collected');
+  const payDay = (await ok(api(OWNER, 'GET', `/days/${D2}`))).summary;
+  assert.deepEqual([payDay.gcashReceived, payDay.earlierSalesPaid, payDay.jobTips, payDay.vehicles], [total, total, 30, 0], 'the money and tip are in the day it was paid');
+
+  // Once the pay day is closed, staff cannot undo it; the owner can, and the pay day is cleared.
+  await ok(api(OWNER, 'POST', `/days/${D2}/close`, { tips_later: true }));
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: false })).status, 403);
+  const undone = await ok(api(OWNER, 'PATCH', `/jobs/${credit.id}`, { payment_received: false }));
+  assert.deepEqual([undone.payment_received, undone.paid_on], [false, null]);
+  // Ticking Paid without a date still means the job's own day (as it always did).
+  const own = await ok(api(OWNER, 'PATCH', `/jobs/${credit.id}`, { payment_received: true }));
+  assert.equal(own.paid_on, D1);
+  for (const d of [D1, D2]) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+});

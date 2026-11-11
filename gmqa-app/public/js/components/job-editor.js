@@ -1,6 +1,6 @@
 // Job order form: vehicle class + any number of services, add-ons, parts and custom lines.
 // Used for new jobs (department tabs, parts counter) and for editing existing jobs (modal).
-import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime } from '../ui.js';
+import { $, $$, esc, peso, state, activeClasses, departmentOf, shopTime, todayLocal } from '../ui.js';
 
 const KIND_LABEL = { service: 'Service', addon: 'Add-on', custom: 'Custom', part: 'Part', labor: 'Labor' };
 const round2 = n => Math.round(n * 100) / 100;
@@ -15,6 +15,8 @@ export function createJobEditor(root, { job = null, department = job?.department
   const running = dept.running;
   const locked = Boolean(running && job?.paid_on);
   const takesPayment = !(running && job);
+  // An unpaid same-day (carwash) job of an earlier day: ticking Customer paid asks which day the money came in.
+  const latePay = Boolean(job && !running && !job.payment_received && job.job_date < todayLocal());
   const originalClass = job?.vehicle_class || '';
   // The parts counter types labor in its own box, so a saved labor line is shown there, not as a line.
   const takesLabor = !dept.catalog;
@@ -59,7 +61,8 @@ export function createJobEditor(root, { job = null, department = job?.department
         : `<div><label>Payment</label><select data-f="payment_method">
           ${['Cash', 'GCash'].map(p => `<option ${p === (job?.payment_method || 'Cash') ? 'selected' : ''}>${p}</option>`).join('')}</select></div>`}
         <div class="check-cell${running ? ' stacked' : ''}"><label class="check"><input type="checkbox" data-f="payment_received" ${job?.payment_received ? 'checked' : ''}> Customer paid</label>
-          ${running ? '<label class="check"><input type="checkbox" data-f="job_done"> Job done</label>' : ''}</div>`}
+          ${running ? '<label class="check"><input type="checkbox" data-f="job_done"> Job done</label>' : ''}</div>
+        ${latePay ? `<div data-paid-on-cell hidden><label>Payment date</label><input type="date" data-paid-on value="${todayLocal()}"></div>` : ''}`}
       </div>
 
       ${locked ? '<div class="banner">This job is already paid, so its items, class, discount and tip are locked. Undo the payment first to change them.</div>' : ''}
@@ -196,6 +199,7 @@ export function createJobEditor(root, { job = null, department = job?.department
   });
   field('vehicle_class').addEventListener('change', renderLines);
   field('discount').addEventListener('input', renderTotals);
+  if (latePay) field('payment_received').addEventListener('change', e => { $('[data-paid-on-cell]', root).hidden = !e.target.checked; });
   $('[data-labor]', root)?.addEventListener('input', renderTotals);
   renderLines();
 
@@ -233,6 +237,7 @@ export function createJobEditor(root, { job = null, department = job?.department
         if (el.type === 'radio') { if (el.checked) out[key] = el.value; return; }
         out[key] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value || 0) : el.value.trim();
       });
+      if (latePay && out.payment_received) out.paid_on = $('[data-paid-on]', root).value;
       if (!locked) {
         out.items = editor.lines.map(l => {
           if (l.id) return { id: l.id };

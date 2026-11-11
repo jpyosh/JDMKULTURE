@@ -21,6 +21,8 @@ const JOB_FIELDS = ['vehicle_class', 'plate', 'payment_method', 'payment_receive
   'tip_gcash', 'time_in', 'time_out', 'detailer', 'remarks'];
 // On a paid running job these are locked: the money is already in a drawer count.
 const AMOUNT_FIELDS = ['vehicle_class', 'discount', 'tip_gcash', 'payment_method'];
+// What recording a carwash payment may send: it touches the day the money came in, not the day of the job.
+const PAYMENT_FIELDS = ['payment_received', 'payment_method', 'tip_gcash'];
 
 async function cleanJobFields(q, body) {
   const f = pick(body, JOB_FIELDS);
@@ -202,7 +204,7 @@ router.post('/jobs', async (req, res) => {
       payment_method: 'Cash', payment_received: false, ...fields,
       department: dept, jo_number: await nextJoNumber(q, jobDate, dept), job_date: jobDate,
       ...(done ? { closed_on: jobDate } : {}),
-      ...(running && fields.payment_received ? { paid_on: jobDate } : {}),
+      ...(fields.payment_received ? { paid_on: jobDate } : {}),
     };
     const cols = Object.keys(values);
     const job = await q.one(`insert into jobs (${cols.join(', ')}) values (${cols.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
@@ -219,8 +221,23 @@ router.patch('/jobs/:id', async (req, res) => {
     const job = await loadJob(jobId, q);
     if (!job) throw notFound('Job');
     if (job.voided_at) throw bad('This job is voided. Restore it before editing.');
-    await assertDaysOpen(q, affectedDays(job), req.user);
     const fields = await cleanJobFields(q, req.body);
+    let days = affectedDays(job);
+    if (!isRunning(job) && 'payment_received' in fields && fields.payment_received !== job.payment_received) {
+      // A carwash job is paid on its own day unless another day is given (credit paid later), never an earlier one.
+      const paymentOnly = !Array.isArray(req.body.items) && Object.keys(fields).every(f => PAYMENT_FIELDS.includes(f));
+      const wasPaidOn = job.paid_on || job.job_date;
+      if (fields.payment_received) {
+        fields.paid_on = req.body.paid_on == null || req.body.paid_on === '' ? job.job_date : date(req.body.paid_on, 'Payment date');
+        if (fields.paid_on < job.job_date) throw bad(`Payment date cannot be before the day of the job (${job.job_date})`);
+        // Like a running job: recording only the payment needs the day the money came in to be open, not the day of the job.
+        days = paymentOnly ? [fields.paid_on] : [...days, fields.paid_on];
+      } else {
+        fields.paid_on = null;
+        days = paymentOnly ? [wasPaidOn] : [...days, wasPaidOn];
+      }
+    }
+    await assertDaysOpen(q, days, req.user);
     if (isRunning(job)) {
       if ('payment_received' in fields) throw bad('Use "Mark paid" / "Undo payment" for this job');
       const changesAmount = Array.isArray(req.body.items) || AMOUNT_FIELDS.some(f => f in fields && fields[f] !== job[f]);

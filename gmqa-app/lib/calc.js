@@ -8,7 +8,8 @@
 //   * Net                    = Collected − Commission.
 //
 // Departments (agreed 2026-10-03):
-//   * Carwash jobs are same-day and count on their job date.
+//   * Carwash jobs are same-day and count on their job date. One on credit can be paid on a later day
+//     (paid_on): the money then counts in that day's drawer, the sale stays on its own day.
 //   * Detailing, Tint & PPF and parts jobs are "running": they count (sale + commission) on the day the work
 //     is finished, paid or not (agreed 2026-11-05). Until it is paid, a finished job is that day's receivable.
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
@@ -77,9 +78,9 @@ function salesFigures(jobs) {
   };
 }
 
-// The day a job's money came in: a running job's payment day; a paid carwash job, its own day.
-// The sale itself (and its commission) stays on its sale date either way.
-const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? saleDate(j) : null);
+// The day a job's money came in: its payment day. A paid carwash job without one was paid on its own day
+// (every carwash job before migration 020). The sale itself (and its commission) stays on its sale date either way.
+const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? j.paid_on || saleDate(j) : null);
 // Money in on `date`.
 const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j) && receivedDate(j) === date);
 

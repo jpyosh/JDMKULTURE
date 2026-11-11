@@ -51,6 +51,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   it is finished is in that day's drawer, and one paid after it is finished is in the later day's drawer. Its sale
   and commission are booked on the day it is done either way (agreed 2026-11-05, migration 016). A job finished and
   not paid is that day's receivable, and its commission comes out of that day's drawer, like an unpaid carwash job.
+- A carwash job on credit can be paid on a later day: ticking **Paid** on a job of an earlier day asks for the
+  payment date (today unless changed). Its sale and commission stay on the day of the job; the money counts in the
+  drawer of the day it was paid, so a late payment never changes a closed day's count, and staff can record it
+  although the day of the job is closed (migration 020).
 - Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
 - The board's **Completed** list shows every job done and paid, finished since a chosen day (default: the last 7 days), including
   any dated after today, so a finished job never drops out of sight. Completed jobs can still be edited,

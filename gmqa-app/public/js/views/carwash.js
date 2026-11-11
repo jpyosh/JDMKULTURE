@@ -1,5 +1,6 @@
 // Carwash tab: same-day job orders for one date.
-import { $, $$, api, esc, peso, toast, todayLocal, addDays, prettyDate, formatTime, loadCatalog, classLabel, isOwner } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, formatTime, loadCatalog, classLabel, isOwner,
+  openModal, closeModal, modalHeader } from '../ui.js';
 import { createJobEditor } from '../components/job-editor.js';
 import { itemsSummary, reviewAndCreate, editJobModal, voidJob, restoreJob, showHistory } from '../components/job-actions.js';
 
@@ -114,6 +115,7 @@ function filteredJobs() {
 
 function renderJobs() {
   const tbody = $('[data-jobs]', root);
+  tbody.dataset.forDay = current.date; // the day these rows are for
   const jobs = filteredJobs();
   if (!jobs.length) {
     tbody.innerHTML = `<tr><td colspan="12"><div class="empty-state">${current.jobs.length ? 'No job orders match the filters.' : 'No carwash job orders yet for this date.'}</div></td></tr>`;
@@ -123,6 +125,9 @@ function renderJobs() {
   tbody.innerHTML = jobs.map(j => {
     const t = j.totals;
     const off = locked || j.voided_at ? 'disabled' : '';
+    // A job on credit can still be marked paid after its day is closed: the money counts on the day it came in.
+    const payOff = j.voided_at || (locked && j.payment_received) ? 'disabled' : '';
+    const paidLater = j.paid_on && j.paid_on !== j.job_date ? `<div class="muted small" data-paid-on>paid ${esc(j.paid_on.slice(5))}</div>` : '';
     return `<tr data-id="${j.id}" class="${j.voided_at ? 'voided' : ''} ${j.payment_method === 'GCash' ? 'gcash-row' : 'cash-row'}">
       <td class="jo-number">${esc(j.jo_number || '—')}${j.voided_at ? `<div class="void-note" title="${esc(j.void_reason)}">VOID · ${esc(j.void_reason)}</div>` : ''}</td>
       <td class="time-cell"><div class="time-in"><span class="time-label">In</span> <b>${esc(formatTime(j.time_in) || '—')}</b></div>
@@ -131,7 +136,7 @@ function renderJobs() {
       <td>${esc(j.plate || '—')}</td>
       <td class="items-cell">${itemsSummary(j)}</td>
       <td><select data-inline="payment_method" ${off}>${['Cash', 'GCash'].map(p => `<option ${p === j.payment_method ? 'selected' : ''}>${p}</option>`).join('')}</select></td>
-      <td><label class="check"><input type="checkbox" data-inline="payment_received" ${j.payment_received ? 'checked' : ''} ${off}> Paid</label></td>
+      <td><label class="check"><input type="checkbox" data-inline="payment_received" ${j.payment_received ? 'checked' : ''} ${payOff}> Paid</label>${paidLater}</td>
       <td>${esc(j.detailer || '—')}</td>
       <td class="num money">${peso(t.total)}</td>
       <td class="num money amber-text">${peso(t.commission)}</td>
@@ -148,6 +153,9 @@ function renderJobs() {
 
   $$('[data-inline]', tbody).forEach(el => el.addEventListener('change', () => {
     const id = Number(el.closest('tr').dataset.id);
+    const job = current.jobs.find(j => j.id === id);
+    // Paid on a later day than the job: ask which day, so the money lands in that day's drawer.
+    if (el.dataset.inline === 'payment_received' && el.checked && job.job_date < todayLocal()) return payModal(job, el);
     patchJob(id, { [el.dataset.inline]: el.type === 'checkbox' ? el.checked : el.value }, el.closest('tr'));
   }));
   $$('[data-act]', tbody).forEach(el => el.addEventListener('click', () => {
@@ -160,6 +168,30 @@ function renderJobs() {
     };
     actions[el.dataset.act]();
   }));
+}
+
+// Payment for a job of an earlier day. Cancelling leaves the job unpaid.
+function payModal(job, box) {
+  let saved = false;
+  const dialog = openModal(`${modalHeader(`Mark ${job.jo_number} paid`,
+    `This job is from ${prettyDate(job.job_date)}. The money counts in the drawer on the payment date; the sale stays on its own day.`)}
+    <div class="form-grid modal-form-grid">
+      <div><label>Payment date</label><input type="date" data-pay-date value="${todayLocal()}"></div>
+      <div><label>Method</label><select data-pay-method>${['Cash', 'GCash'].map(p => `<option ${p === job.payment_method ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+      <div><label>GCash tip</label><input type="number" min="0" step="0.01" data-pay-tip value="${job.tip_gcash || ''}" placeholder="0.00"></div>
+    </div>
+    <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Record payment</button></div>`,
+  card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
+    await api('PATCH', `/jobs/${job.id}`, {
+      payment_received: true, paid_on: $('[data-pay-date]', card).value,
+      payment_method: $('[data-pay-method]', card).value, tip_gcash: Number($('[data-pay-tip]', card).value || 0),
+    });
+    saved = true;
+    closeModal();
+    toast(`${job.jo_number}: payment recorded`);
+    await reload();
+  })));
+  dialog.addEventListener('close', () => { if (!saved) box.checked = false; }, { once: true });
 }
 
 async function patchJob(id, body, row) {

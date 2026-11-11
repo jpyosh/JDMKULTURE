@@ -269,10 +269,76 @@ async function launch() {
     });
 
     const newRow = daily.locator('tr', { hasText: 'CW-091426-001' });
-    await step('inline paid toggle updates totals', async () => {
+    const shopToday = () => page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
+    const asOwner = path => page.evaluate(p => fetch(`/api${p}`, { headers: { Authorization: 'Bearer owner@sandbox' } }).then(r => r.json()), path);
+    const carwashDate = async date => {
+      await daily.locator('[data-date]').fill(date);
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(d => document.querySelector('#view-carwash [data-jobs]').dataset.forDay === d, date);
+    };
+    await step('inline paid toggle on an earlier day asks when it was paid, then updates totals', async () => {
       await newRow.locator('[data-inline="payment_received"]').check();
-      await expectToast(/Saved/);
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      assert.equal(await page.inputValue('#modal [data-pay-date]'), await shopToday(), 'the money usually came in today');
+      await page.fill('#modal [data-pay-date]', DAY); // paid on the day of the job after all
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/);
       await page.waitForFunction(() => /Collected\s*₱[\d,]+/.test(document.querySelector('#view-carwash [data-metrics]').textContent));
+      assert.ok(await newRow.locator('[data-inline="payment_received"]').isChecked());
+      assert.equal(await newRow.locator('[data-paid-on]').count(), 0, 'paid on its own day: nothing more to say');
+    });
+
+    await step('carwash: credit paid on a later day goes in that day\'s drawer, from the row or the edit form', async () => {
+      const [JOB_DAY, PAY_DAY, PAY_DAY_2] = ['2026-07-01', '2026-07-03', '2026-07-04']; // days with nothing else on them
+      await carwashDate(JOB_DAY);
+      const addCredit = async plate => {
+        const editor = daily.locator('[data-editor]');
+        await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+        await editor.locator('[data-f="plate"]').fill(plate);
+        await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+        await daily.locator('[data-review]').click();
+        await page.click('#modal [data-confirm]');
+        await expectToast(/added/);
+        await daily.locator('tr', { hasText: plate }).waitFor();
+      };
+      await addCredit('CREDIT1');
+      await addCredit('CREDIT2');
+      const row1 = daily.locator('tr', { hasText: 'CREDIT1' });
+      const row2 = daily.locator('tr', { hasText: 'CREDIT2' });
+
+      // From the row: cancelling leaves it unpaid; confirming records the day and how it was paid.
+      await row1.locator('[data-inline="payment_received"]').check();
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      await page.click('#modal [data-close]');
+      await page.waitForFunction(() => !document.querySelector('#modal').open);
+      assert.equal(await row1.locator('[data-inline="payment_received"]').isChecked(), false, 'cancelled: still unpaid');
+      await row1.locator('[data-inline="payment_received"]').check();
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      await page.fill('#modal [data-pay-date]', PAY_DAY);
+      await page.selectOption('#modal [data-pay-method]', 'GCash');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/);
+      await row1.locator('[data-paid-on]').waitFor();
+      assert.match(await row1.locator('[data-paid-on]').textContent(), /07-03/);
+      const total = (await asOwner(`/jobs?date=${JOB_DAY}&department=carwash`)).find(j => j.plate === 'CREDIT1').totals.total;
+      const payDay = (await asOwner(`/days/${PAY_DAY}`)).summary;
+      assert.deepEqual([payDay.gcashReceived, payDay.earlierSalesPaid, payDay.vehicles], [total, total, 0], 'the money is in the day it was paid');
+      assert.equal((await asOwner(`/days/${JOB_DAY}`)).summary.gcashReceived, 0, 'not in the day of the job');
+
+      // From the edit form: ticking Customer paid on an earlier day's job asks for the payment date too.
+      await row2.locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-edit-editor] .line-row');
+      assert.ok(await page.locator('#modal [data-paid-on-cell]').isHidden(), 'no date until it is ticked paid');
+      await page.check('#modal [data-f="payment_received"]');
+      assert.equal(await page.inputValue('#modal [data-paid-on]'), await shopToday());
+      await page.fill('#modal [data-paid-on]', PAY_DAY_2);
+      await page.click('#modal [data-save]');
+      await expectToast(/saved/);
+      await row2.locator('[data-paid-on]').waitFor();
+      assert.match(await row2.locator('[data-paid-on]').textContent(), /07-04/);
+      assert.equal((await asOwner(`/days/${PAY_DAY_2}`)).summary.cashReceived, total);
+      await carwashDate(DAY);
+      await newRow.waitFor();
     });
 
     await step('edit job: change class re-prices catalog lines', async () => {

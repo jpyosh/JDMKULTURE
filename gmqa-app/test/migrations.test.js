@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -521,7 +521,7 @@ test('019 lets each bill be saved weekly or monthly, and every existing bill sta
   await driver.query("update funds set amount = 1599 where name = 'Internet'");
   const before = await all(driver, 'select id, name, amount, frequency, due_day, due_month, active, sort_order from funds order by id');
 
-  assert.deepEqual(await migrate(driver, quiet), ['019']);
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '019' }), ['019']);
   assert.deepEqual(await all(driver, 'select id, name, amount, frequency, due_day, due_month, active, sort_order from funds order by id'), before);
   assert.ok((await all(driver, 'select set_aside_every from funds')).every(f => f.set_aside_every === 'weekly'));
   await driver.query("update funds set set_aside_every = 'monthly' where name = 'Rent'");
@@ -617,4 +617,28 @@ test('018 adds the department containers: every item keeps all its stock in Over
   const audited = await all(driver, "select action from audit_log where table_name = 'department_stock'");
   assert.ok(audited.length >= 3, 'department stock changes are in the audit log');
   assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'department_stock'")).rls, true);
+});
+
+test('020 lets a carwash job record the day it was paid, without changing any job', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '019' });
+  await driver.query(`insert into jobs (department, jo_number, job_date, payment_received, payment_method) values
+    ('carwash', 'CW-1', '2027-05-01', true, 'Cash'), ('carwash', 'CW-2', '2027-05-01', false, 'GCash')`);
+  await driver.query(`insert into jobs (department, jo_number, job_date, closed_on, paid_on, payment_received, payment_method) values
+    ('detailing', 'DT-1', '2027-05-01', '2027-05-03', '2027-05-02', true, 'GCash'), ('parts', 'PC-1', '2027-05-01', null, null, false, 'Cash')`);
+  const snapshot = () => all(driver, 'select * from jobs order by id');
+  const before = await snapshot();
+  await assert.rejects(driver.query("update jobs set payment_received = true, paid_on = '2027-05-04' where jo_number = 'CW-2'"), /check/i, 'not possible before 020');
+
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '020' }), ['020']);
+  assert.deepEqual(await snapshot(), before, 'no job changes: a carwash job paid on its own day keeps paid_on empty');
+
+  // Credit paid three days later: the sale stays on its day, the money has its own day.
+  const paid = await one(driver, "update jobs set payment_received = true, paid_on = '2027-05-04' where jo_number = 'CW-2' returning sale_date, paid_on");
+  assert.deepEqual([paid.sale_date, paid.paid_on], ['2027-05-01', '2027-05-04']);
+  await assert.rejects(driver.query("update jobs set paid_on = '2027-04-30' where jo_number = 'CW-2'"), /check/i, 'not before the job day');
+  await assert.rejects(driver.query("update jobs set payment_received = false where jo_number = 'CW-2'"), /check/i, 'a pay day needs a payment');
+  await assert.rejects(driver.query("update jobs set closed_on = '2027-05-02' where jo_number = 'CW-1'"), /check/i, 'carwash is still never marked done');
+  // The running departments keep their rule.
+  await assert.rejects(driver.query("update jobs set payment_received = true where jo_number = 'PC-1'"), /check/i, 'a running job paid needs a pay day');
 });

@@ -390,3 +390,15 @@ test('serviceTrends: a renamed service stays one row, and empty periods are skip
   assert.equal(lonely.compare, null);
   assert.deepEqual([lonely.items[0].change, lonely.items[0].trend], [null, null]);
 });
+
+test('a carwash job paid on a later day: the sale stays on its day, the money counts on the day it was paid', () => {
+  const credit = job({ job_date: '2026-11-11', payment_received: true, paid_on: '2026-11-12', payment_method: 'Cash', tip_gcash: 20, items: [line(250, 50)] });
+  const sameDay = job({ job_date: '2026-11-11', payment_received: true, payment_method: 'GCash', items: [line(100, 10)] }); // paid_on empty: its own day
+  const jobs = [credit, sameDay];
+  const saleDay = daySummary({ date: '2026-11-11', jobs });
+  assert.deepEqual([saleDay.vehicles, saleDay.collected, saleDay.commission], [2, 350, 60], 'both are sales of the 11th');
+  assert.deepEqual([saleDay.cashReceived, saleDay.gcashReceived, saleDay.paidLater, saleDay.jobTips], [0, 100, 250, 0], 'only the same-day money is in the 11th');
+  const payDay = daySummary({ date: '2026-11-12', jobs });
+  assert.deepEqual([payDay.vehicles, payDay.collected, payDay.commission], [0, 0, 0], 'no sale on the 12th');
+  assert.deepEqual([payDay.cashReceived, payDay.earlierSalesPaid, payDay.jobTips], [250, 250, 20], 'the credit and its tip came in on the 12th');
+});
