@@ -66,7 +66,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - A job **counts** once it has a vehicle class or a line item and is not voided.
 - **Collected** = totals of paid jobs. **Receivables** = totals of unpaid jobs.
 - **Commission** = every counted job (detailers are paid at EOD either way).
-- **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
+- **Net** = Collected − Commission. **Profit** (Sales Reports) = Collected − Commission − Cost of
+  parts sold − Expenses, where parts bought to sell are stock, not an expense (`tradingProfit`). It is the Finance
+  figure before payroll and bills. Sales Reports lists every day and marks the ones still open; Finance and
+  Analytics count a day once it is closed.
 - Money counts in the drawer or GCash on the day it was received: a running job's or a counter sale's
   payment day (`paid_on`), otherwise the job's own day.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.

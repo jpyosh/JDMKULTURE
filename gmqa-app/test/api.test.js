@@ -1942,3 +1942,31 @@ test('employees: a name already on payroll is refused, never overwritten; someon
   assert.deepEqual([back.id, back.active, back.rate_per_day], [first.id, true, 550]);
   for (const e of [first, other]) await ok(api(OWNER, 'DELETE', `/employees/${e.id}`));
 });
+
+test('sales report and Finance give the same profit for the same days (before payroll and bills)', async () => {
+  const D = '2026-08-17'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const wiper = await ok(api(OWNER, 'POST', '/inventory', { name: 'Report wiper', price: 300, commission: 20, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${wiper.id}/receive`, { date: D, quantity: 10, unit_cost: 100, paid_from: 'cash' })); // ₱1,000 of stock
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }, { part_id: wiper.id, quantity: 2 }] }));
+  await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Soap', amount: 60 }));
+
+  const report = await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=${D}`));
+  const [day] = report.days;
+  assert.equal(day.closed, false, 'the report shows a day still open, and says so');
+  assert.deepEqual([day.expenses, day.partsBought, day.partsCost], [60, 1000, 200], 'stock bought is not an expense; the two wipers sold are a cost');
+  assert.equal(day.profit, day.collected - day.commission - 200 - 60);
+  assert.deepEqual([report.totals.expenses, report.totals.partsCost, report.totals.profit], [60, 200, day.profit]);
+  assert.deepEqual(report.openDays, [D]);
+
+  const finance = await financeOfClosed(D, D);
+  // Finance also takes off payroll and bills (other tests leave wages on this day); the rest is one figure.
+  assert.equal(Math.round((report.totals.profit - finance.opex.payroll - finance.opex.billsTotal) * 100) / 100, finance.netProfit);
+  assert.deepEqual([finance.opex.drawerExpenses, finance.opex.partsBought, finance.income.partsCost], [day.expenses, day.partsBought, day.partsCost]);
+  await ok(api(OWNER, 'POST', `/days/${D}/close`, { tips_later: true }));
+  const closed = await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=${D}`));
+  assert.deepEqual([closed.days[0].closed, closed.openDays], [true, []]);
+  await ok(api(OWNER, 'POST', `/days/${D}/reopen`));
+  await ok(api(OWNER, 'PATCH', `/inventory/${wiper.id}`, { active: false }));
+});

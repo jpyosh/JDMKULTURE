@@ -1292,7 +1292,18 @@ async function launch() {
       for (const h of ['Cash received', 'GCash received', 'Unpaid', 'Carwash', 'Detailing', 'Tint & PPF', 'Total sales', 'Profit']) {
         assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
       }
-      assert.match(await page.locator('#view-reports [data-help]').textContent(), /How to read/);
+      const help = await page.locator('#view-reports [data-help]').textContent();
+      assert.match(help, /How to read/);
+      // Profit is worked out as in Finance, and the guide describes today's rules.
+      assert.ok(headers.includes('Parts cost'), 'the cost of parts sold has its own column');
+      assert.match(await page.locator('#view-reports .view-header .desc').textContent(), /Cost of parts sold/);
+      assert.doesNotMatch(help, /both done and paid/, 'running jobs are booked on the day they are finished');
+      assert.match(help, /day (it is|they are) finished/);
+      assert.match(help, /Finance/);
+      // September 14 was closed at EOD; the other days are listed and marked as still open.
+      assert.equal(await page.locator('#view-reports tbody tr', { hasText: '2026-09-14' }).locator('[data-open-day]').count(), 0);
+      assert.ok(await page.locator('#view-reports tbody [data-open-day]').count() > 0, 'days not closed yet are marked');
+      assert.match(await page.locator('#view-reports [data-open-days]').textContent(), /still open/);
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');

@@ -402,3 +402,22 @@ test('a carwash job paid on a later day: the sale stays on its day, the money co
   assert.deepEqual([payDay.vehicles, payDay.collected, payDay.commission], [0, 0, 0], 'no sale on the 12th');
   assert.deepEqual([payDay.cashReceived, payDay.earlierSalesPaid, payDay.jobTips], [250, 250, 20], 'the credit and its tip came in on the 12th');
 });
+
+test('a day\'s profit in Sales Reports follows Finance: parts bought to sell are not a cost, the cost of parts sold is', () => {
+  const { tradingProfit, periodTotals, profitAndLoss } = require('../lib/calc');
+  const date = '2026-11-04';
+  const part = { kind: 'part', name: 'Wiper', price: 300, commission: 20, unit_cost: 100, quantity: 2 };
+  const jobs = [job({ job_date: date, payment_received: true, items: [line(250, 50), part] }), job({ job_date: date, items: [line(400, 80)] })];
+  const expenses = [
+    { expense_date: date, side: 'cash', amount: 1000, for_resale: true }, // ten wipers for the shelf: stock, not a cost
+    { expense_date: date, side: 'cash', amount: 60 }, { expense_date: date, side: 'fund', amount: 40 },
+  ];
+  const s = daySummary({ date, jobs, expenses });
+  const t = tradingProfit(s);
+  // Sold 550, commission 150 (the unpaid job's 80 too), two wipers cost 200, soap and an abono 100.
+  assert.deepEqual(t, { costs: 100, partsBought: 1000, partsCost: 200, profit: 100 });
+  // The same day in Finance, before payroll and bills.
+  const finance = profitAndLoss(periodTotals({ dates: [date], jobs, expenses, metas: [] }), { payroll: 0, billsTotal: 0 });
+  assert.equal(t.profit, finance.netProfit);
+  assert.equal(t.costs, finance.opex.drawerExpenses + finance.opex.fundExpenses);
+});

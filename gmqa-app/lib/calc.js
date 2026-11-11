@@ -484,6 +484,15 @@ function profitAndLoss(t, { payroll, billsTotal }) {
   return { income, opex, netProfit: r(income.net - income.partsCost - opex.total) };
 }
 
+// One day of Sales Reports from its daySummary: profit before payroll and bills, by the same rules as
+// profitAndLoss, so both screens give one figure. Parts bought to sell are stock, not a cost (costs leaves them
+// out); the cost of the parts sold is.
+function tradingProfit(s) {
+  const partsBought = round2(s.partsBoughtDrawer + s.partsBoughtFund);
+  const costs = round2(s.expenses - partsBought);
+  return { costs, partsBought, partsCost: s.partsCost, profit: round2(s.collected - s.commission - s.partsCost - costs) };
+}
+
 // One row of Analytics. staffDays: days someone worked the carwash; such a day without sales may mean
 // the jobs were never entered, which would make the period's profit look too low. A day still open is
 // not checked: it has not been counted yet, and is listed in openDays instead.
@@ -602,5 +611,5 @@ module.exports = {
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
-  periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
+  periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
 };
