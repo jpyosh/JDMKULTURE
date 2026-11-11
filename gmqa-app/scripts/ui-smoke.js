@@ -381,6 +381,29 @@ async function launch() {
     });
 
     const detailing = page.locator('#view-detailing');
+    await step('a half-entered job is still there after looking at another tab', async () => {
+      for (const [tab, away] of [['carwash', 'pricing'], ['detailing', 'eod']]) {
+        await page.click(`#nav [data-view="${tab}"]`);
+        const editor = page.locator(`#view-${tab} [data-editor]`);
+        await editor.locator('[data-f="plate"]').fill('HALF 123');
+        await editor.locator('[data-f="vehicle_class"]').selectOption('M');
+        await editor.locator('[data-add="addon"]').selectOption({ label: 'Engine Wash' });
+        await page.click(`#nav [data-view="${away}"]`);
+        await page.waitForSelector(`#view-${away}.active`);
+        await page.click(`#nav [data-view="${tab}"]`);
+        await page.waitForSelector(`#view-${tab}.active`);
+        await page.waitForLoadState('networkidle');
+        assert.equal(await editor.locator('[data-f="plate"]').inputValue(), 'HALF 123', `${tab}: the plate typed is still there`);
+        assert.equal(await editor.locator('[data-f="vehicle_class"]').inputValue(), 'M');
+        assert.equal(await editor.locator('.line-row').count(), 1, `${tab}: and so is the item added`);
+        // Clear empties it, and an empty form is rebuilt on the next visit (new prices and stock).
+        await page.click(`#view-${tab} [data-clear]`);
+        assert.equal(await editor.locator('[data-f="plate"]').inputValue(), '');
+        assert.equal(await editor.locator('.line-row').count(), 0);
+      }
+      await page.click('#nav [data-view="carwash"]');
+    });
+
     await step('detailing: running job is carried over, paid, then done', async () => {
       await page.click('#nav [data-view="detailing"]');
       const editor = detailing.locator('[data-editor]');

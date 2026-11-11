@@ -58,7 +58,8 @@ function mount(el) {
 
 async function show() {
   await loadCatalog(true);
-  resetEditor();
+  // Coming back from another tab keeps a job that is half entered; an empty form is rebuilt with fresh prices and stock.
+  if (!newJobEditor || newJobEditor.isEmpty()) resetEditor();
   await setDate(current.date);
 }
 

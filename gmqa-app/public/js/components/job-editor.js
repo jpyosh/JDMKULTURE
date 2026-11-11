@@ -226,6 +226,10 @@ export function createJobEditor(root, { job = null, department = job?.department
 
   return {
     syncTime: () => syncTime(),
+    // Nothing entered yet (the time and payment boxes fill themselves): safe to rebuild with fresh prices and stock.
+    isEmpty: () => !editor.lines.length && !(labor() > 0)
+      && ['vehicle_class', 'plate', 'detailer', 'discount', 'discount_reason', 'tip_gcash', 'remarks']
+        .every(key => { const el = field(key); return !el || !el.value.trim() || (el.type === 'number' && Number(el.value) === 0); }),
     totals,
     lines: () => [...editor.lines.map(l => ({ ...l, ...linePrice(l) })),
       ...(labor() > 0 ? [{ kind: 'labor', name: 'Labor', price: labor(), commission: labor() }] : [])],
