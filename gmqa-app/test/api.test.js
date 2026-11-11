@@ -1970,3 +1970,23 @@ test('sales report and Finance give the same profit for the same days (before pa
   await ok(api(OWNER, 'POST', `/days/${D}/reopen`));
   await ok(api(OWNER, 'PATCH', `/inventory/${wiper.id}`, { active: false }));
 });
+
+test('a job whose vehicle class was hidden can still be edited; a hidden class cannot be picked for another job', async () => {
+  const D = '2026-08-19'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  await ok(api(OWNER, 'POST', '/classes', { code: 'OLDVAN', label: 'Old van' }));
+  await ok(api(OWNER, 'PATCH', `/catalog/${premium.id}`, { prices: { OLDVAN: { price: 900, commission: 90 } } }));
+  const job = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'OLDVAN', items: [{ catalog_item_id: premium.id }] }));
+  const other = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(OWNER, 'PATCH', '/classes/OLDVAN', { active: false }));
+
+  // What the edit form sends: the class as it is, with the other fields.
+  const edited = await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { vehicle_class: 'OLDVAN', plate: 'abc 123', remarks: 'Left a jacket', items: job.items.map(i => ({ id: i.id })) }));
+  assert.deepEqual([edited.vehicle_class, edited.plate, edited.remarks, edited.totals.total], ['OLDVAN', 'ABC 123', 'Left a jacket', 900]);
+
+  // The hidden class is still not offered anywhere else.
+  const pick = await api(STAFF, 'PATCH', `/jobs/${other.id}`, { vehicle_class: 'OLDVAN' });
+  assert.equal(pick.status, 400);
+  assert.match(pick.data.error, /Unknown vehicle class OLDVAN/);
+  assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'OLDVAN', items: [{ catalog_item_id: premium.id }] })).status, 400);
+});

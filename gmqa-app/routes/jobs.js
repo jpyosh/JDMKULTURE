@@ -24,12 +24,14 @@ const AMOUNT_FIELDS = ['vehicle_class', 'discount', 'tip_gcash', 'payment_method
 // What recording a carwash payment may send: it touches the day the money came in, not the day of the job.
 const PAYMENT_FIELDS = ['payment_received', 'payment_method', 'tip_gcash'];
 
-async function cleanJobFields(q, body) {
+// job: the job being edited. It keeps the class it has even when that class was hidden since (the edit form
+// always sends the class); a hidden class cannot be picked for any other job.
+async function cleanJobFields(q, body, job = null) {
   const f = pick(body, JOB_FIELDS);
   const out = {};
   if ('vehicle_class' in f) {
     out.vehicle_class = f.vehicle_class || null;
-    if (out.vehicle_class && !(await q.one('select 1 from vehicle_classes where code = $1 and active', [out.vehicle_class]))) {
+    if (out.vehicle_class && out.vehicle_class !== job?.vehicle_class && !(await q.one('select 1 from vehicle_classes where code = $1 and active', [out.vehicle_class]))) {
       throw bad(`Unknown vehicle class ${out.vehicle_class}`);
     }
   }
@@ -221,7 +223,7 @@ router.patch('/jobs/:id', async (req, res) => {
     const job = await loadJob(jobId, q);
     if (!job) throw notFound('Job');
     if (job.voided_at) throw bad('This job is voided. Restore it before editing.');
-    const fields = await cleanJobFields(q, req.body);
+    const fields = await cleanJobFields(q, req.body, job);
     let days = affectedDays(job);
     if (!isRunning(job) && 'payment_received' in fields && fields.payment_received !== job.payment_received) {
       // A carwash job is paid on its own day unless another day is given (credit paid later), never an earlier one.
