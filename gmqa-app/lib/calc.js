@@ -304,9 +304,9 @@ function addDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
-function mondayOf(date) {
-  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return addDays(date, day === 0 ? -6 : 1 - day);
+// The week is the pay week on every screen: Sunday to Saturday (wages are paid on Saturday).
+function sundayOf(date) {
+  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
 }
 function datesBetween(start, end) {
   const out = [];
@@ -338,13 +338,13 @@ function nextDueDate(fund, from) {
   return null;
 }
 
-// The week (Monday to Sunday) or calendar month, by the bill's choice, that `date` falls in.
+// The pay week (Sunday to Saturday) or calendar month, by the bill's choice, that `date` falls in.
 function setAsidePeriod(fund, date) {
   if (fund.set_aside_every === 'monthly') {
     const [y, m] = date.split('-').map(Number);
     return { start: `${y}-${pad2(m)}-01`, end: `${y}-${pad2(m)}-${pad2(lastDayOf(y, m))}` };
   }
-  const start = mondayOf(date);
+  const start = sundayOf(date);
   return { start, end: addDays(start, 6) };
 }
 
@@ -515,10 +515,6 @@ const PERIOD_COUNTS = { day: 14, week: 8, month: 6, quarter: 4 };
 const SHORT_MONTHS = FULL_MONTHS.map(m => m.slice(0, 3));
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function sundayOf(date) {
-  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
-}
-
 // The whole period around `date`. Weeks are the Sunday-to-Saturday pay weeks; quarters are calendar quarters.
 function periodAround(grain, date) {
   if (grain === 'day') return { start: date, end: date };
@@ -610,6 +606,6 @@ module.exports = {
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
-  isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
+  isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
 };

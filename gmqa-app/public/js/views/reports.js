@@ -1,4 +1,4 @@
-import { $, $$, api, esc, peso, todayLocal, addDays, mondayOf, weekday, DEPARTMENTS } from '../ui.js';
+import { $, $$, api, esc, peso, todayLocal, addDays, sundayOf, weekday, DEPARTMENTS } from '../ui.js';
 
 let root;
 
@@ -50,8 +50,8 @@ function mount(el) {
 function preset(name, reload = true) {
   const today = todayLocal();
   const ranges = {
-    'this-week': [mondayOf(today), today],
-    'last-week': [addDays(mondayOf(today), -7), addDays(mondayOf(today), -1)],
+    'this-week': [sundayOf(today), today], // the pay week, Sunday to Saturday
+    'last-week': [addDays(sundayOf(today), -7), addDays(sundayOf(today), -1)],
     'this-month': [`${today.slice(0, 8)}01`, today],
     'last-30': [addDays(today, -29), today],
   };

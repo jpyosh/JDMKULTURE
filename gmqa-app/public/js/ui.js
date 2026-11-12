@@ -17,10 +17,6 @@ export function addDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
-export function mondayOf(date) {
-  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return addDays(date, day === 0 ? -6 : 1 - day);
-}
 // Shop time is Philippine time, whatever time zone the device is set to.
 const SHOP_TZ = 'Asia/Manila';
 const clean = s => s.replace(/[  ]/g, ' ');
@@ -46,7 +42,7 @@ export function startClock(el) {
   tick();
 }
 
-// The shop's pay week runs Sunday to Saturday.
+// The shop's pay week runs Sunday to Saturday (wages are paid on Saturday). Every screen's "week" is this week.
 export function sundayOf(date) {
   return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
 }

@@ -1419,6 +1419,23 @@ async function launch() {
     await step('finance: month in/out, funds, pay a bill', async () => {
       await page.click('#nav [data-view="finance"]');
       const fin = page.locator('#view-finance');
+      // "This week" is the pay week on every screen: Sunday to Saturday, as in Payroll.
+      const payWeek = await page.evaluate(() => {
+        const d = new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+        const start = d.toISOString().slice(0, 10);
+        d.setUTCDate(d.getUTCDate() + 6);
+        return { start, end: d.toISOString().slice(0, 10), lastStart: new Date(Date.parse(start) - 7 * 86400000).toISOString().slice(0, 10), lastEnd: new Date(Date.parse(start) - 86400000).toISOString().slice(0, 10) };
+      });
+      await fin.locator('[data-preset="this-week"]').click();
+      await page.waitForFunction(s => document.querySelector('#view-finance [data-start]').value === s, payWeek.start);
+      assert.equal(await fin.locator('[data-end]').inputValue(), payWeek.end, 'Finance: This week ends on Saturday');
+      await page.click('#nav [data-view="reports"]');
+      await page.click('#view-reports [data-preset="last-week"]');
+      assert.deepEqual([await page.inputValue('#view-reports [data-start]'), await page.inputValue('#view-reports [data-end]')], [payWeek.lastStart, payWeek.lastEnd], 'Sales Reports: Last week is Sunday to Saturday');
+      await page.click('#view-reports [data-preset="this-week"]');
+      assert.equal(await page.inputValue('#view-reports [data-start]'), payWeek.start, 'Sales Reports: This week starts on Sunday');
+      await page.click('#nav [data-view="finance"]');
       await fin.locator('[data-start]').fill('2026-09-01');
       await fin.locator('[data-end]').fill('2026-09-30');
       await fin.locator('[data-end]').dispatchEvent('change');

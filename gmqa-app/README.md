@@ -90,7 +90,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   top-up that has been spent, cannot be removed until the bill payment or purchases are undone.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
-- Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
+- A week is the pay week, **Sunday to Saturday** (wages are paid on Saturday), on every screen: Payroll, Analytics,
+  Finance and Sales Reports ("This week" / "Last week") and a weekly bill envelope's "this week". Payroll opens on this week; This week / Last week / Next week →
   (the Sun–Sat week after the range shown, also after a half week) pick whole weeks.
 - New jobs dated today get **Time in** = the current shop time (it keeps up while the form is open) unless
   the user types a time; jobs dated another day get no automatic time. The sidebar shows a live shop clock.
