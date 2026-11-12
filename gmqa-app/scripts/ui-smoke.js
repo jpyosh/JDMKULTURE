@@ -2017,6 +2017,49 @@ async function launch() {
       return name;
     };
 
+    await step('Enter in a box does what the button next to it does', async () => {
+      const ENTER_DAY = '2026-06-15'; // nothing else on it
+      // EOD: an expense, then the setup boxes.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill(ENTER_DAY);
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /No expenses recorded/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      await eod.locator('[data-e="description"]').fill('Rags');
+      await eod.locator('[data-e="amount"]').fill('45');
+      await eod.locator('[data-e="amount"]').press('Enter');
+      await expectToast(/Expense added/);
+      assert.equal(await eod.locator('[data-expenses] .row-line').count(), 1);
+      await eod.locator('[data-m="cash_float"]').fill('500');
+      await eod.locator('[data-m="cash_float"]').press('Enter');
+      await expectToast(/EOD saved/);
+      // A new job: Enter opens the review, where nothing is saved until Add job.
+      await page.click('#nav [data-view="carwash"]');
+      await carwashDate(ENTER_DAY);
+      const editor = daily.locator('[data-editor]');
+      await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+      await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+      await editor.locator('[data-f="plate"]').fill('ENTER 1');
+      await editor.locator('[data-f="plate"]').press('Enter');
+      await page.waitForSelector('#modal[open] [data-confirm]');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/added/);
+      // In a pop-up form, Enter presses its main button.
+      await daily.locator('tr', { hasText: 'ENTER 1' }).locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-edit-editor] .line-row');
+      await page.fill('#modal [data-f="remarks"]', 'Saved with Enter');
+      await page.press('#modal [data-f="remarks"]', 'Enter');
+      await expectToast(/saved/);
+      await page.waitForFunction(() => !document.querySelector('#modal').open);
+      // A small inline form (Settings → add a user).
+      await page.click('#nav [data-view="settings"]');
+      await page.fill('#view-settings [data-u="email"]', 'enter@sandbox.test');
+      await page.press('#view-settings [data-u="email"]', 'Enter');
+      await expectToast(/User added/);
+      await page.locator('#view-settings [data-users] tr', { hasText: 'enter@sandbox.test' }).waitFor();
+      await page.click('#nav [data-view="carwash"]');
+      await carwashDate(DAY);
+    });
+
     await step('themes: Classic, Telemetry and Editorial, each with its own look and motion, remembered per device', async () => {
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);

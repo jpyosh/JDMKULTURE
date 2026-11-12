@@ -52,7 +52,7 @@ export function createRunningView(department, opts = {}) {
       </div>
       <div data-banner></div>
       <div class="metrics-row" data-metrics></div>
-      <div class="card" data-entry-card>
+      <div class="card" data-entry-card data-enter="[data-review]">
         <div class="section-header"><h2>${esc(opts.entryTitle || `New ${dept.label} job`)}</h2><span class="subtle-badge" data-entry-date></span></div>
         <div data-editor></div>
         <div class="entry-actions"><button class="btn ghost" type="button" data-clear>Clear</button><button class="btn" type="button" data-review>Review job</button></div>

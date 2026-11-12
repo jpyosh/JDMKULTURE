@@ -35,7 +35,7 @@ function mount(el) {
     </div>
     <div class="two-col">
       <div>
-        <div class="card">
+        <div class="card" data-enter="[data-save]">
           <h2>Setup</h2>
           <div class="form-grid">
             <div><label>Supervisor</label><input type="text" data-m="supervisor" maxlength="80"></div>
@@ -54,7 +54,7 @@ function mount(el) {
         <div class="card">
           <h2>Expenses</h2>
           <div data-expenses></div>
-          <div class="expense-form">
+          <div class="expense-form" data-enter="[data-add-expense]">
             <label class="sr-only" for="expense-side">Paid from</label>
             <select data-e="side" id="expense-side" title="Paid from"><option value="cash">Drawer cash</option><option value="gcash">GCash</option>
               <option value="fund">Cash fund (abono)</option></select>
@@ -201,7 +201,7 @@ function renderEnvelopes() {
         ${f.remaining > 0 ? `<button class="btn" type="button" data-put-aside ${off}>Put ${peso(f.remaining)} aside</button>` : ''}
         <button class="btn ghost small" type="button" data-other ${off}>Other amount</button>
       </div>
-      <div class="envelope-other" hidden>
+      <div class="envelope-other" data-enter="[data-sa-add]" hidden>
         <input type="number" min="0.01" step="0.01" data-sa-amount placeholder="Amount" aria-label="Amount to put aside for ${esc(f.name)}" ${off}>
         <select data-sa-side aria-label="Taken from" ${off}><option value="cash">from drawer cash</option><option value="gcash">from GCash</option></select>
         <button class="btn small" type="button" data-sa-add ${off}>Put aside</button>

@@ -12,7 +12,7 @@ function mount(el) {
         <p class="hint">Add someone's email here, then create their login in Supabase → Authentication → Users (or they reset a password).
           Owner: everything. Staff: Daily Log, EOD and viewing prices only; cannot edit a day after it's closed.</p>
         <div data-users></div>
-        <div class="inline-form">
+        <div class="inline-form" data-enter="[data-add-user]">
           <input type="text" data-u="email" placeholder="email@example.com">
           <input type="text" data-u="display_name" placeholder="Name (optional)">
           <select data-u="role"><option value="staff">Staff</option><option value="owner">Owner</option></select>
@@ -23,7 +23,7 @@ function mount(el) {
         <h2>Vehicle classes</h2>
         <p class="hint">Add a class (e.g. VAN), then set its prices in the Pricing Matrix. Hidden classes stay on old jobs but can't be picked for new ones.</p>
         <div data-classes></div>
-        <div class="inline-form">
+        <div class="inline-form" data-enter="[data-add-class]">
           <input type="text" data-c="code" placeholder="Code, e.g. VAN" maxlength="16">
           <input type="text" data-c="label" placeholder="Label, e.g. Van" maxlength="40">
           <button class="btn ghost" type="button" data-add-class>+ Add</button>

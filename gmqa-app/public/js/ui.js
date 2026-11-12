@@ -74,6 +74,24 @@ export function toast(message, type = 'success') {
   toastTimer = setTimeout(() => { el.className = 'app-toast'; }, type === 'error' ? 5000 : 2600);
 }
 
+// ---------------------------------------------------------------- Enter key
+
+// Enter in a text or number box presses the button of the form it is in. A form's wrapper names that button:
+// data-enter="<selector of the button inside it>" (pop-up forms: their main button). Date and time boxes keep
+// Enter for their own pickers, and anything that already handled the key is left alone.
+export function installEnterKey() {
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    const input = e.target;
+    if (!input?.matches?.('input') || ['checkbox', 'radio', 'date', 'time', 'button', 'submit', 'file'].includes(input.type)) return;
+    const scope = input.closest('[data-enter]');
+    const button = scope?.querySelector(scope.dataset.enter);
+    if (!button || button.disabled) return;
+    e.preventDefault();
+    button.click();
+  });
+}
+
 // ---------------------------------------------------------------- modal
 
 export function openModal(html, onReady) {
