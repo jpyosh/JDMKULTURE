@@ -2,6 +2,9 @@ import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, pr
 
 let root;
 let current = { date: todayLocal(), day: null };
+// Setup and count boxes typed in but not saved yet. They stay as typed while the rest of the screen refreshes
+// (an expense added, money put aside), until they are saved or another day is opened.
+const typed = new Set();
 
 function mount(el) {
   root = el;
@@ -32,7 +35,7 @@ function mount(el) {
     </div>
     <div class="two-col">
       <div>
-        <div class="card">
+        <div class="card" data-enter="[data-save]">
           <h2>Setup</h2>
           <div class="form-grid">
             <div><label>Supervisor</label><input type="text" data-m="supervisor" maxlength="80"></div>
@@ -51,7 +54,7 @@ function mount(el) {
         <div class="card">
           <h2>Expenses</h2>
           <div data-expenses></div>
-          <div class="expense-form">
+          <div class="expense-form" data-enter="[data-add-expense]">
             <label class="sr-only" for="expense-side">Paid from</label>
             <select data-e="side" id="expense-side" title="Paid from"><option value="cash">Drawer cash</option><option value="gcash">GCash</option>
               <option value="fund">Cash fund (abono)</option></select>
@@ -74,7 +77,7 @@ function mount(el) {
   $('[data-date]', root).addEventListener('change', e => { if (e.target.value) setDate(e.target.value); });
   $$('[data-shift]', root).forEach(b => b.addEventListener('click', () => setDate(addDays(current.date, Number(b.dataset.shift)))));
   $('[data-today]', root).addEventListener('click', () => setDate(todayLocal()));
-  $$('[data-m]', root).forEach(el => el.addEventListener('input', renderMath));
+  $$('[data-m]', root).forEach(el => el.addEventListener('input', () => { typed.add(el.dataset.m); renderMath(); }));
   $('[data-save]', root).addEventListener('click', e => busy(e.currentTarget, save));
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
   $('[data-sales-report]', root).addEventListener('click', e => busy(e.currentTarget, copySalesReport));
@@ -85,6 +88,7 @@ function mount(el) {
 async function show() { await setDate(current.date); }
 
 async function setDate(date) {
+  if (date !== current.date) typed.clear();
   current.date = date;
   $('[data-date]', root).value = date;
   const [day, funds, cashFund] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`), api('GET', '/cash-fund')]);
@@ -130,7 +134,7 @@ function render() {
 
   for (const el of $$('[data-m]', root)) {
     const value = meta[el.dataset.m];
-    el.value = value ?? (el.type === 'number' && !['actual_cash', 'actual_gcash'].includes(el.dataset.m) ? 0 : '');
+    if (!typed.has(el.dataset.m)) el.value = value ?? (el.type === 'number' && !['actual_cash', 'actual_gcash'].includes(el.dataset.m) ? 0 : '');
     el.disabled = locked();
   }
   // Before tips were tracked, a day's tips were taken as given out that same day.
@@ -197,7 +201,7 @@ function renderEnvelopes() {
         ${f.remaining > 0 ? `<button class="btn" type="button" data-put-aside ${off}>Put ${peso(f.remaining)} aside</button>` : ''}
         <button class="btn ghost small" type="button" data-other ${off}>Other amount</button>
       </div>
-      <div class="envelope-other" hidden>
+      <div class="envelope-other" data-enter="[data-sa-add]" hidden>
         <input type="number" min="0.01" step="0.01" data-sa-amount placeholder="Amount" aria-label="Amount to put aside for ${esc(f.name)}" ${off}>
         <select data-sa-side aria-label="Taken from" ${off}><option value="cash">from drawer cash</option><option value="gcash">from GCash</option></select>
         <button class="btn small" type="button" data-sa-add ${off}>Put aside</button>
@@ -309,7 +313,7 @@ function renderTipsReminder(toGive, given) {
     ${locked() ? '' : `<button class="btn small" type="button" data-give-tips>Mark ${peso(toGive)} given</button>`}</div>`;
   $('[data-give-tips]', box)?.addEventListener('click', e => busy(e.currentTarget, async () => {
     $('[data-m="gcash_tips_passed"]', root).value = round2(given + toGive);
-    current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+    await saveMeta();
     toast(`${peso(toGive)} in tips given to the crew`);
     render();
   }));
@@ -340,15 +344,21 @@ function metaPayload() {
   return out;
 }
 
-async function save() {
+// Saves every Setup and count box as shown; nothing is left unsaved afterwards.
+async function saveMeta() {
   current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+  typed.clear();
+}
+
+async function save() {
+  await saveMeta();
   toast('EOD saved');
   render();
 }
 
 async function closeDay() {
   // Save whatever is typed first so the day is closed with the numbers on screen.
-  current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+  await saveMeta();
   render();
   let tips = null;
   if (current.day.summary.tipsToGive > 0) {
@@ -357,7 +367,7 @@ async function closeDay() {
     if (tips === 'give') {
       const s = current.day.summary;
       $('[data-m="gcash_tips_passed"]', root).value = round2(s.tipsGiven + s.tipsToGive);
-      current.day = await api('PUT', `/days/${current.date}`, metaPayload());
+      await saveMeta();
       render();
     }
   }
@@ -378,7 +388,7 @@ async function closeDay() {
 // shown, so it can also be copied by hand where the browser does not allow copying.
 async function copySalesReport() {
   if (!locked()) {
-    current.day = await api('PUT', `/days/${current.date}`, metaPayload()); // with the numbers on screen
+    await saveMeta(); // with the numbers on screen
     render();
   }
   const text = current.day.report.text;

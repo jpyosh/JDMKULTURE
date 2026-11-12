@@ -11,6 +11,7 @@ const { db } = require('../lib/db');
 const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/calc');
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
 const { loadPart, takeStock, returnStock, piecesOf } = require('../lib/inventory');
+const { assertNotAfterToday, assertNotFarAhead } = require('../lib/clock');
 const { peso } = require('../lib/cash-fund');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
@@ -21,13 +22,17 @@ const JOB_FIELDS = ['vehicle_class', 'plate', 'payment_method', 'payment_receive
   'tip_gcash', 'time_in', 'time_out', 'detailer', 'remarks'];
 // On a paid running job these are locked: the money is already in a drawer count.
 const AMOUNT_FIELDS = ['vehicle_class', 'discount', 'tip_gcash', 'payment_method'];
+// What recording a carwash payment may send: it touches the day the money came in, not the day of the job.
+const PAYMENT_FIELDS = ['payment_received', 'payment_method', 'tip_gcash'];
 
-async function cleanJobFields(q, body) {
+// job: the job being edited. It keeps the class it has even when that class was hidden since (the edit form
+// always sends the class); a hidden class cannot be picked for any other job.
+async function cleanJobFields(q, body, job = null) {
   const f = pick(body, JOB_FIELDS);
   const out = {};
   if ('vehicle_class' in f) {
     out.vehicle_class = f.vehicle_class || null;
-    if (out.vehicle_class && !(await q.one('select 1 from vehicle_classes where code = $1 and active', [out.vehicle_class]))) {
+    if (out.vehicle_class && out.vehicle_class !== job?.vehicle_class && !(await q.one('select 1 from vehicle_classes where code = $1 and active', [out.vehicle_class]))) {
       throw bad(`Unknown vehicle class ${out.vehicle_class}`);
     }
   }
@@ -182,6 +187,16 @@ router.get('/jobs/completed', async (req, res) => {
   else res.json(await loadJobs('department = $1 and payment_received and sale_date = $2', [dept, date(req.query.date)]));
 });
 
+// Every recorded change to one job and its line items, newest first (owner). Line items are found by the job
+// they belong to, so the history is complete however many other changes came after.
+router.get('/jobs/:id/history', requireOwner, async (req, res) => {
+  const jobId = id(req.params.id, 'job');
+  if (!(await db.one('select 1 from jobs where id = $1', [jobId]))) throw notFound('Job');
+  res.json(await db.many(`select id, at, actor, table_name, row_pk, action, old_row, new_row from audit_log
+    where (table_name = 'jobs' and row_pk = $1) or (table_name = 'job_items' and coalesce(new_row, old_row) ->> 'job_id' = $1)
+    order by id desc limit 1000`, [String(jobId)]));
+});
+
 // ---------------------------------------------------------------- create / edit
 
 router.post('/jobs', async (req, res) => {
@@ -192,6 +207,10 @@ router.post('/jobs', async (req, res) => {
   const jobId = await db.tx(req.user.email, async q => {
     // A plain running job touches no day's numbers; paid or done, it does.
     if (!running || done || req.body.payment_received) await assertDayOpen(q, jobDate, req.user);
+    // A job can be entered a few days ahead (a booking); one already done or paid cannot be dated after today.
+    await assertNotFarAhead(q, jobDate, 'Job date');
+    if (done) await assertNotAfterToday(q, jobDate, 'Done date');
+    if (req.body.payment_received) await assertNotAfterToday(q, jobDate, 'Payment date');
     const fields = await cleanJobFields(q, req.body);
     if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
     if (dept === 'parts' && fields.payment_received && !fields.payment_method) throw bad('Choose how the customer paid: Cash or GCash');
@@ -202,7 +221,7 @@ router.post('/jobs', async (req, res) => {
       payment_method: 'Cash', payment_received: false, ...fields,
       department: dept, jo_number: await nextJoNumber(q, jobDate, dept), job_date: jobDate,
       ...(done ? { closed_on: jobDate } : {}),
-      ...(running && fields.payment_received ? { paid_on: jobDate } : {}),
+      ...(fields.payment_received ? { paid_on: jobDate } : {}),
     };
     const cols = Object.keys(values);
     const job = await q.one(`insert into jobs (${cols.join(', ')}) values (${cols.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
@@ -219,8 +238,24 @@ router.patch('/jobs/:id', async (req, res) => {
     const job = await loadJob(jobId, q);
     if (!job) throw notFound('Job');
     if (job.voided_at) throw bad('This job is voided. Restore it before editing.');
-    await assertDaysOpen(q, affectedDays(job), req.user);
-    const fields = await cleanJobFields(q, req.body);
+    const fields = await cleanJobFields(q, req.body, job);
+    let days = affectedDays(job);
+    if (!isRunning(job) && 'payment_received' in fields && fields.payment_received !== job.payment_received) {
+      // A carwash job is paid on its own day unless another day is given (credit paid later), never an earlier one.
+      const paymentOnly = !Array.isArray(req.body.items) && Object.keys(fields).every(f => PAYMENT_FIELDS.includes(f));
+      const wasPaidOn = job.paid_on || job.job_date;
+      if (fields.payment_received) {
+        fields.paid_on = req.body.paid_on == null || req.body.paid_on === '' ? job.job_date : date(req.body.paid_on, 'Payment date');
+        if (fields.paid_on < job.job_date) throw bad(`Payment date cannot be before the day of the job (${job.job_date})`);
+        await assertNotAfterToday(q, fields.paid_on, 'Payment date');
+        // Like a running job: recording only the payment needs the day the money came in to be open, not the day of the job.
+        days = paymentOnly ? [fields.paid_on] : [...days, fields.paid_on];
+      } else {
+        fields.paid_on = null;
+        days = paymentOnly ? [wasPaidOn] : [...days, wasPaidOn];
+      }
+    }
+    await assertDaysOpen(q, days, req.user);
     if (isRunning(job)) {
       if ('payment_received' in fields) throw bad('Use "Mark paid" / "Undo payment" for this job');
       const changesAmount = Array.isArray(req.body.items) || AMOUNT_FIELDS.some(f => f in fields && fields[f] !== job[f]);
@@ -275,6 +310,7 @@ router.post('/jobs/:id/complete', async (req, res) => {
     if (job.closed_on) throw bad(`Already marked done on ${job.closed_on}`);
     const day = date(req.body.date, 'Done date');
     if (day < job.job_date) throw bad(`Done date cannot be before the job was opened (${job.job_date})`);
+    await assertNotAfterToday(q, day, 'Done date');
     await assertDayOpen(q, day, req.user);
     await q.query('update jobs set closed_on = $2 where id = $1', [job.id, day]);
   }));
@@ -293,6 +329,7 @@ router.post('/jobs/:id/pay', async (req, res) => {
     if (job.payment_received) throw bad(`Already paid${job.paid_on ? ` on ${job.paid_on}` : ''}`);
     const day = date(req.body.date, 'Payment date');
     if (day < job.job_date) throw bad(`Payment date cannot be before the job was opened (${job.job_date})`);
+    await assertNotAfterToday(q, day, 'Payment date');
     const method = oneOf(req.body.payment_method, PAYMENT_METHODS, 'Payment method');
     const tip = 'tip_gcash' in (req.body || {}) ? money(req.body.tip_gcash, 'GCash tip') : job.tip_gcash;
     await assertDaysOpen(q, [day, later(day, job.closed_on)].filter(Boolean), req.user);

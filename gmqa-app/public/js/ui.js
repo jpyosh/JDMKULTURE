@@ -17,10 +17,6 @@ export function addDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
-export function mondayOf(date) {
-  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return addDays(date, day === 0 ? -6 : 1 - day);
-}
 // Shop time is Philippine time, whatever time zone the device is set to.
 const SHOP_TZ = 'Asia/Manila';
 const clean = s => s.replace(/[  ]/g, ' ');
@@ -46,7 +42,7 @@ export function startClock(el) {
   tick();
 }
 
-// The shop's pay week runs Sunday to Saturday.
+// The shop's pay week runs Sunday to Saturday (wages are paid on Saturday). Every screen's "week" is this week.
 export function sundayOf(date) {
   return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
 }
@@ -72,6 +68,24 @@ export function toast(message, type = 'success') {
   el.className = `app-toast show ${type === 'error' ? 'error' : ''}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.className = 'app-toast'; }, type === 'error' ? 5000 : 2600);
+}
+
+// ---------------------------------------------------------------- Enter key
+
+// Enter in a text or number box presses the button of the form it is in. A form's wrapper names that button:
+// data-enter="<selector of the button inside it>" (pop-up forms: their main button). Date and time boxes keep
+// Enter for their own pickers, and anything that already handled the key is left alone.
+export function installEnterKey() {
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    const input = e.target;
+    if (!input?.matches?.('input') || ['checkbox', 'radio', 'date', 'time', 'button', 'submit', 'file'].includes(input.type)) return;
+    const scope = input.closest('[data-enter]');
+    const button = scope?.querySelector(scope.dataset.enter);
+    if (!button || button.disabled) return;
+    e.preventDefault();
+    button.click();
+  });
 }
 
 // ---------------------------------------------------------------- modal

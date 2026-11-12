@@ -51,6 +51,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   it is finished is in that day's drawer, and one paid after it is finished is in the later day's drawer. Its sale
   and commission are booked on the day it is done either way (agreed 2026-11-05, migration 016). A job finished and
   not paid is that day's receivable, and its commission comes out of that day's drawer, like an unpaid carwash job.
+- A carwash job on credit can be paid on a later day: ticking **Paid** on a job of an earlier day asks for the
+  payment date (today unless changed). Its sale and commission stay on the day of the job; the money counts in the
+  drawer of the day it was paid, so a late payment never changes a closed day's count, and staff can record it
+  although the day of the job is closed (migration 020).
 - Once a running job is paid, its amount (items, class, discount) is locked until the payment is undone.
 - The board's **Completed** list shows every job done and paid, finished since a chosen day (default: the last 7 days), including
   any dated after today, so a finished job never drops out of sight. Completed jobs can still be edited,
@@ -62,7 +66,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - A job **counts** once it has a vehicle class or a line item and is not voided.
 - **Collected** = totals of paid jobs. **Receivables** = totals of unpaid jobs.
 - **Commission** = every counted job (detailers are paid at EOD either way).
-- **Net** = Collected − Commission. **Profit** (reports) = Collected − Commission − Expenses.
+- **Net** = Collected − Commission. **Profit** (Sales Reports) = Collected − Commission − Cost of
+  parts sold − Expenses, where parts bought to sell are stock, not an expense (`tradingProfit`). It is the Finance
+  figure before payroll and bills. Sales Reports lists every day and marks the ones still open; Finance and
+  Analytics count a day once it is closed.
 - Money counts in the drawer or GCash on the day it was received: a running job's or a counter sale's
   payment day (`paid_on`), otherwise the job's own day.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.
@@ -75,9 +82,16 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   (paid or not), total sales (paid), less comms, less expenses (drawer cash + GCash, not the cash fund), total net,
   then Cash and Gcash as **actually counted** at EOD (the drawer count includes the float) and each side's variance
   (+ over, - short). A side not counted yet says so and has no variance (`salesReport` in `lib/calc.js`).
+- **Dates are checked against today** (shop time, `lib/clock.js`): a day cannot be closed, and a job cannot be
+  marked done or paid, on a date after today. A job, expense, bill set-aside, bill payment or payroll payout can
+  be dated at most 7 days ahead, so a wrong year or month is refused.
+- **Money entries are checked**: tips given to the crew cannot be more than the tips held; an identical payroll
+  payout is asked about before it is recorded twice; a set-aside that has since paid a bill, or a cash fund
+  top-up that has been spent, cannot be removed until the bill payment or purchases are undone.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
-- Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
+- A week is the pay week, **Sunday to Saturday** (wages are paid on Saturday), on every screen: Payroll, Analytics,
+  Finance and Sales Reports ("This week" / "Last week") and a weekly bill envelope's "this week". Payroll opens on this week; This week / Last week / Next week →
   (the Sun–Sat week after the range shown, also after a half week) pick whole weeks.
 - New jobs dated today get **Time in** = the current shop time (it keeps up while the form is open) unless
   the user types a time; jobs dated another day get no automatic time. The sidebar shows a live shop clock.

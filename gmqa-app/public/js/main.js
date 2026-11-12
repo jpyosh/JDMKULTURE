@@ -1,4 +1,4 @@
-import { $, api, esc, state, setTokenProvider, toast, ApiError, startClock } from './ui.js';
+import { $, api, esc, state, setTokenProvider, toast, ApiError, startClock, installEnterKey } from './ui.js';
 import { installDatePicker } from './components/datepicker.js';
 import { installTimePicker } from './components/timepicker.js';
 import { installThemeSwitch } from './theme.js';
@@ -183,5 +183,6 @@ window.addEventListener('unhandledrejection', event => {
 installDatePicker();
 installTimePicker();
 installThemeSwitch();
+installEnterKey(); // after the pickers, so they get Enter first
 startClock($('[data-clock]'));
 init();

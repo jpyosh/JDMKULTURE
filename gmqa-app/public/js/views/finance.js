@@ -1,6 +1,6 @@
 // Owner's money view for any period: what came in, what went out, net profit, and the bill funds
 // (weekly set-asides for Meralco, Maynilad, rent, ...).
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, mondayOf, openModal, closeModal, modalHeader, openDaysBanner, DEPARTMENTS } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, sundayOf, openModal, closeModal, modalHeader, openDaysBanner, DEPARTMENTS } from '../ui.js';
 
 let root;
 let range = null;
@@ -46,7 +46,7 @@ function presets() {
   const monthStart = `${today.slice(0, 8)}01`;
   const lastMonthEnd = addDays(monthStart, -1);
   return {
-    'this-week': [mondayOf(today), addDays(mondayOf(today), 6)],
+    'this-week': [sundayOf(today), addDays(sundayOf(today), 6)], // the pay week, Sunday to Saturday
     'this-month': [monthStart, lastDayOfMonth(today)],
     'last-month': [`${lastMonthEnd.slice(0, 8)}01`, lastMonthEnd],
   };

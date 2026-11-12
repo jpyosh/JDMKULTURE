@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { migratedDb, closeAllDrivers } = require('./helpers');
 const { createApp } = require('../server');
 const { clearUserCache } = require('../lib/auth');
+const { setShopToday } = require('../lib/clock');
 const crypto = require('crypto');
 
 // Test tokens are just the email; the fake verifier maps them to identities.
@@ -14,6 +15,8 @@ const STAFF = 'staff@test.ph';
 let server, base, driver;
 
 test.before(async () => {
+  // Date guards compare with today: these tests use dates up to 2033, so today is pinned after them all.
+  setShopToday('2099-12-31');
   driver = await migratedDb();
   await driver.query("insert into app_users (email, role) values ($1, 'owner'), ($2, 'staff')", [OWNER, STAFF]);
   server = createApp({ verifyToken }).listen(0);
@@ -1881,4 +1884,221 @@ test('bill funds: the owner picks weekly or monthly for each bill, and the targe
   const nowWeekly = await fundIn(created.id, '2032-05-20');
   assert.deepEqual([nowWeekly.periodWord, nowWeekly.setAsideThisPeriod], ['week', 1000]);
   for (const f of [created, weekly]) await ok(api(OWNER, 'PATCH', `/funds/${f.id}`, { active: false }));
+});
+
+test('carwash: a job on credit paid on a later day counts in that day\'s drawer, and the day it was done stays as it was', async () => {
+  const [D1, D2] = ['2026-08-03', '2026-08-05']; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const sameDay = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  assert.equal(sameDay.paid_on, D1, 'paid when it was entered: paid that day');
+  const credit = await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] }));
+  assert.equal(credit.paid_on, null);
+  const total = credit.totals.total;
+  const expected = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary.expectedCash; // the paid job, less both commissions
+  await ok(api(OWNER, 'PUT', `/days/${D1}`, { actual_cash: expected, actual_gcash: 0 }));
+  await ok(api(OWNER, 'POST', `/days/${D1}/close`, { tips_later: true }));
+  const closed = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([closed.cashReceived, closed.receivables, closed.cashVariance], [total, total, 0]);
+
+  // Staff record the payment on the day the money came in, although the day of the job is closed.
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: '2026-08-02' })).status, 400, 'not before the job day');
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D1 })).status, 403, 'the job day is closed');
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D2, plate: 'X' })).status, 403, 'only the payment, nothing else on a closed day');
+  const paid = await ok(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: D2, payment_method: 'GCash', tip_gcash: 30 }));
+  assert.deepEqual([paid.payment_received, paid.paid_on, paid.sale_date, paid.payment_method], [true, D2, D1, 'GCash']);
+
+  const saleDay = (await ok(api(OWNER, 'GET', `/days/${D1}`))).summary;
+  assert.deepEqual([saleDay.cashReceived, saleDay.cashVariance, saleDay.paidLater], [total, 0, total], 'the closed day\'s drawer is untouched');
+  assert.deepEqual([saleDay.collected, saleDay.receivables], [total * 2, 0], 'its sale is now collected');
+  const payDay = (await ok(api(OWNER, 'GET', `/days/${D2}`))).summary;
+  assert.deepEqual([payDay.gcashReceived, payDay.earlierSalesPaid, payDay.jobTips, payDay.vehicles], [total, total, 30, 0], 'the money and tip are in the day it was paid');
+
+  // Once the pay day is closed, staff cannot undo it; the owner can, and the pay day is cleared.
+  await ok(api(OWNER, 'POST', `/days/${D2}/close`, { tips_later: true }));
+  assert.equal((await api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: false })).status, 403);
+  const undone = await ok(api(OWNER, 'PATCH', `/jobs/${credit.id}`, { payment_received: false }));
+  assert.deepEqual([undone.payment_received, undone.paid_on], [false, null]);
+  // Ticking Paid without a date still means the job's own day (as it always did).
+  const own = await ok(api(OWNER, 'PATCH', `/jobs/${credit.id}`, { payment_received: true }));
+  assert.equal(own.paid_on, D1);
+  for (const d of [D1, D2]) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+});
+
+test('employees: a name already on payroll is refused, never overwritten; someone removed can be added back', async () => {
+  const first = await ok(api(OWNER, 'POST', '/employees', { name: 'Juan Dela Cruz', role: 'Detailer', rate_per_day: 500, construction_rate: 700 }));
+  const again = await api(OWNER, 'POST', '/employees', { name: '  juan dela cruz ', role: 'Cashier', rate_per_day: 300 });
+  assert.equal(again.status, 409);
+  assert.match(again.data.error, /Juan Dela Cruz is already on payroll/);
+  const same = (await ok(api(OWNER, 'GET', '/employees'))).filter(e => /juan dela cruz/i.test(e.name));
+  assert.deepEqual(same.map(e => [e.id, e.role, e.rate_per_day, e.construction_rate]), [[first.id, 'Detailer', 500, 700]], 'the first Juan is untouched');
+
+  // Renaming someone to a name already on payroll is refused too; keeping their own name is fine.
+  const other = await ok(api(OWNER, 'POST', '/employees', { name: 'Pedro Santos', rate_per_day: 400 }));
+  const rename = await api(OWNER, 'PATCH', `/employees/${other.id}`, { name: 'JUAN DELA CRUZ' });
+  assert.equal(rename.status, 409);
+  assert.match(rename.data.error, /already on payroll/);
+  await ok(api(OWNER, 'PATCH', `/employees/${first.id}`, { name: 'Juan Dela Cruz', role: 'Senior detailer' }));
+
+  // Removed from payroll, then added again: the old record comes back, as before.
+  await ok(api(OWNER, 'DELETE', `/employees/${first.id}`));
+  const back = await ok(api(OWNER, 'POST', '/employees', { name: 'Juan Dela Cruz', role: 'Detailer', rate_per_day: 550 }));
+  assert.deepEqual([back.id, back.active, back.rate_per_day], [first.id, true, 550]);
+  for (const e of [first, other]) await ok(api(OWNER, 'DELETE', `/employees/${e.id}`));
+});
+
+test('sales report and Finance give the same profit for the same days (before payroll and bills)', async () => {
+  const D = '2026-08-17'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const wiper = await ok(api(OWNER, 'POST', '/inventory', { name: 'Report wiper', price: 300, commission: 20, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${wiper.id}/receive`, { date: D, quantity: 10, unit_cost: 100, paid_from: 'cash' })); // ₱1,000 of stock
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_received: true, items: [{ catalog_item_id: premium.id }, { part_id: wiper.id, quantity: 2 }] }));
+  await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Soap', amount: 60 }));
+
+  const report = await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=${D}`));
+  const [day] = report.days;
+  assert.equal(day.closed, false, 'the report shows a day still open, and says so');
+  assert.deepEqual([day.expenses, day.partsBought, day.partsCost], [60, 1000, 200], 'stock bought is not an expense; the two wipers sold are a cost');
+  assert.equal(day.profit, day.collected - day.commission - 200 - 60);
+  assert.deepEqual([report.totals.expenses, report.totals.partsCost, report.totals.profit], [60, 200, day.profit]);
+  assert.deepEqual(report.openDays, [D]);
+
+  const finance = await financeOfClosed(D, D);
+  // Finance also takes off payroll and bills (other tests leave wages on this day); the rest is one figure.
+  assert.equal(Math.round((report.totals.profit - finance.opex.payroll - finance.opex.billsTotal) * 100) / 100, finance.netProfit);
+  assert.deepEqual([finance.opex.drawerExpenses, finance.opex.partsBought, finance.income.partsCost], [day.expenses, day.partsBought, day.partsCost]);
+  await ok(api(OWNER, 'POST', `/days/${D}/close`, { tips_later: true }));
+  const closed = await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=${D}`));
+  assert.deepEqual([closed.days[0].closed, closed.openDays], [true, []]);
+  await ok(api(OWNER, 'POST', `/days/${D}/reopen`));
+  await ok(api(OWNER, 'PATCH', `/inventory/${wiper.id}`, { active: false }));
+});
+
+test('a job whose vehicle class was hidden can still be edited; a hidden class cannot be picked for another job', async () => {
+  const D = '2026-08-19'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  await ok(api(OWNER, 'POST', '/classes', { code: 'OLDVAN', label: 'Old van' }));
+  await ok(api(OWNER, 'PATCH', `/catalog/${premium.id}`, { prices: { OLDVAN: { price: 900, commission: 90 } } }));
+  const job = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'OLDVAN', items: [{ catalog_item_id: premium.id }] }));
+  const other = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(OWNER, 'PATCH', '/classes/OLDVAN', { active: false }));
+
+  // What the edit form sends: the class as it is, with the other fields.
+  const edited = await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { vehicle_class: 'OLDVAN', plate: 'abc 123', remarks: 'Left a jacket', items: job.items.map(i => ({ id: i.id })) }));
+  assert.deepEqual([edited.vehicle_class, edited.plate, edited.remarks, edited.totals.total], ['OLDVAN', 'ABC 123', 'Left a jacket', 900]);
+
+  // The hidden class is still not offered anywhere else.
+  const pick = await api(STAFF, 'PATCH', `/jobs/${other.id}`, { vehicle_class: 'OLDVAN' });
+  assert.equal(pick.status, 400);
+  assert.match(pick.data.error, /Unknown vehicle class OLDVAN/);
+  assert.equal((await api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'OLDVAN', items: [{ catalog_item_id: premium.id }] })).status, 400);
+});
+
+test('job history finds a job\'s own line items however many other changes came after', async () => {
+  const D = '2026-08-21'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+  const job = await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', items: [{ catalog_item_id: premium.id }, { name: 'Wax', price: 100, commission: 10 }] }));
+  await ok(api(STAFF, 'PATCH', `/jobs/${job.id}`, { items: [{ id: job.items[0].id }] })); // the wax comes off
+  // 520 line-item changes on other jobs afterwards.
+  for (let i = 0; i < 26; i += 1) {
+    await ok(api(STAFF, 'POST', '/jobs', { job_date: '2026-08-22', vehicle_class: 'S', items: Array.from({ length: 20 }, (_, k) => ({ name: `Filler ${k}`, price: 1, commission: 0 })) }));
+  }
+  assert.equal((await api(STAFF, 'GET', `/jobs/${job.id}/history`)).status, 403);
+  const history = await ok(api(OWNER, 'GET', `/jobs/${job.id}/history`));
+  const items = history.filter(e => e.table_name === 'job_items');
+  assert.deepEqual(items.map(e => [e.action, (e.new_row || e.old_row).name]).sort(), [['DELETE', 'Wax'], ['INSERT', 'Premium Wash'], ['INSERT', 'Wax']]);
+  assert.ok(items.every(e => Number((e.new_row || e.old_row).job_id) === job.id), 'only this job');
+  assert.ok(history.some(e => e.table_name === 'jobs' && e.action === 'INSERT' && e.new_row.jo_number === job.jo_number));
+  assert.deepEqual(history.map(e => e.id), history.map(e => e.id).sort((a, b) => b - a), 'newest first');
+  assert.equal((await api(OWNER, 'GET', '/jobs/999999/history')).status, 404);
+});
+
+test('money entries are checked: tips given out, a payout entered twice, a set-aside or top-up already spent', async () => {
+  const D = '2033-06-01'; // used by no other test
+  const premium = await catalogItem('Premium Wash');
+
+  // GCash tips: no more can be given to the crew than the tips held.
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_received: true, payment_method: 'GCash', tip_gcash: 50, items: [{ catalog_item_id: premium.id }] }));
+  const over = await api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 500 });
+  assert.equal(over.status, 400);
+  assert.match(over.data.error, /Only ₱50\.00 in GCash tips/);
+  assert.equal((await ok(api(STAFF, 'GET', `/days/${D}`))).summary.tipsGiven, 0, 'nothing was saved');
+  const given = await ok(api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 50, cash_float: 1000 }));
+  assert.deepEqual([given.summary.tipsGiven, given.summary.tipsToGive], [50, 0]);
+  await ok(api(STAFF, 'PUT', `/days/${D}`, { gcash_tips_passed: 50, cash_float: 1200, actual_cash: 1 })); // saving the rest again is fine
+
+  // The same payout entered twice is asked about, not silently doubled.
+  const payout = { payout_date: D, period_start: '2033-05-22', period_end: '2033-05-28', side: 'cash', amount: 1234 };
+  const first = await ok(api(OWNER, 'POST', '/payroll/payouts', payout));
+  const twice = await api(OWNER, 'POST', '/payroll/payouts', payout);
+  assert.equal(twice.status, 409);
+  assert.match(twice.data.error, /already recorded/);
+  assert.equal((await ok(api(OWNER, 'GET', `/days/${D}`))).summary.payrollCash, 1234);
+  const second = await ok(api(OWNER, 'POST', '/payroll/payouts', { ...payout, confirm_duplicate: true })); // two envelopes of the same amount
+  const other = await ok(api(OWNER, 'POST', '/payroll/payouts', { ...payout, amount: 500 }));
+  for (const p of [first, second, other]) await ok(api(OWNER, 'DELETE', `/payroll/payouts/${p.id}`));
+
+  // Money put aside that has since paid a bill cannot be taken back out of the fund.
+  const fund = await ok(api(OWNER, 'POST', '/funds', { name: 'Guard bill', amount: 1000, frequency: 'monthly', due_day: 25 }));
+  const aside = await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: D, side: 'cash', amount: 500 }));
+  const bill = await ok(api(OWNER, 'POST', `/funds/${fund.id}/bills`, { date: D, amount: 500 }));
+  const spent = await api(STAFF, 'DELETE', `/fund-set-asides/${aside.id}`);
+  assert.equal(spent.status, 400);
+  assert.match(spent.data.error, /already paid a bill/);
+  await ok(api(OWNER, 'DELETE', `/bill-payments/${bill.id}`));
+  await ok(api(STAFF, 'DELETE', `/fund-set-asides/${aside.id}`));
+  await ok(api(OWNER, 'PATCH', `/funds/${fund.id}`, { active: false }));
+
+  // A cash fund top-up that has been spent cannot be undone until the purchases are removed.
+  const before = (await ok(api(OWNER, 'GET', '/cash-fund'))).balance;
+  const topup = await ok(api(OWNER, 'POST', '/cash-fund/topups', { date: '2026-01-02', amount: 1000 })); // before every purchase: replenishes none
+  const day = await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'fund', description: 'Guard purchase', amount: before + 800 }));
+  const undo = await api(OWNER, 'DELETE', `/cash-fund/topups/${topup.id}`);
+  assert.equal(undo.status, 400);
+  assert.match(undo.data.error, /₱800\.00 of it has already been spent/);
+  assert.equal((await ok(api(OWNER, 'GET', '/cash-fund'))).balance, 200);
+  await ok(api(STAFF, 'DELETE', `/expenses/${day.expenses.find(e => e.description === 'Guard purchase').id}`));
+  assert.equal((await ok(api(OWNER, 'DELETE', `/cash-fund/topups/${topup.id}`))).balance, before);
+});
+
+test('dates: nothing is closed, finished or paid after today, and nothing is entered more than a week ahead', async () => {
+
+  setShopToday('2026-11-12');
+  try {
+    const [TODAY, TOMORROW, WEEK, TOO_FAR] = ['2026-11-12', '2026-11-13', '2026-11-19', '2026-11-20'];
+    const premium = await catalogItem('Premium Wash');
+    const wash = { vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] };
+    const refused = async (promise, re) => { const r = await promise; assert.equal(r.status, 400, JSON.stringify(r.data)); assert.match(r.data.error, re); };
+
+    // A day that has not happened cannot be closed (staff would then be locked out of it).
+    await refused(api(STAFF, 'POST', `/days/${TOMORROW}/close`, {}), /cannot be after today/);
+    assert.equal((await ok(api(OWNER, 'GET', `/days/${TOMORROW}`))).meta.closed_at, null);
+    await ok(api(STAFF, 'POST', `/days/${TODAY}/close`, { tips_later: true }));
+    await ok(api(OWNER, 'POST', `/days/${TODAY}/reopen`));
+
+    // Done and paid: today at the latest.
+    const detailing = (await ok(api(OWNER, 'GET', '/catalog'))).items.find(i => i.kind === 'service' && i.department === 'detailing');
+    const detail = { department: 'detailing', vehicle_class: 'S', items: [{ catalog_item_id: detailing.id }] };
+    const running = await ok(api(OWNER, 'POST', '/jobs', { job_date: '2026-11-10', ...detail })); // another test leaves the 10th closed
+    await refused(api(STAFF, 'POST', `/jobs/${running.id}/complete`, { date: '2027-06-01' }), /Done date cannot be after today \(2026-11-12\)/);
+    await refused(api(STAFF, 'POST', `/jobs/${running.id}/pay`, { date: TOMORROW, payment_method: 'Cash' }), /Payment date cannot be after today/);
+    const credit = await ok(api(OWNER, 'POST', '/jobs', { job_date: '2026-11-10', ...wash }));
+    await refused(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: TOMORROW }), /Payment date cannot be after today/);
+    await ok(api(STAFF, 'POST', `/jobs/${running.id}/complete`, { date: TODAY }));
+    await ok(api(STAFF, 'PATCH', `/jobs/${credit.id}`, { payment_received: true, paid_on: TODAY }));
+
+    // Entries can be dated up to a week ahead (a booking, a planned payout), not further: a wrong year or month is caught.
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: TOO_FAR, ...wash }), /too far ahead/);
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: '2027-11-12', ...wash }), /too far ahead/);
+    const booked = await ok(api(STAFF, 'POST', '/jobs', { job_date: WEEK, ...wash }));
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: WEEK, job_done: true, ...detail }), /cannot be after today/);
+    await refused(api(STAFF, 'POST', '/jobs', { job_date: WEEK, payment_received: true, ...wash }), /cannot be after today/);
+    await refused(api(STAFF, 'POST', `/days/${TOO_FAR}/expenses`, { side: 'cash', description: 'Soap', amount: 10 }), /too far ahead/);
+    await refused(api(STAFF, 'POST', '/funds/1/set-asides', { date: TOO_FAR, side: 'cash', amount: 10 }), /too far ahead/);
+    await refused(api(OWNER, 'POST', '/funds/1/bills', { date: TOO_FAR, amount: 10, drawer_side: 'cash' }), /too far ahead/);
+    await refused(api(OWNER, 'POST', '/payroll/payouts', { payout_date: TOO_FAR, period_start: TODAY, period_end: TODAY, side: 'cash', amount: 10 }), /too far ahead/);
+    for (const job of [running, credit, booked]) await ok(api(OWNER, 'POST', `/jobs/${job.id}/void`, { reason: 'test cleanup' }));
+  } finally {
+    setShopToday('2099-12-31');
+  }
 });

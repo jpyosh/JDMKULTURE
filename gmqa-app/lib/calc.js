@@ -8,7 +8,8 @@
 //   * Net                    = Collected − Commission.
 //
 // Departments (agreed 2026-10-03):
-//   * Carwash jobs are same-day and count on their job date.
+//   * Carwash jobs are same-day and count on their job date. One on credit can be paid on a later day
+//     (paid_on): the money then counts in that day's drawer, the sale stays on its own day.
 //   * Detailing, Tint & PPF and parts jobs are "running": they count (sale + commission) on the day the work
 //     is finished, paid or not (agreed 2026-11-05). Until it is paid, a finished job is that day's receivable.
 //   * Money is reconciled on the day it is received: a running job paid before it is done puts
@@ -77,9 +78,9 @@ function salesFigures(jobs) {
   };
 }
 
-// The day a job's money came in: a running job's payment day; a paid carwash job, its own day.
-// The sale itself (and its commission) stays on its sale date either way.
-const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? saleDate(j) : null);
+// The day a job's money came in: its payment day. A paid carwash job without one was paid on its own day
+// (every carwash job before migration 020). The sale itself (and its commission) stays on its sale date either way.
+const receivedDate = j => (isRunning(j) ? j.paid_on : j.payment_received ? j.paid_on || saleDate(j) : null);
 // Money in on `date`.
 const receivedOn = (jobs, date) => jobs.filter(j => isCounted(j) && receivedDate(j) === date);
 
@@ -303,9 +304,9 @@ function addDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
-function mondayOf(date) {
-  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return addDays(date, day === 0 ? -6 : 1 - day);
+// The week is the pay week on every screen: Sunday to Saturday (wages are paid on Saturday).
+function sundayOf(date) {
+  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
 }
 function datesBetween(start, end) {
   const out = [];
@@ -337,13 +338,13 @@ function nextDueDate(fund, from) {
   return null;
 }
 
-// The week (Monday to Sunday) or calendar month, by the bill's choice, that `date` falls in.
+// The pay week (Sunday to Saturday) or calendar month, by the bill's choice, that `date` falls in.
 function setAsidePeriod(fund, date) {
   if (fund.set_aside_every === 'monthly') {
     const [y, m] = date.split('-').map(Number);
     return { start: `${y}-${pad2(m)}-01`, end: `${y}-${pad2(m)}-${pad2(lastDayOf(y, m))}` };
   }
-  const start = mondayOf(date);
+  const start = sundayOf(date);
   return { start, end: addDays(start, 6) };
 }
 
@@ -483,6 +484,15 @@ function profitAndLoss(t, { payroll, billsTotal }) {
   return { income, opex, netProfit: r(income.net - income.partsCost - opex.total) };
 }
 
+// One day of Sales Reports from its daySummary: profit before payroll and bills, by the same rules as
+// profitAndLoss, so both screens give one figure. Parts bought to sell are stock, not a cost (costs leaves them
+// out); the cost of the parts sold is.
+function tradingProfit(s) {
+  const partsBought = round2(s.partsBoughtDrawer + s.partsBoughtFund);
+  const costs = round2(s.expenses - partsBought);
+  return { costs, partsBought, partsCost: s.partsCost, profit: round2(s.collected - s.commission - s.partsCost - costs) };
+}
+
 // One row of Analytics. staffDays: days someone worked the carwash; such a day without sales may mean
 // the jobs were never entered, which would make the period's profit look too low. A day still open is
 // not checked: it has not been counted yet, and is listed in openDays instead.
@@ -504,10 +514,6 @@ function analyticsRow(period, t, { payroll, billsTotal, staffDays, countedDates,
 const PERIOD_COUNTS = { day: 14, week: 8, month: 6, quarter: 4 };
 const SHORT_MONTHS = FULL_MONTHS.map(m => m.slice(0, 3));
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function sundayOf(date) {
-  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
-}
 
 // The whole period around `date`. Weeks are the Sunday-to-Saturday pay weeks; quarters are calendar quarters.
 function periodAround(grain, date) {
@@ -600,6 +606,6 @@ module.exports = {
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
-  isDate, addDays, mondayOf, datesBetween, daysUntil, joPrefix,
-  periodTotals, profitAndLoss, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
+  isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
+  periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
 };

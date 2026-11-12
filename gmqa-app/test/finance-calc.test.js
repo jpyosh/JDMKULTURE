@@ -59,9 +59,15 @@ test('fundStatus: a bill saved monthly spreads what is needed over the calendar 
   assert.deepEqual([yearly.nextDue, yearly.periodsLeft, yearly.target], ['2027-01-20', 3, 3000]);
 });
 
-test('setAsidePeriod: Monday-to-Sunday for a weekly bill, the calendar month for a monthly one', () => {
-  assert.deepEqual(setAsidePeriod({ set_aside_every: 'weekly' }, '2026-11-09'), { start: '2026-11-09', end: '2026-11-15' });
-  assert.deepEqual(setAsidePeriod({}, '2026-11-15'), { start: '2026-11-09', end: '2026-11-15' });
+// The week is the pay week on every screen: Sunday to Saturday (wages are paid on Saturday).
+test('setAsidePeriod: the Sunday-to-Saturday pay week for a weekly bill, the calendar month for a monthly one', () => {
+  assert.deepEqual(setAsidePeriod({ set_aside_every: 'weekly' }, '2026-11-09'), { start: '2026-11-08', end: '2026-11-14' });
+  assert.deepEqual(setAsidePeriod({}, '2026-11-08'), { start: '2026-11-08', end: '2026-11-14' }, 'Sunday starts the week');
+  assert.deepEqual(setAsidePeriod({}, '2026-11-14'), { start: '2026-11-08', end: '2026-11-14' }, 'Saturday ends it');
+  assert.deepEqual(setAsidePeriod({}, '2026-11-15'), { start: '2026-11-15', end: '2026-11-21' });
+  // The same seven days as a week of Analytics.
+  const [week] = require('../lib/calc').periodBuckets('week', '2026-11-14', 1);
+  assert.deepEqual([week.start, week.end], ['2026-11-08', '2026-11-14']);
   assert.deepEqual(setAsidePeriod({ set_aside_every: 'monthly' }, '2027-02-10'), { start: '2027-02-01', end: '2027-02-28' });
 });
 

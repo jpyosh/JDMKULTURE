@@ -522,11 +522,19 @@ function payoutModal() {
     </div>
     <div class="modal-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="button" data-confirm>Record payout</button></div>`,
   card => $('[data-confirm]', card).addEventListener('click', e => busy(e.currentTarget, async () => {
-    await api('POST', '/payroll/payouts', {
+    const body = {
       payout_date: $('[data-payout-date]', card).value, period_start: range.start, period_end: range.end,
       side: $('[data-payout-side]', card).value, amount: Number($('[data-payout-amount]', card).value || 0),
       note: $('[data-payout-note]', card).value.trim(),
-    });
+    };
+    // The same payout twice would take the wages out of the drawer twice: ask first (the server refuses it otherwise).
+    const same = data.payouts.find(p => p.payout_date === body.payout_date && p.period_start === body.period_start
+      && p.period_end === body.period_end && p.side === body.side && Number(p.amount) === body.amount);
+    if (same) {
+      if (!window.confirm(`A ${body.side === 'cash' ? 'Cash' : 'GCash'} payout of ${peso(body.amount)} for these days is already recorded on ${body.payout_date}.\n\nRecord it again as a second payout?`)) return;
+      body.confirm_duplicate = true;
+    }
+    await api('POST', '/payroll/payouts', body);
     closeModal();
     toast('Payout recorded');
     await reload();

@@ -7,6 +7,9 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('playwright-core');
 const { start } = require('./sandbox');
+// Several steps work on days in 2027 so they have a day to themselves. The server refuses dates after today
+// (lib/clock.js, covered by test/api.test.js), so for this run today is pinned after them.
+require('../lib/clock').setShopToday('2099-12-31');
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';
@@ -74,7 +77,14 @@ async function launch() {
   const problems = [];
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-  page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'Smoke test void' : undefined));
+  // Every dialog is accepted, except the next one after declineNext() (its text is kept in lastDeclined).
+  let declining = false;
+  let lastDeclined = '';
+  const declineNext = () => { declining = true; lastDeclined = ''; };
+  page.on('dialog', d => {
+    if (declining) { declining = false; lastDeclined = d.message(); return d.dismiss(); }
+    return d.accept(d.type() === 'prompt' ? 'Smoke test void' : undefined);
+  });
 
   const shot = async name => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true }); } };
   // Waits until the toast shows a message matching re (earlier toasts may still be visible).
@@ -269,10 +279,76 @@ async function launch() {
     });
 
     const newRow = daily.locator('tr', { hasText: 'CW-091426-001' });
-    await step('inline paid toggle updates totals', async () => {
+    const shopToday = () => page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
+    const asOwner = path => page.evaluate(p => fetch(`/api${p}`, { headers: { Authorization: 'Bearer owner@sandbox' } }).then(r => r.json()), path);
+    const carwashDate = async date => {
+      await daily.locator('[data-date]').fill(date);
+      await daily.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(d => document.querySelector('#view-carwash [data-jobs]').dataset.forDay === d, date);
+    };
+    await step('inline paid toggle on an earlier day asks when it was paid, then updates totals', async () => {
       await newRow.locator('[data-inline="payment_received"]').check();
-      await expectToast(/Saved/);
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      assert.equal(await page.inputValue('#modal [data-pay-date]'), await shopToday(), 'the money usually came in today');
+      await page.fill('#modal [data-pay-date]', DAY); // paid on the day of the job after all
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/);
       await page.waitForFunction(() => /Collected\s*₱[\d,]+/.test(document.querySelector('#view-carwash [data-metrics]').textContent));
+      assert.ok(await newRow.locator('[data-inline="payment_received"]').isChecked());
+      assert.equal(await newRow.locator('[data-paid-on]').count(), 0, 'paid on its own day: nothing more to say');
+    });
+
+    await step('carwash: credit paid on a later day goes in that day\'s drawer, from the row or the edit form', async () => {
+      const [JOB_DAY, PAY_DAY, PAY_DAY_2] = ['2026-07-01', '2026-07-03', '2026-07-04']; // days with nothing else on them
+      await carwashDate(JOB_DAY);
+      const addCredit = async plate => {
+        const editor = daily.locator('[data-editor]');
+        await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+        await editor.locator('[data-f="plate"]').fill(plate);
+        await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+        await daily.locator('[data-review]').click();
+        await page.click('#modal [data-confirm]');
+        await expectToast(/added/);
+        await daily.locator('tr', { hasText: plate }).waitFor();
+      };
+      await addCredit('CREDIT1');
+      await addCredit('CREDIT2');
+      const row1 = daily.locator('tr', { hasText: 'CREDIT1' });
+      const row2 = daily.locator('tr', { hasText: 'CREDIT2' });
+
+      // From the row: cancelling leaves it unpaid; confirming records the day and how it was paid.
+      await row1.locator('[data-inline="payment_received"]').check();
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      await page.click('#modal [data-close]');
+      await page.waitForFunction(() => !document.querySelector('#modal').open);
+      assert.equal(await row1.locator('[data-inline="payment_received"]').isChecked(), false, 'cancelled: still unpaid');
+      await row1.locator('[data-inline="payment_received"]').check();
+      await page.waitForSelector('#modal[open] [data-pay-date]');
+      await page.fill('#modal [data-pay-date]', PAY_DAY);
+      await page.selectOption('#modal [data-pay-method]', 'GCash');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/payment recorded/);
+      await row1.locator('[data-paid-on]').waitFor();
+      assert.match(await row1.locator('[data-paid-on]').textContent(), /07-03/);
+      const total = (await asOwner(`/jobs?date=${JOB_DAY}&department=carwash`)).find(j => j.plate === 'CREDIT1').totals.total;
+      const payDay = (await asOwner(`/days/${PAY_DAY}`)).summary;
+      assert.deepEqual([payDay.gcashReceived, payDay.earlierSalesPaid, payDay.vehicles], [total, total, 0], 'the money is in the day it was paid');
+      assert.equal((await asOwner(`/days/${JOB_DAY}`)).summary.gcashReceived, 0, 'not in the day of the job');
+
+      // From the edit form: ticking Customer paid on an earlier day's job asks for the payment date too.
+      await row2.locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-edit-editor] .line-row');
+      assert.ok(await page.locator('#modal [data-paid-on-cell]').isHidden(), 'no date until it is ticked paid');
+      await page.check('#modal [data-f="payment_received"]');
+      assert.equal(await page.inputValue('#modal [data-paid-on]'), await shopToday());
+      await page.fill('#modal [data-paid-on]', PAY_DAY_2);
+      await page.click('#modal [data-save]');
+      await expectToast(/saved/);
+      await row2.locator('[data-paid-on]').waitFor();
+      assert.match(await row2.locator('[data-paid-on]').textContent(), /07-04/);
+      assert.equal((await asOwner(`/days/${PAY_DAY_2}`)).summary.cashReceived, total);
+      await carwashDate(DAY);
+      await newRow.waitFor();
     });
 
     await step('edit job: change class re-prices catalog lines', async () => {
@@ -305,6 +381,29 @@ async function launch() {
     });
 
     const detailing = page.locator('#view-detailing');
+    await step('a half-entered job is still there after looking at another tab', async () => {
+      for (const [tab, away] of [['carwash', 'pricing'], ['detailing', 'eod']]) {
+        await page.click(`#nav [data-view="${tab}"]`);
+        const editor = page.locator(`#view-${tab} [data-editor]`);
+        await editor.locator('[data-f="plate"]').fill('HALF 123');
+        await editor.locator('[data-f="vehicle_class"]').selectOption('M');
+        await editor.locator('[data-add="addon"]').selectOption({ label: 'Engine Wash' });
+        await page.click(`#nav [data-view="${away}"]`);
+        await page.waitForSelector(`#view-${away}.active`);
+        await page.click(`#nav [data-view="${tab}"]`);
+        await page.waitForSelector(`#view-${tab}.active`);
+        await page.waitForLoadState('networkidle');
+        assert.equal(await editor.locator('[data-f="plate"]').inputValue(), 'HALF 123', `${tab}: the plate typed is still there`);
+        assert.equal(await editor.locator('[data-f="vehicle_class"]').inputValue(), 'M');
+        assert.equal(await editor.locator('.line-row').count(), 1, `${tab}: and so is the item added`);
+        // Clear empties it, and an empty form is rebuilt on the next visit (new prices and stock).
+        await page.click(`#view-${tab} [data-clear]`);
+        assert.equal(await editor.locator('[data-f="plate"]').inputValue(), '');
+        assert.equal(await editor.locator('.line-row').count(), 0);
+      }
+      await page.click('#nav [data-view="carwash"]');
+    });
+
     await step('detailing: running job is carried over, paid, then done', async () => {
       await page.click('#nav [data-view="detailing"]');
       const editor = detailing.locator('[data-editor]');
@@ -449,10 +548,16 @@ async function launch() {
       await eod.locator('[data-date]').fill(DAY);
       await eod.locator('[data-date]').dispatchEvent('change');
       await page.waitForFunction(() => /Vehicles\s*20/.test(document.querySelector('#view-eod [data-metrics]').textContent));
+      // Numbers typed but not saved yet stay on screen while an expense is added.
+      const typed = async () => [await eod.locator('[data-m="cash_float"]').inputValue(), await eod.locator('[data-m="actual_cash"]').inputValue()];
+      await eod.locator('[data-m="cash_float"]').fill('777');
+      await eod.locator('[data-m="actual_cash"]').fill('4321');
       await eod.locator('[data-e="description"]').fill('Soap');
       await eod.locator('[data-e="amount"]').fill('120');
       await eod.locator('[data-add-expense]').click();
       await expectToast(/Expense added/);
+      assert.deepEqual(await typed(), ['777', '4321'], 'adding an expense keeps the float and count typed in');
+      assert.match(await eod.locator('[data-cash]').textContent(), /Cash float\s*₱777\.00/, 'and the drawer math still uses them');
       // Bill envelopes: plain steps, one button per bill with this week's amount filled in.
       const envelopes = eod.locator('[data-envelopes]');
       assert.match(await envelopes.textContent(), /no amount yet/i, 'bills without an amount are explained, not shown as rows');
@@ -471,6 +576,15 @@ async function launch() {
       await page.waitForFunction(() => /Done for this week/i.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
       const cashBox = await eod.locator('[data-cash]').textContent();
       assert.ok(/Put aside for bills/.test(cashBox) && cashBox.includes(target), `drawer shows the ${target} put aside`);
+      assert.deepEqual(await typed(), ['777', '4321'], 'putting money aside keeps them too');
+      // They were never saved, so leaving the day drops them: another day never shows this day's typing.
+      await eod.locator('[data-shift="1"]').click();
+      await page.waitForFunction(() => !/Soap/.test(document.querySelector('#view-eod [data-expenses]').textContent)); // the next day is up
+      assert.deepEqual(await typed(), ['0', '']);
+      await eod.locator('[data-shift="-1"]').click();
+      await page.waitForFunction(() => /Soap/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      assert.deepEqual(await typed(), ['0', '']);
+      await meralcoRow.waitFor();
       // Undo, then put a different amount aside (the "Other amount" path).
       await meralcoRow.locator('[data-del-sa]').click();
       await expectToast(/removed|undone/i);
@@ -1211,7 +1325,18 @@ async function launch() {
       for (const h of ['Cash received', 'GCash received', 'Unpaid', 'Carwash', 'Detailing', 'Tint & PPF', 'Total sales', 'Profit']) {
         assert.ok(headers.includes(h), `missing column ${h} in ${JSON.stringify(headers)}`);
       }
-      assert.match(await page.locator('#view-reports [data-help]').textContent(), /How to read/);
+      const help = await page.locator('#view-reports [data-help]').textContent();
+      assert.match(help, /How to read/);
+      // Profit is worked out as in Finance, and the guide describes today's rules.
+      assert.ok(headers.includes('Parts cost'), 'the cost of parts sold has its own column');
+      assert.match(await page.locator('#view-reports .view-header .desc').textContent(), /Cost of parts sold/);
+      assert.doesNotMatch(help, /both done and paid/, 'running jobs are booked on the day they are finished');
+      assert.match(help, /day (it is|they are) finished/);
+      assert.match(help, /Finance/);
+      // September 14 was closed at EOD; the other days are listed and marked as still open.
+      assert.equal(await page.locator('#view-reports tbody tr', { hasText: '2026-09-14' }).locator('[data-open-day]').count(), 0);
+      assert.ok(await page.locator('#view-reports tbody [data-open-day]').count() > 0, 'days not closed yet are marked');
+      assert.match(await page.locator('#view-reports [data-open-days]').textContent(), /still open/);
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');
@@ -1294,6 +1419,23 @@ async function launch() {
     await step('finance: month in/out, funds, pay a bill', async () => {
       await page.click('#nav [data-view="finance"]');
       const fin = page.locator('#view-finance');
+      // "This week" is the pay week on every screen: Sunday to Saturday, as in Payroll.
+      const payWeek = await page.evaluate(() => {
+        const d = new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+        const start = d.toISOString().slice(0, 10);
+        d.setUTCDate(d.getUTCDate() + 6);
+        return { start, end: d.toISOString().slice(0, 10), lastStart: new Date(Date.parse(start) - 7 * 86400000).toISOString().slice(0, 10), lastEnd: new Date(Date.parse(start) - 86400000).toISOString().slice(0, 10) };
+      });
+      await fin.locator('[data-preset="this-week"]').click();
+      await page.waitForFunction(s => document.querySelector('#view-finance [data-start]').value === s, payWeek.start);
+      assert.equal(await fin.locator('[data-end]').inputValue(), payWeek.end, 'Finance: This week ends on Saturday');
+      await page.click('#nav [data-view="reports"]');
+      await page.click('#view-reports [data-preset="last-week"]');
+      assert.deepEqual([await page.inputValue('#view-reports [data-start]'), await page.inputValue('#view-reports [data-end]')], [payWeek.lastStart, payWeek.lastEnd], 'Sales Reports: Last week is Sunday to Saturday');
+      await page.click('#view-reports [data-preset="this-week"]');
+      assert.equal(await page.inputValue('#view-reports [data-start]'), payWeek.start, 'Sales Reports: This week starts on Sunday');
+      await page.click('#nav [data-view="finance"]');
       await fin.locator('[data-start]').fill('2026-09-01');
       await fin.locator('[data-end]').fill('2026-09-30');
       await fin.locator('[data-end]').dispatchEvent('change');
@@ -1834,7 +1976,16 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Payout recorded/);
       await payroll.locator('[data-payouts] .row-line').first().waitFor();
-      const paidOut = Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
+      // The same payout entered again is asked about first; saying no records nothing.
+      await payroll.locator('[data-payout]').click();
+      await page.fill('#modal [data-payout-date]', '2026-09-20');
+      declineNext();
+      await page.click('#modal [data-confirm]');
+      await page.waitForFunction(() => !document.querySelector('#modal [data-confirm]').disabled);
+      assert.match(lastDeclined, /already recorded/);
+      await page.click('#modal [data-close]');
+      assert.equal(await payroll.locator('[data-payouts] .row-line').count(), 1, 'still one payout');
+      const paidOut =Number((await payroll.locator('[data-total]').textContent()).replace(/[₱,]/g, ''));
       // Names stay visible while the table is scrolled sideways.
       const nameVisible = await page.evaluate(() => {
         const wrap = document.querySelector('#view-payroll .table-wrap');
@@ -1882,6 +2033,49 @@ async function launch() {
       await page.waitForFunction(() => !document.querySelector('#modal').open);
       return name;
     };
+
+    await step('Enter in a box does what the button next to it does', async () => {
+      const ENTER_DAY = '2026-06-15'; // nothing else on it
+      // EOD: an expense, then the setup boxes.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill(ENTER_DAY);
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /No expenses recorded/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      await eod.locator('[data-e="description"]').fill('Rags');
+      await eod.locator('[data-e="amount"]').fill('45');
+      await eod.locator('[data-e="amount"]').press('Enter');
+      await expectToast(/Expense added/);
+      assert.equal(await eod.locator('[data-expenses] .row-line').count(), 1);
+      await eod.locator('[data-m="cash_float"]').fill('500');
+      await eod.locator('[data-m="cash_float"]').press('Enter');
+      await expectToast(/EOD saved/);
+      // A new job: Enter opens the review, where nothing is saved until Add job.
+      await page.click('#nav [data-view="carwash"]');
+      await carwashDate(ENTER_DAY);
+      const editor = daily.locator('[data-editor]');
+      await editor.locator('[data-f="vehicle_class"]').selectOption('S');
+      await editor.locator('[data-add="service"]').selectOption({ label: 'Premium Wash' });
+      await editor.locator('[data-f="plate"]').fill('ENTER 1');
+      await editor.locator('[data-f="plate"]').press('Enter');
+      await page.waitForSelector('#modal[open] [data-confirm]');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/added/);
+      // In a pop-up form, Enter presses its main button.
+      await daily.locator('tr', { hasText: 'ENTER 1' }).locator('[data-act="edit"]').click();
+      await page.waitForSelector('#modal[open] [data-edit-editor] .line-row');
+      await page.fill('#modal [data-f="remarks"]', 'Saved with Enter');
+      await page.press('#modal [data-f="remarks"]', 'Enter');
+      await expectToast(/saved/);
+      await page.waitForFunction(() => !document.querySelector('#modal').open);
+      // A small inline form (Settings → add a user).
+      await page.click('#nav [data-view="settings"]');
+      await page.fill('#view-settings [data-u="email"]', 'enter@sandbox.test');
+      await page.press('#view-settings [data-u="email"]', 'Enter');
+      await expectToast(/User added/);
+      await page.locator('#view-settings [data-users] tr', { hasText: 'enter@sandbox.test' }).waitFor();
+      await page.click('#nav [data-view="carwash"]');
+      await carwashDate(DAY);
+    });
 
     await step('themes: Classic, Telemetry and Editorial, each with its own look and motion, remembered per device', async () => {
       await page.click('#nav [data-view="carwash"]');
