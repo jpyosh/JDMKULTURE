@@ -1516,8 +1516,8 @@ test('analytics: every period matches Finance, is owner-only and flags days with
   assert.equal(week.date, AS_OF);
   assert.equal(week.periods.length, 8);
   const [before, now] = week.periods.slice(-2);
-  assert.deepEqual([before.label, before.start, before.end, before.partial], ['Mar 4–10', '2029-03-04', '2029-03-10', false]);
-  assert.deepEqual([now.label, now.start, now.end, now.partial], ['Mar 11–17', '2029-03-11', '2029-03-14', true]);
+  assert.deepEqual([before.label, before.start, before.end, before.partial], ['Mar 5–11', '2029-03-05', '2029-03-11', false]);
+  assert.deepEqual([now.label, now.start, now.end, now.partial], ['Mar 12–18', '2029-03-12', '2029-03-14', true]);
   assert.equal(before.cars, 3);
   assert.equal(before.salesDays, 2);
   assert.equal(now.cars, 2, 'cars counts the unpaid job, like the sales report');
@@ -1573,7 +1573,7 @@ test('analytics services: each service by period, adding up to Finance, rising o
   const { periods, services } = await ok(api(OWNER, 'GET', `/analytics?grain=week&date=${AS_OF}`));
   const [before, now] = [periods.length - 2, periods.length - 1];
   const named = name => services.items.find(s => s.name === name);
-  assert.deepEqual(services.compare, { now: 'Mar 9–15', before: 'Mar 2–8' });
+  assert.deepEqual(services.compare, { now: 'Mar 10–16', before: 'Mar 3–9' });
   assert.ok(!named('Scratch removal'), 'custom lines are not trended');
   assert.ok(!named('Trend Bulb') && !named('Labor'), 'parts and labor are not services');
   assert.equal(named('Bac 2 Zero').kind, 'addon');

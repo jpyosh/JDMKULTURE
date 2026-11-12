@@ -1,10 +1,10 @@
 // Payroll for any date range: attendance per day, overtime per day, dated adjustments, and the
 // payout that leaves the drawer (shown in that day's EOD).
-import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, mondayOf, weekday, prettyDate, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
-// Pay weeks run Sunday to Saturday.
-let range = { start: sundayOf(todayLocal()), end: addDays(sundayOf(todayLocal()), 6) };
+// Weeks run Monday to Sunday, as on Finance, Sales Reports, Analytics and the bill envelopes.
+let range = { start: mondayOf(todayLocal()), end: addDays(mondayOf(todayLocal()), 6) };
 let data = null;
 // The rate in effect on a date (same rule as rateOn in lib/calc.js): the latest change on or before it.
 const rateOn = (rates, date) => rates.filter(r => r.effective_from <= date).at(-1) || { rate_per_day: 0, construction_rate: 0 };
@@ -24,13 +24,13 @@ function lastDayOfMonth(date) {
 
 function presets() {
   const today = todayLocal();
-  const sunday = sundayOf(today);
+  const monday = mondayOf(today);
   const month = today.slice(0, 8);
   return {
-    'this-week': [sunday, addDays(sunday, 6)],
-    'last-week': [addDays(sunday, -7), addDays(sunday, -1)],
-    // The Sunday–Saturday week after the range on screen (also after a half week).
-    'next-week': (() => { const next = addDays(range.end, 7 - new Date(`${range.end}T00:00:00Z`).getUTCDay()); return [next, addDays(next, 6)]; })(),
+    'this-week': [monday, addDays(monday, 6)],
+    'last-week': [addDays(monday, -7), addDays(monday, -1)],
+    // The Monday–Sunday week after the range on screen (also after a half week).
+    'next-week': (() => { const next = addDays(range.end, ((8 - new Date(`${range.end}T00:00:00Z`).getUTCDay()) % 7) || 7); return [next, addDays(next, 6)]; })(),
     'first-half': [`${month}01`, `${month}15`],
     'second-half': [`${month}16`, lastDayOfMonth(today)],
   };
@@ -274,17 +274,17 @@ function setChoice(card, name, value) {
 
 // When a change starts: this pay week (the default), next pay week, or another date.
 function startsChoice() {
-  const sunday = sundayOf(todayLocal());
+  const monday = mondayOf(todayLocal());
   return `<fieldset class="choice-group"><legend>Starts</legend>
-    <label><input type="radio" name="starts" value="this" checked> This pay week (${esc(prettyDate(sunday))})</label>
-    <label><input type="radio" name="starts" value="next"> Next pay week (${esc(prettyDate(addDays(sunday, 7)))})</label>
+    <label><input type="radio" name="starts" value="this" checked> This pay week (${esc(prettyDate(monday))})</label>
+    <label><input type="radio" name="starts" value="next"> Next pay week (${esc(prettyDate(addDays(monday, 7)))})</label>
     <label><input type="radio" name="starts" value="date"> Another date <input type="date" class="choice-other" data-starts-date aria-label="Start date"></label>
   </fieldset>`;
 }
 function startsValue(card) {
-  const sunday = sundayOf(todayLocal());
+  const monday = mondayOf(todayLocal());
   const v = $('input[name="starts"]:checked', card)?.value;
-  return v === 'this' ? sunday : v === 'next' ? addDays(sunday, 7) : $('[data-starts-date]', card).value;
+  return v === 'this' ? monday : v === 'next' ? addDays(monday, 7) : $('[data-starts-date]', card).value;
 }
 
 // Starts with placeholder lines the size of the usual answer, so Save does not jump when it arrives.
@@ -362,7 +362,7 @@ const otPayWords = m => (Number(m) === 1 ? 'Normal hourly rate' : Number(m) === 
 
 function employeeModal(row = null) {
   const e = row?.employee;
-  const shopNow = ruleOn(sundayOf(todayLocal()));
+  const shopNow = ruleOn(mondayOf(todayLocal()));
   const mult = e?.ot_multiplier;
   openModal(`<div data-ot-form>${modalHeader(e ? `Edit ${e.name}` : 'Add employee', e ? 'Changes start on the date you choose below; earlier days keep what they had.' : 'Re-adding a former employee brings their record back.', 'Team')}
     <div class="form-grid modal-form-grid">
@@ -389,7 +389,7 @@ function employeeModal(row = null) {
       carwash_hours: choiceValue(card, 'work-day', 1, 24), ot_multiplier: choiceValue(card, 'emp-ot', 1, 3) });
     const describe = r => `${peso(r.rate_per_day)} / ${peso(r.construction_rate)}${ownOt(r)}`;
     // A change is measured against what is in effect on its start date, not today: a raise first saved
-    // from today can then be moved back to Sunday with the same amount.
+    // from today can then be moved back to Monday with the same amount.
     const before = () => rateOn(row.rates, startsValue(card));
     const changesRate = () => {
       const b = before();
@@ -410,7 +410,7 @@ function employeeModal(row = null) {
       $('[data-rate-note]', card).textContent = !from ? 'Pick the date the change starts.'
         : !changesRate() ? `No change: from ${prettyDate(from)} it is already ${describe(before())}.`
           : `From ${prettyDate(from)} on: ${describe(before())} → ${describe(next())}. `
-            + (from < sundayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep what they had.');
+            + (from < mondayOf(todayLocal()) ? 'This also changes pay for days before this week.' : 'Earlier days keep what they had.');
     };
     if (e) {
       card.addEventListener('input', showNote);
@@ -441,7 +441,7 @@ function employeeModal(row = null) {
 function otSettingsModal() {
   const rules = data.otRules;
   const first = rules[0]?.effective_from;
-  const now = ruleOn(sundayOf(todayLocal()));
+  const now = ruleOn(mondayOf(todayLocal()));
   const extra = m => (![1, 1.25].includes(Number(m)) ? { min: 1, max: 3, step: 0.05, unit: '× hourly' } : null);
   openModal(`<div data-ot-form>${modalHeader('Overtime settings', 'How overtime is paid for everyone. Someone with a different work day (e.g. the GM on 8 hours) is set with Edit next to their name.', 'Payroll')}
     ${choiceGroup('cw-hours', 'Carwash work day', [{ value: '8', label: '8 hours' }, { value: '11', label: '11 hours' }], Number(now.carwash_hours),

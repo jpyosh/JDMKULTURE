@@ -17,6 +17,7 @@ export function addDays(date, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+// Weeks run Monday to Sunday on every screen (Payroll, Finance, Sales Reports, Analytics, bill envelopes).
 export function mondayOf(date) {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return addDays(date, day === 0 ? -6 : 1 - day);
@@ -46,10 +47,6 @@ export function startClock(el) {
   tick();
 }
 
-// The shop's pay week runs Sunday to Saturday.
-export function sundayOf(date) {
-  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
-}
 export const weekday = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'short', timeZone: 'UTC' });
 export const prettyDate = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 export const prettyTime = ts => new Date(ts).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

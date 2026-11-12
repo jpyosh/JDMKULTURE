@@ -1,4 +1,4 @@
-// The app's own calendar for every <input type="date">: dark, Sunday-first (the shop's pay week),
+// The app's own calendar for every <input type="date">: dark, Sunday-first (weeks themselves run Monday to Sunday),
 // with Today, month arrows and full keyboard support. The input stays a real date input, so typing a
 // date still works and every view keeps listening to its usual 'change' event.
 import { todayLocal, addDays } from '../ui.js';

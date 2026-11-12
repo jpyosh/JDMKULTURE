@@ -515,14 +515,11 @@ const PERIOD_COUNTS = { day: 14, week: 8, month: 6, quarter: 4 };
 const SHORT_MONTHS = FULL_MONTHS.map(m => m.slice(0, 3));
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function sundayOf(date) {
-  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
-}
-
-// The whole period around `date`. Weeks are the Sunday-to-Saturday pay weeks; quarters are calendar quarters.
+// The whole period around `date`. Weeks run Monday to Sunday on every screen (Payroll, Finance, Sales Reports,
+// Analytics, bill envelopes); quarters are calendar quarters.
 function periodAround(grain, date) {
   if (grain === 'day') return { start: date, end: date };
-  if (grain === 'week') return { start: sundayOf(date), end: addDays(sundayOf(date), 6) };
+  if (grain === 'week') return { start: mondayOf(date), end: addDays(mondayOf(date), 6) };
   const [y, m] = date.split('-').map(Number);
   const first = grain === 'month' ? m : Math.floor((m - 1) / 3) * 3 + 1;
   const last = grain === 'month' ? m : first + 2;

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost, periodBuckets, pctChange, serviceTrends } = require('../lib/calc');
+const { saleDate, daySummary, jobTotals, tipsOwed, TIPS_TRACKED_FROM, salesReport, DEPARTMENTS, replayAvgCost, periodBuckets, pctChange, serviceTrends, setAsidePeriod } = require('../lib/calc');
 
 // Builds a job with totals the way lib/store.js does.
 function job(fields) {
@@ -326,7 +326,8 @@ test('average cost replayed from a delivery: weighted by what is on the shelf at
   assert.equal(replayAvgCost(7, 500, moves.slice(2, 3)).avg, 666.67, 'starts from the stock and average before the first change');
 });
 
-// Analytics periods: weeks are the Sunday-to-Saturday pay weeks, quarters are calendar quarters, and the
+// Analytics periods: weeks run Monday to Sunday, like every other screen (Finance, Sales Reports, Payroll, bill
+// envelopes); quarters are calendar quarters, and the
 // period still running stops at the chosen day so it is never padded with days that have not happened.
 test('periodBuckets: day, week, month and quarter, oldest first, the running one cut at the date', () => {
   const pick = list => list.map(p => [p.label, p.start, p.end, p.partial]);
@@ -335,11 +336,14 @@ test('periodBuckets: day, week, month and quarter, oldest first, the running one
     ['Thu, Nov 5', '2026-11-05', '2026-11-05', false],
   ]);
   assert.deepEqual(pick(periodBuckets('week', '2026-11-05', 2)), [
-    ['Oct 25–31', '2026-10-25', '2026-10-31', false],
-    ['Nov 1–7', '2026-11-01', '2026-11-05', true],
+    ['Oct 26–Nov 1', '2026-10-26', '2026-11-01', false],
+    ['Nov 2–8', '2026-11-02', '2026-11-05', true],
   ]);
-  assert.deepEqual(pick(periodBuckets('week', '2026-11-07', 1)), [['Nov 1–7', '2026-11-01', '2026-11-07', false]]);
-  assert.deepEqual(pick(periodBuckets('week', '2027-01-02', 1)), [['Dec 27–Jan 2', '2026-12-27', '2027-01-02', false]]);
+  assert.deepEqual(pick(periodBuckets('week', '2026-11-08', 1)), [['Nov 2–8', '2026-11-02', '2026-11-08', false]], 'Sunday ends the week');
+  assert.deepEqual(pick(periodBuckets('week', '2026-11-09', 1)), [['Nov 9–15', '2026-11-09', '2026-11-09', true]], 'Monday starts the next');
+  assert.deepEqual(pick(periodBuckets('week', '2027-01-02', 1)), [['Dec 28–Jan 3', '2026-12-28', '2027-01-02', true]]);
+  // The same week as a weekly bill envelope.
+  assert.deepEqual(setAsidePeriod({ set_aside_every: 'weekly' }, '2026-11-05'), { start: '2026-11-02', end: '2026-11-08' });
   assert.deepEqual(pick(periodBuckets('month', '2027-01-15', 2)), [
     ['Dec 2026', '2026-12-01', '2026-12-31', false],
     ['Jan 2027', '2027-01-01', '2027-01-15', true],
