@@ -1358,7 +1358,6 @@ async function launch() {
       await view.locator('[data-date]').fill('2026-09-30');
       await view.locator('[data-date]').dispatchEvent('change');
       assert.deepEqual((await view.locator('[data-grain]').allTextContents()).map(t => t.trim()), ['Daily', 'Weekly', 'Monthly', 'Quarterly']);
-      assert.match(await view.textContent(), /weeks run Monday to Sunday/i, 'the guide names the week every screen uses');
       for (const [grain, rows] of [['day', 14], ['week', 8], ['month', 6], ['quarter', 4]]) {
         await view.locator(`[data-grain="${grain}"]`).click();
         await page.waitForFunction(([g, n]) => {
@@ -1591,33 +1590,27 @@ async function launch() {
 
     await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');
-      // Weeks run Monday to Sunday on every screen: Payroll opens on this week, and "This week" / "Last week" follow it.
+      // The shop's pay week runs Sunday to Saturday: Payroll opens on it, and "This week" / "Last week" follow it.
       await payroll.locator('thead .attendance-day').first().waitFor();
-      const isMonToSun = heads => heads.length === 7 && heads[0].startsWith('Mon') && heads[6].startsWith('Sun');
+      const isSunToSat = heads => heads.length === 7 && heads[0].startsWith('Sun') && heads[6].startsWith('Sat');
       const opened = await dayHeads();
-      assert.ok(isMonToSun(opened), `payroll opens on a Monday–Sunday week (got ${opened[0]} … ${opened.at(-1)})`);
+      assert.ok(isSunToSat(opened), `payroll opens on a Sunday–Saturday week (got ${opened[0]} … ${opened.at(-1)})`);
       await payroll.locator('[data-preset="last-week"]').click();
       await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') !== first, opened[0]);
-      assert.ok(isMonToSun(await dayHeads()), 'Last week is Monday–Sunday');
+      assert.ok(isSunToSat(await dayHeads()), 'Last week is Sunday–Saturday');
       await payroll.locator('[data-preset="this-week"]').click();
       await page.waitForFunction(first => document.querySelector('#view-payroll thead .attendance-day')?.textContent.replace(/\s+/g, '') === first, opened[0]);
       assert.deepEqual(await dayHeads(), opened, 'This week is the week Payroll opened on');
-      // Next week: the Monday–Sunday week after the range shown, even from a half week.
-      await setPayrollRange('2026-09-28', '2026-10-04');
+      // Next week: the Sunday–Saturday week after the range shown, even from a half week.
+      await setPayrollRange('2026-09-27', '2026-10-03');
       await payroll.locator('[data-preset="next-week"]').click();
       // The date boxes change before the table has loaded, so wait for the table itself.
-      await page.waitForFunction(() => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === '2026-10-05');
-      assert.deepEqual(await dayHeads(), ['Mon10-05', 'Tue10-06', 'Wed10-07', 'Thu10-08', 'Fri10-09', 'Sat10-10', 'Sun10-11']);
-      await setPayrollRange('2026-10-05', '2026-10-07');
+      await page.waitForFunction(() => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === '2026-10-04');
+      assert.deepEqual(await dayHeads(), ['Sun10-04', 'Mon10-05', 'Tue10-06', 'Wed10-07', 'Thu10-08', 'Fri10-09', 'Sat10-10']);
+      await setPayrollRange('2026-10-04', '2026-10-07');
       await payroll.locator('[data-preset="next-week"]').click();
-      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-12');
-      assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-18');
-      // The other weekly screens agree: Finance's This week is the same Monday to Sunday.
-      const thisMonday = await page.evaluate(() => { const d = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); });
-      await payroll.locator('[data-preset="this-week"]').click();
-      await page.waitForFunction(d => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === d, thisMonday);
-      assert.equal(await payroll.locator('[data-start]').inputValue(), thisMonday);
-      await setPayrollRange('2026-10-12', '2026-10-18');
+      await page.waitForFunction(() => document.querySelector('#view-payroll [data-start]').value === '2026-10-11');
+      assert.equal(await payroll.locator('[data-end]').inputValue(), '2026-10-17');
 
       // The calendar highlights the whole range From → To, and previews a new range on hover.
       const dp = page.locator('.datepicker');
@@ -1628,13 +1621,13 @@ async function launch() {
       });
       await payroll.locator('[data-end]').click();
       await dp.waitFor();
-      assert.deepEqual(await rangeDays(), { start: '12', end: '18', inRange: 7 });
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 });
       await dp.locator('.dp-day:not(.dp-outside)', { hasText: /^20$/ }).hover();
-      assert.deepEqual(await rangeDays(), { start: '12', end: '20', inRange: 9 }, 'hovering a day previews the new range');
+      assert.deepEqual(await rangeDays(), { start: '11', end: '20', inRange: 10 }, 'hovering a day previews the new range');
       await page.keyboard.press('Escape');
       await payroll.locator('[data-start]').click();
       await dp.waitFor();
-      assert.deepEqual(await rangeDays(), { start: '12', end: '18', inRange: 7 }, 'the From calendar shows the same range');
+      assert.deepEqual(await rangeDays(), { start: '11', end: '17', inRange: 7 }, 'the From calendar shows the same range');
       await page.waitForTimeout(300); // let the calendar finish fading in before the screenshot
       await shot('09c-payroll-range-calendar');
       await page.keyboard.press('Escape');
@@ -1754,8 +1747,9 @@ async function launch() {
       const modal = page.locator('#modal');
       const checked = name => modal.locator(`input[name="${name}"]:checked`).getAttribute('value');
       const today = await page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
-      const addDay = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-      const weekStart = addDay(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7)); // the Monday this week starts on
+      const sundayD = new Date(`${today}T00:00:00Z`);
+      sundayD.setUTCDate(sundayD.getUTCDate() - sundayD.getUTCDay());
+      const sunday = sundayD.toISOString().slice(0, 10);
       await setPayrollRange('2027-03-07', '2027-03-13');
       assert.equal(await note(), 'OT pays the carwash rate ÷ 11 (construction rate ÷ 8) × 1 per hour.');
 
@@ -1839,7 +1833,7 @@ async function launch() {
       await expectToast(/removed/);
       // Back to this week, so the next steps' ranges are never more than 62 days from the one shown.
       await payroll.locator('[data-preset="this-week"]').click();
-      await page.waitForFunction(s => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === s, weekStart);
+      await page.waitForFunction(s => document.querySelector('#view-payroll thead .attendance-day')?.dataset.date === s, sunday);
     });
 
     await step('payroll: sign-off sheet downloads as a PDF', async () => {
@@ -1862,18 +1856,18 @@ async function launch() {
 
     await step('payroll: a raise during the week pays the whole week, earlier weeks untouched', async () => {
       // Reported: Chesser (800/day) got 850 on Saturday; editing the rate did not change his payout for
-      // the week (it started today), and saving 850 again from the start of the week did nothing since 850 was "already" his rate.
+      // the week (it started today), and saving 850 again from Sunday did nothing since 850 was "already" his rate.
       const today = await page.evaluate(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
       const addD = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-      const weekStart = addD(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7)); // the Monday this pay week starts on
-      const lastWeekStart = addD(weekStart, -7);
+      const sunday = addD(today, -new Date(`${today}T00:00:00Z`).getUTCDay());
+      const lastSunday = addD(sunday, -7);
       const fmt = n => `₱${(Math.round(n * 100) / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      const otPay = rate => (weekStart >= '2026-10-05' ? rate / 11 : rate / 8) * 2; // 2h carwash OT on the first day of the week
+      const otPay = rate => (sunday >= '2026-10-05' ? rate / 11 : rate / 8) * 2; // 2h carwash OT on Sunday
       const netIs = want => page.waitForFunction(w => [...document.querySelectorAll('#view-payroll tbody tr[data-emp]')]
         .find(tr => tr.textContent.includes('Raise Tester'))?.querySelector('[data-net]').textContent.trim() === w, want, { timeout: 8000 })
         .catch(async () => assert.fail(`net ${await page.evaluate(() => [...document.querySelectorAll('#view-payroll tbody tr[data-emp]')]
           .find(tr => tr.textContent.includes('Raise Tester'))?.querySelector('[data-net]').textContent.trim())}, expected ${want}`));
-      await setPayrollRange(lastWeekStart, addD(weekStart, 6));
+      await setPayrollRange(lastSunday, addD(sunday, 6));
       await payroll.locator('[data-add-employee]').click();
       await page.fill('#modal [data-n="name"]', 'Raise Tester');
       await page.fill('#modal [data-n="rate_per_day"]', '800');
@@ -1882,14 +1876,14 @@ async function launch() {
       await expectToast(/Employee added/);
       const row = payroll.locator('tbody tr[data-emp]', { hasText: 'Raise Tester' });
       await row.waitFor();
-      // The last day of last week and every day of this week, with 2h OT on its first day.
-      for (const day of [addD(weekStart, -1), ...[0, 1, 2, 3, 4, 5, 6].map(i => addD(weekStart, i))]) {
+      // Last Saturday and every day of this week, with 2h OT on Sunday.
+      for (const day of [addD(sunday, -1), ...[0, 1, 2, 3, 4, 5, 6].map(i => addD(sunday, i))]) {
         const reloaded = page.waitForResponse(r => r.url().includes('/api/payroll?') && r.request().method() === 'GET');
         await row.locator(`[data-day="${day}"]`).selectOption('P');
         await reloaded;
       }
       await row.locator('[data-act="ot"]').click();
-      await page.fill(`#modal [data-cw="${weekStart}"]`, '2');
+      await page.fill(`#modal [data-cw="${sunday}"]`, '2');
       await page.click('#modal [data-confirm]');
       await expectToast(/Overtime saved/);
       await netIs(fmt(8 * 800 + otPay(800)));
@@ -1902,12 +1896,12 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Employee saved/);
       await page.waitForFunction(() => !document.querySelector('#modal[open]'));
-      // Edit again: the form starts the change at the Monday this pay week starts on, says what changes, and saves 850
-      // from that Monday even though 850 is already today's rate.
+      // Edit again: the form starts the change at this pay week's Sunday, says what changes, and saves 850
+      // from Sunday even though 850 is already today's rate.
       await row.locator('[data-act="edit"]').click();
       assert.equal(await page.locator('#modal input[name="starts"]:checked').getAttribute('value'), 'this', 'a rate change starts with this pay week by default');
       assert.match(await page.locator('#modal label', { has: page.locator('input[name="starts"][value="this"]') }).textContent(),
-        new RegExp(new Date(`${weekStart}T00:00:00Z`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' })));
+        new RegExp(new Date(`${sunday}T00:00:00Z`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'UTC' })));
       assert.equal(await page.inputValue('#modal [data-n="rate_per_day"]'), '850');
       assert.match(await page.textContent('#modal [data-rate-note]'), /800\.00.*850\.00/, 'the form says which rate changes from that date');
       await page.click('#modal [data-confirm]');
@@ -1915,7 +1909,7 @@ async function launch() {
       await netIs(fmt(800 + 7 * 850 + otPay(850))).catch(async () =>
         assert.fail(`net ${(await row.locator('[data-net]').textContent()).trim()}, expected ${fmt(800 + 7 * 850 + otPay(850))}`));
       // Days before this week keep the old rate.
-      await setPayrollRange(lastWeekStart, addD(weekStart, -1));
+      await setPayrollRange(lastSunday, addD(sunday, -1));
       assert.equal((await row.locator('[data-net]').textContent()).trim(), fmt(800), 'last week keeps the old rate');
       await row.locator('[data-act="deactivate"]').click();
       await expectToast(/removed/);

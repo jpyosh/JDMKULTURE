@@ -54,7 +54,7 @@ function mount(el) {
       <summary>How to read Analytics</summary>
       <ul>
         <li><b>Only closed days count</b>, the same as Finance. A day is added once it is closed in EOD Closing; days still open are named at the top.</li>
-        <li><b>Daily / Weekly / Monthly / Quarterly</b>: weeks run Monday to Sunday (as in Payroll, Finance and Sales Reports), quarters are calendar quarters (Q1 is January to March).</li>
+        <li><b>Daily / Weekly / Monthly / Quarterly</b>: weeks are the Sunday-to-Saturday pay weeks, quarters are calendar quarters (Q1 is January to March).</li>
         <li><b>Sales</b>: paid sales booked in the period, every department together. <b>Cars</b>: every job of the period, paid or not, as in the sales report.</li>
         <li><b>Per day</b>: sales ÷ days with sales. Use it to compare periods, because a period still running has fewer days. <b>Per car</b>: sales ÷ cars.</li>
         <li><b>Net profit</b>: sales − commission − parts cost − expenses − payroll − bills, the same as Finance. Bills count on the day they are paid, so one big bill can make a single day or week look bad.</li>

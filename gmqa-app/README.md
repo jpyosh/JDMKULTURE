@@ -90,10 +90,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   top-up that has been spent, cannot be removed until the bill payment or purchases are undone.
 - A line item's price and commission are **frozen when added**. Editing the Pricing Matrix never
   changes past jobs. Changing a job's vehicle class re-prices its catalog lines at today's prices.
-- Weeks run **Monday to Sunday** on every screen (Payroll, Finance, Sales Reports, Analytics, bill envelopes), so
-  "This week" is the same seven days everywhere. Payroll opens on this week; This week / Last week / Next week →
-  (the Mon–Sun week after the range shown, also after a half week) pick whole weeks, and a rate or OT change
-  starts on this pay week's Monday by default. Any other range can still be picked by date.
+- Pay weeks run **Sunday to Saturday**: Payroll opens on this week; This week / Last week / Next week →
+  (the Sun–Sat week after the range shown, also after a half week) pick whole weeks.
 - New jobs dated today get **Time in** = the current shop time (it keeps up while the form is open) unless
   the user types a time; jobs dated another day get no automatic time. The sidebar shows a live shop clock.
 - Every date field opens the app's own calendar (`public/js/components/datepicker.js`): Sunday first,
@@ -149,7 +147,7 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 
 ## Analytics (owner)
 
-- **Daily / Weekly / Monthly / Quarterly** show the last 14 days, 8 weeks (Monday to Sunday), 6 months or
+- **Daily / Weekly / Monthly / Quarterly** show the last 14 days, 8 pay weeks (Sunday to Saturday), 6 months or
   4 calendar quarters up to the chosen day (`GET /analytics`, `periodBuckets` in `lib/calc.js`).
 - Every period uses the same math as Finance (`periodTotals` and `profitAndLoss` in `lib/calc.js`), so its sales,
   costs and net profit always equal Finance for the same days. A test checks this for every period.
