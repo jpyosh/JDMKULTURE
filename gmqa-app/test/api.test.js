@@ -2331,6 +2331,10 @@ test('suppliers: each item\'s supplier, what its parts sold for and cost, and wh
   assert.deepEqual(ghRow.items.map(i => [i.name, i.quantity, i.sales, i.cost, i.profit]),
     [['GH Fog lamp', 2, 6000, 3600, 2400], ['GH T-Carbon key cover', 3, 1500, 600, 900]]);
   assert.deepEqual([ghRow.sales, ghRow.cost, ghRow.profit], [7500, 4200, 3300]);
+  // When each item sold: every sale's day, how many, its JO number and whether the customer has paid.
+  assert.deepEqual(ghRow.items.map(i => i.sold.map(s => [s.date, s.quantity, s.paid])), [[[D1, 2, true]], [[D1, 3, true]]]);
+  assert.match(ghRow.items[0].sold[0].jo_number, /^PC-/);
+  assert.deepEqual(r.suppliers.find(s => s.id === outright.id).items[0].sold.map(s => [s.date, s.quantity, s.paid]), [[D1, 1, false]]);
   assert.deepEqual([ghRow.soldSince, ghRow.paidSince, ghRow.owed], [4200, 0, 4200], 'owed: cost of parts sold since owed_from, less payments');
   const upfront = r.suppliers.find(s => s.id === outright.id);
   assert.deepEqual([upfront.cost, upfront.profit, upfront.owed], [150, 250, null], 'paid on delivery: tracked, nothing owed');
@@ -2353,6 +2357,8 @@ test('suppliers: each item\'s supplier, what its parts sold for and cost, and wh
   // A wider range shows the earlier sale, but what is owed still starts on owed_from.
   r = await ok(api(OWNER, 'GET', `/suppliers/report?start=${BEFORE}&end=${D2}`));
   assert.deepEqual([r.suppliers.find(s => s.id === gh.id).cost, r.suppliers.find(s => s.id === gh.id).owed], [4400, 50]);
+  const keyCover = r.suppliers.find(s => s.id === gh.id).items.find(i => i.name === 'GH T-Carbon key cover');
+  assert.deepEqual(keyCover.sold.map(s => [s.date, s.quantity]), [[BEFORE, 1], [D1, 3]], 'oldest sale first');
 
   // Editing a supplier; the list for the tab.
   await ok(api(OWNER, 'PATCH', `/suppliers/${gh.id}`, { name: 'Greaseheads PH Test' }));

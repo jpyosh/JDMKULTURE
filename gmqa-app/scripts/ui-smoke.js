@@ -1592,6 +1592,11 @@ async function launch() {
       await page.waitForFunction(n => document.querySelectorAll('#view-suppliers [data-supplier] [data-item]').length >= n, gh.items.length);
       const shown = name => card.locator('[data-item]', { hasText: name });
       assert.match(await shown(gh.items[0].name).textContent(), new RegExp(`₱${gh.items[0].cost.toLocaleString('en-PH', { minimumFractionDigits: 2 }).replace('.', '\\.')}`));
+      // When it sold: each sale's day, how many and its JO number.
+      const firstSale = gh.items[0].sold[0];
+      const soldOn = await shown(gh.items[0].name).locator('[data-sold-on]').textContent();
+      assert.match(soldOn, new RegExp(`Sep ${Number(firstSale.date.slice(8))}\\b`), `the sale day is shown: ${soldOn}`);
+      assert.ok(soldOn.includes(firstSale.jo_number), `the JO number is shown: ${soldOn}`);
       const owedText = async () => (await card.locator('[data-owed]').textContent()).trim();
       const peso = n => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       assert.equal(await owedText(), peso(gh.owed));

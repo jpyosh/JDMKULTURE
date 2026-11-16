@@ -272,7 +272,7 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   does for parts bought to sell. Consigned stock counts in the Inventory stock value until sold.
 - **Suppliers** tab (owner, migration 022): each item can have one supplier (**Give items** on the tab, or Supplier in the
   item's Edit form). For any date range it lists each supplier's parts sold (pieces, sales, cost frozen when sold, profit =
-  sales − cost − commission), paid by the customer or not, and the parts sold with no supplier. A supplier either **pays as
+  sales − cost − commission, and **Sold on**: each sale's day, pieces and JO number, marked if the customer has not paid), paid by the customer or not, and the parts sold with no supplier. A supplier either **pays as
   parts sell** (consignment-like) or is **paid on delivery**. For the first, **Still to pay** = cost of its parts sold since
   its "count what is owed from" day, less supplier payments to it since then (`supplierReport` in `lib/calc.js`).
   **Record payment** adds a supplier payment (an EOD expense with `for_resale` and `supplier_id`), so it is not a second
