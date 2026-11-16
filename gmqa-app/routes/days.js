@@ -2,7 +2,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { daySummary, tipsOwed, salesReport, payWeek, sundayOf, addDays, TIPS_TRACKED_FROM } = require('../lib/calc');
+const { daySummary, tipsOwed, salesReport, payWeek, tradingProfit, sundayOf, addDays, TIPS_TRACKED_FROM } = require('../lib/calc');
 const { loadJobs, assertDayOpen, loadDayMoney } = require('../lib/store');
 const { bad, notFound, forbidden, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
@@ -16,14 +16,15 @@ async function loadDay(day, q = db) {
   const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps, tipJobs, tipMetas] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
     // from_stock: recorded by Inventory → Receive (undone from there, not here).
-    q.many(`select e.id, e.side, e.description, e.amount, e.topup_id, e.for_resale, e.created_by, e.created_at,
+    q.many(`select e.id, e.side, e.description, e.amount, e.topup_id, e.for_resale, e.supplier_id, e.set_aside_id, e.created_by, e.created_at,
       exists (select 1 from stock_movements m where m.expense_id = e.id) as from_stock
       from expenses e where e.expense_date = $1 order by e.id`, [day]),
     // Sales booked today (carwash by job date, running jobs by sale date) + running jobs paid today.
     loadJobs('sale_date = $1 or paid_on = $1', [day], q),
     q.many('select id, side, amount, period_start, period_end, note from payroll_payouts where payout_date = $1 order by id', [day]),
+    // Only the older daily envelopes come out of the day's drawer; weekly ones come out of the week (loadPayWeek).
     q.many(`select s.id, s.fund_id, f.name, s.side, s.amount from fund_set_asides s join funds f on f.id = s.fund_id
-      where s.entry_date = $1 order by s.id`, [day]),
+      where s.entry_date = $1 and s.week_start is null order by s.id`, [day]),
     q.many(`select b.id, f.name, b.drawer_side as side, b.from_drawer as amount from bill_payments b join funds f on f.id = b.fund_id
       where b.paid_on = $1 and b.from_drawer > 0 order by b.id`, [day]),
     // GCash tips of earlier days that may not have been given to the crew yet.
@@ -34,7 +35,9 @@ async function loadDay(day, q = db) {
   const m = { ...EMPTY_META, ...meta, job_date: day };
   const summary = daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
     tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) });
-  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, summary,
+  // trading: the day's cost of parts sold and real net (gross − commission − expenses − cost of parts sold), the same
+  // figure as Sales Reports' profit. Owner-only: lib/redact.js removes it for staff.
+  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, summary, trading: tradingProfit(summary),
     report: salesReport({ date: day, summary }), week: await loadPayWeek(day, q) };
 }
 
@@ -43,12 +46,13 @@ async function loadDay(day, q = db) {
 async function loadPayWeek(day, q = db) {
   const start = sundayOf(day);
   const end = addDays(start, 6);
-  const [days, payouts] = await Promise.all([
+  const [days, payouts, setAsides] = await Promise.all([
     loadDayMoney(start, end, q),
     q.many(`select id, payout_date, period_start, period_end, side, amount from payroll_payouts
       where period_end >= $1 and period_start <= $2 order by payout_date, id`, [addDays(start, -14), addDays(end, 14)]),
+    q.many('select week_start, side, amount from fund_set_asides where week_start = $1', [start]),
   ]);
-  return payWeek({ date: day, days, payouts });
+  return payWeek({ date: day, days, payouts, setAsides });
 }
 
 router.get('/days/:date', async (req, res) => {
@@ -120,12 +124,16 @@ router.post('/days/:date/expenses', async (req, res) => {
   // the drawer without being a second cost. Owner only, because it keeps the amount out of Net profit.
   const forResale = req.body.for_resale === true;
   if (forResale && req.user.role !== 'owner') throw forbidden('Only the owner can record a supplier payment');
+  // A supplier payment can name the supplier it paid (Suppliers tab: what is still owed).
+  const supplierId = req.body.supplier_id == null || req.body.supplier_id === '' ? null : id(req.body.supplier_id, 'supplier');
+  if (supplierId && !forResale) throw bad('Only a supplier payment names a supplier. Tick "Supplier payment".');
   await db.tx(req.user.email, async q => {
     await assertDayOpen(q, day, req.user);
     await assertNotFarAhead(q, day, 'Expense date');
+    if (supplierId && !await q.one('select 1 from suppliers where id = $1 and active', [supplierId])) throw bad('Unknown supplier');
     if (side === 'fund') await assertFundCovers(q, amount);
-    await q.query('insert into expenses (expense_date, side, description, amount, for_resale) values ($1, $2, $3, $4, $5)',
-      [day, side, description, amount, forResale]);
+    await q.query('insert into expenses (expense_date, side, description, amount, for_resale, supplier_id) values ($1, $2, $3, $4, $5, $6)',
+      [day, side, description, amount, forResale, supplierId]);
   });
   res.status(201).json(await loadDay(day));
 });

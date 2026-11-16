@@ -1,4 +1,4 @@
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, prettyDate, prettyTime, isOwner, DEPARTMENTS, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, prettyTime, isOwner, DEPARTMENTS, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
 let current = { date: todayLocal(), day: null };
@@ -24,12 +24,15 @@ function mount(el) {
     <div class="metrics-row" data-metrics></div>
     <div class="card"><h2>Sales by department</h2><div class="table-wrap"><table class="simple-table dept-table" data-departments></table></div></div>
     <div class="card envelopes" data-envelopes>
-      <h2>Bill envelopes</h2>
-      <p class="hint">Save a little for each bill every week or month, so the full amount is ready when the bill comes.</p>
+      <div class="section-header"><h2>Bill envelopes</h2><span class="muted" data-envelope-week></span></div>
+      <p class="hint">Save a little for each bill every week or month, so the full amount is ready when the bill comes.
+        Envelopes are for the whole pay week (Sunday to Saturday): do it once a week, on any day of it.</p>
       <ol class="plain-steps">
-        <li>Each bill below shows how much to put aside <b>this week</b> or <b>this month</b>. Press its button.</li>
-        <li>Take that money out of the drawer and put it in an <b>envelope</b>. Write the bill name, the amount and today's date on it.</li>
-        <li>Hand the envelope to the <b>owner</b> together with today's tape. The app already took it out of the expected drawer.</li>
+        <li>Each bill below shows how much to put aside <b>this week</b> or <b>this month</b>. Press its button (from cash), or
+          <b>Other amount</b> to change the amount, take it from GCash, or add an online transfer fee.</li>
+        <li>Take that money from the week's cash (or send it from GCash) and put it in an <b>envelope</b>. Write the bill name, the amount and the date on it.</li>
+        <li>Hand the envelope to the <b>owner</b>. It comes out of this week's money (see <b>This pay week</b>), not today's drawer count.
+          A transfer fee is added to today's expenses.</li>
       </ol>
       <div data-envelope-list></div>
     </div>
@@ -61,7 +64,9 @@ function mount(el) {
             <input type="text" data-e="description" placeholder="What was it for?" maxlength="200">
             <input type="number" min="0.01" step="0.01" data-e="amount" placeholder="Amount">
             <button class="btn ghost" type="button" data-add-expense>+ Add</button>
-            ${isOwner() ? '<label class="check expense-check"><input type="checkbox" data-e="for_resale"> Supplier payment (consigned parts already sold)</label>' : ''}
+            ${isOwner() ? `<label class="check expense-check"><input type="checkbox" data-e="for_resale"> Supplier payment (consigned parts already sold)</label>
+              <label class="sr-only" for="expense-supplier">Supplier paid</label>
+              <select data-e="supplier_id" id="expense-supplier" title="Supplier paid (Suppliers tab: what is still owed)" hidden></select>` : ''}
           </div>
           <div class="hint" data-fund-hint></div>
         </div>
@@ -83,7 +88,18 @@ function mount(el) {
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
   $('[data-sales-report]', root).addEventListener('click', e => busy(e.currentTarget, copySalesReport));
   $('[data-e="side"]', root).addEventListener('change', renderFundHint);
-  $('[data-e="for_resale"]', root)?.addEventListener('change', renderFundHint);
+  $('[data-e="for_resale"]', root)?.addEventListener('change', () => { showSupplierPicker(); renderFundHint(); });
+}
+
+// A supplier payment can name the supplier it paid (owner only), so the Suppliers tab knows what is still owed.
+function showSupplierPicker() {
+  const picker = $('[data-e="supplier_id"]', root);
+  if (!picker) return;
+  picker.hidden = !$('[data-e="for_resale"]', root).checked;
+  const chosen = picker.value;
+  picker.innerHTML = '<option value="">Which supplier? (optional)</option>'
+    + (current.suppliers || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  picker.value = chosen;
 }
 
 async function show() { await setDate(current.date); }
@@ -92,18 +108,22 @@ async function setDate(date) {
   if (date !== current.date) typed.clear();
   current.date = date;
   $('[data-date]', root).value = date;
-  const [day, funds, cashFund] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`), api('GET', '/cash-fund')]);
+  const [day, funds, cashFund, suppliers] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`), api('GET', '/cash-fund'),
+    isOwner() ? api('GET', '/suppliers') : []]);
   if (date !== current.date) return;
   current.day = day;
   current.funds = funds;
   current.cashFund = cashFund;
+  current.suppliers = suppliers;
   render();
+  showSupplierPicker();
 }
 
 const locked = () => Boolean(current.day.meta.closed_at) && !isOwner();
 
 function render() {
-  const { meta, summary: s } = current.day;
+  // trading: cost of parts sold and the real net, sent to the owner only (costs are owner-only).
+  const { meta, summary: s, trading } = current.day;
   const closed = meta.closed_at;
   $('[data-status]', root).innerHTML = closed
     ? `<div class="banner ok">Closed by ${esc(meta.closed_by || '—')} · ${esc(prettyTime(closed))}
@@ -122,14 +142,16 @@ function render() {
     <div class="metric"><div class="label">Collected</div><div class="value">${peso(s.collected)}</div></div>
     <div class="metric"><div class="label">Unpaid (receivable)</div><div class="value amber">${peso(s.receivables)}</div></div>
     <div class="metric"><div class="label">Commission</div><div class="value amber">${peso(s.commission)}</div></div>
-    <div class="metric"><div class="label">Net</div><div class="value teal">${peso(s.net)}</div></div>`;
+    <div class="metric" data-metric="gross-less-commission" title="Collected − commission"><div class="label">Gross − Commission</div><div class="value teal">${peso(s.net)}</div></div>
+    ${trading ? `<div class="metric" data-metric="parts-cost" title="What the parts sold today cost the shop"><div class="label">Cost of parts sold</div><div class="value amber">${peso(trading.partsCost)}</div></div>
+    <div class="metric" data-metric="net" title="Gross − commission − expenses − cost of parts sold. Expenses: ${peso(trading.costs)} (parts bought to sell and supplier payments are not counted again). The same as Sales Reports' profit."><div class="label">Net</div><div class="value teal">${peso(trading.profit)}</div></div>` : ''}`;
 
   const deptRow = (label, d, cls = '') => `<tr class="${cls}"><td>${label}</td><td class="num">${d.jobs}</td>
     <td class="num money">${peso(d.collected)}</td><td class="num money amber-text">${d.receivables ? peso(d.receivables) : '—'}</td>
     <td class="num money">${peso(d.commission)}</td><td class="num money pos">${peso(d.net)}</td></tr>`;
   $('[data-departments]', root).innerHTML = `
     <thead><tr><th>Department</th><th class="num">Jobs</th><th class="num">Sales collected</th><th class="num">Unpaid</th>
-      <th class="num">Commission</th><th class="num">Net</th></tr></thead>
+      <th class="num">Commission</th><th class="num">Gross − Comm.</th></tr></thead>
     <tbody>${DEPARTMENTS.map(d => deptRow(esc(d.label), s.departments[d.key])).join('')}
       ${deptRow('<b>All departments</b>', { jobs: s.vehicles, collected: s.collected, receivables: s.receivables, commission: s.commission, net: s.net }, 'total-row')}</tbody>`;
 
@@ -187,8 +209,13 @@ function renderEnvelopes() {
   const withAmount = current.funds.filter(f => f.amount > 0);
   const noAmount = current.funds.filter(f => !(f.amount > 0));
   const shortDate = d => (d ? prettyDate(d).replace(/^\w+, /, '') : '—');
+  // The pay week of the day shown, e.g. "Week of Nov 15 – 21" (or "Nov 29 – Dec 5").
+  const weekStart = sundayOf(current.date);
+  const monthDay = d => prettyDate(d).replace(/^\w+, /, '').replace(/, \d{4}$/, '');
+  const weekEnd = monthDay(addDays(weekStart, 6));
+  $('[data-envelope-week]', root).textContent = `Week of ${monthDay(weekStart)} – ${weekEnd.slice(0, 3) === monthDay(weekStart).slice(0, 3) ? weekEnd.slice(4) : weekEnd}`;
   $('[data-envelope-list]', root).innerHTML = withAmount.map(f => {
-    const todays = f.setAsidesOnDate.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'} today
+    const todays = f.setAsidesThisWeek.map(x => `<span class="item-chip">${peso(x.amount)} ${x.side === 'cash' ? 'cash' : 'GCash'} · ${esc(weekday(x.entry_date))}${x.fee ? ` (fee ${peso(x.fee)})` : ''}
       ${off ? '' : `<button class="icon-btn" type="button" data-del-sa="${x.id}" title="Undo" aria-label="Undo ${peso(x.amount)}">✕</button>`}</span>`).join('');
     const status = f.remaining > 0
       ? `Put <b>${peso(f.remaining)}</b> aside this ${f.periodWord}${f.setAsideThisPeriod ? ` (${peso(f.setAsideThisPeriod)} of ${peso(f.target)} done)` : ''}`
@@ -205,7 +232,8 @@ function renderEnvelopes() {
       </div>
       <div class="envelope-other" data-enter="[data-sa-add]" hidden>
         <input type="number" min="0.01" step="0.01" data-sa-amount placeholder="Amount" aria-label="Amount to put aside for ${esc(f.name)}" ${off}>
-        <select data-sa-side aria-label="Taken from" ${off}><option value="cash">from drawer cash</option><option value="gcash">from GCash</option></select>
+        <select data-sa-side aria-label="Taken from" ${off}><option value="cash">from the week's cash</option><option value="gcash">from GCash</option></select>
+        <input type="number" min="0" step="0.01" data-sa-fee placeholder="Fee (if any)" aria-label="Online transfer fee" title="An online transfer fee, logged as today's expense" ${off}>
         <button class="btn small" type="button" data-sa-add ${off}>Put aside</button>
       </div>
     </div>`;
@@ -214,10 +242,10 @@ function renderEnvelopes() {
       ${isOwner() ? 'Set each bill\'s usual amount in Finance → Bill funds → Edit.' : 'The owner sets each bill\'s amount; until then there is nothing to put aside for it.'}</p>` : '')
     + (!withAmount.length && !noAmount.length ? '<p class="hint">No bills set up.</p>' : '');
 
-  const putAside = async (row, amount, side) => {
+  const putAside = async (row, amount, side, fee = 0) => {
     const name = current.funds.find(f => f.id === Number(row.dataset.fund)).name;
-    await api('POST', `/funds/${row.dataset.fund}/set-asides`, { date: current.date, side, amount });
-    toast(`${name}: ${peso(amount)} put aside`);
+    await api('POST', `/funds/${row.dataset.fund}/set-asides`, { date: current.date, side, amount, fee });
+    toast(`${name}: ${peso(amount)} put aside${fee ? ` (fee ${peso(fee)} added to expenses)` : ''}`);
     await setDate(current.date);
   };
   $$('[data-envelope]', root).forEach(row => {
@@ -230,12 +258,14 @@ function renderEnvelopes() {
     });
     $('[data-sa-add]', row).addEventListener('click', e => busy(e.currentTarget, async () => {
       const amount = Number($('[data-sa-amount]', row).value || 0);
+      const fee = Number($('[data-sa-fee]', row).value || 0);
       if (!(amount > 0)) return toast('Type the amount to put aside', 'error');
-      await putAside(row, amount, $('[data-sa-side]', row).value);
+      if (fee < 0) return toast('A fee cannot be negative', 'error');
+      await putAside(row, amount, $('[data-sa-side]', row).value, fee);
     }));
   });
   $$('[data-del-sa]', root).forEach(btn => btn.addEventListener('click', async () => {
-    if (!window.confirm('Undo this? The money goes back into the expected drawer.')) return;
+    if (!window.confirm('Undo this? The money goes back into the week\'s money, and its transfer fee (if any) is removed from expenses.')) return;
     await api('DELETE', `/fund-set-asides/${btn.dataset.delSa}`);
     toast('Set-aside removed');
     await setDate(current.date);
@@ -323,7 +353,7 @@ function renderWeek() {
   const status = d => (d.date > todayLocal() ? '' : d.closed ? '<span class="muted small">closed</span>' : (d.cash || d.gcash) ? '<span class="amber-text small">open</span>' : '');
   const paid = w.payouts.map(p => `${peso(p.amount)} ${p.side === 'gcash' ? 'GCash' : 'cash'} on ${short(p.payout_date)}`).join(', ');
   box.innerHTML = `
-    <p class="hint">${esc(span(w.start, w.end))}. Each day's money after commission and expenses; the week's wages come out of it.</p>
+    <p class="hint">${esc(span(w.start, w.end))}. Each day's money after commission and expenses; the week's wages and bill envelopes come out of it.</p>
     <div class="table-wrap"><table class="simple-table week-table">
       <thead><tr><th>Day</th><th class="num">Cash</th><th class="num">GCash</th><th></th></tr></thead>
       <tbody>
@@ -333,7 +363,9 @@ function renderWeek() {
           <td class="num money" data-week-total="gcash">${peso(w.gcash)}</td><td></td></tr>
         <tr><td>− Payroll for this week</td><td class="num money" data-week-payroll="cash">${peso(w.payrollCash)}</td>
           <td class="num money" data-week-payroll="gcash">${peso(w.payrollGcash)}</td><td></td></tr>
-        <tr class="total-row"><td>Left after payroll</td><td class="num money" data-week-left="cash">${peso(w.cashLeft)}</td>
+        <tr><td>− Bill envelopes this week</td><td class="num money" data-week-envelopes="cash">${peso(w.envelopeCash)}</td>
+          <td class="num money" data-week-envelopes="gcash">${peso(w.envelopeGcash)}</td><td></td></tr>
+        <tr class="total-row"><td>Left after payroll and envelopes</td><td class="num money" data-week-left="cash">${peso(w.cashLeft)}</td>
           <td class="num money" data-week-left="gcash">${peso(w.gcashLeft)}</td><td></td></tr>
       </tbody></table></div>
     <p class="hint">${w.payouts.length ? `Wages for this week: ${esc(paid)}.` : 'No wages recorded for this week yet (Payroll → Record payout).'}
@@ -447,12 +479,19 @@ async function addExpense() {
   const body = { side: get('side').value, description: get('description').value.trim(), amount: Number(get('amount').value || 0) };
   if (!body.description) return toast('Describe the expense', 'error');
   if (!(body.amount > 0)) return toast('Enter an amount greater than zero', 'error');
-  if (get('for_resale')?.checked) body.for_resale = true;
+  if (get('for_resale')?.checked) {
+    body.for_resale = true;
+    if (get('supplier_id')?.value) body.supplier_id = Number(get('supplier_id').value);
+  }
   current.day = await api('POST', `/days/${current.date}/expenses`, body);
   if (body.side === 'fund') current.cashFund = await api('GET', '/cash-fund');
   get('description').value = '';
   get('amount').value = '';
-  if (get('for_resale')) get('for_resale').checked = false;
+  if (get('for_resale')) {
+    get('for_resale').checked = false;
+    get('supplier_id').value = '';
+    showSupplierPicker();
+  }
   toast('Expense added');
   render();
 }

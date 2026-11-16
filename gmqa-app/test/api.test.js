@@ -811,11 +811,10 @@ test('finance: funds, set-asides at EOD, bills with drawer top-up, and the month
   assert.equal((await api(STAFF, 'PATCH', `/funds/${meralco.id}`, { amount: 8000 })).status, 403);
   await ok(api(OWNER, 'PATCH', `/funds/${meralco.id}`, { amount: 8000, due_day: 25 }));
 
-  // Supervisor sets money aside at EOD: it leaves the drawer that day.
+  // Supervisor sets money aside at EOD: it comes out of the week's money, not that day's drawer.
   const sa = await ok(api(STAFF, 'POST', `/funds/${meralco.id}/set-asides`, { date: '2026-11-02', side: 'cash', amount: 1500 }));
-  const day2 = (await ok(api(STAFF, 'GET', '/days/2026-11-02'))).summary;
-  assert.equal(day2.setAsideCash, 1500);
-  assert.equal(day2.expectedCash, -1500);
+  const day2 = await ok(api(STAFF, 'GET', '/days/2026-11-02'));
+  assert.deepEqual([day2.summary.setAsideCash, day2.summary.expectedCash, day2.week.envelopeCash], [0, 0, 1500]);
   let status = (await ok(api(STAFF, 'GET', '/funds?date=2026-11-02'))).find(f => f.id === meralco.id);
   assert.equal(status.balance, 1500);
   assert.equal(status.setAsideThisPeriod, 1500);
@@ -2135,7 +2134,7 @@ test('weekly payroll: paid from the week\'s cash, never the payday drawer; EOD s
   await closeDays([SUN, MON, NEXT_SUN]);
   const r = await ok(api(OWNER, 'GET', `/remittances?start=${SUN}&end=${NEXT_SUN}`));
   assert.deepEqual(r.days.find(d => d.date === NEXT_SUN), { date: NEXT_SUN, closed: true, cash: 0, gcash: 0, countedCash: null, countedGcash: null,
-    payrollCash: 800, payrollGcash: 100, cashGroup: null, gcashGroup: null });
+    payrollCash: 800, payrollGcash: 100, envelopeCash: 0, envelopeGcash: 0, cashGroup: null, gcashGroup: null });
   assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.gcash.amount], [200, -100]);
 
   for (const p of [cash, gcash]) await ok(api(OWNER, 'DELETE', `/payroll/payouts/${p.id}`));
@@ -2160,7 +2159,7 @@ test('remittances: bank deposits matched against the days they cover, with what 
   let r = await ok(api(OWNER, 'GET', range));
   assert.deepEqual([r.start, r.end], ['2034-05-01', '2034-05-07']);
   assert.deepEqual(r.days.find(d => d.date === '2034-05-03'),
-    { date: '2034-05-03', closed: true, cash: 500, gcash: 0, countedCash: 500, countedGcash: 0, payrollCash: 0, payrollGcash: 0, cashGroup: null, gcashGroup: null });
+    { date: '2034-05-03', closed: true, cash: 500, gcash: 0, countedCash: 500, countedGcash: 0, payrollCash: 0, payrollGcash: 0, envelopeCash: 0, envelopeGcash: 0, cashGroup: null, gcashGroup: null });
   assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.cash.days.map(d => d.date)], [400, ['2034-05-03', '2034-05-04']]);
   assert.deepEqual([r.toDeposit.gcash.amount, r.toDeposit.gcash.days.map(d => d.date)], [600, ['2034-05-04']]);
   assert.deepEqual(r.openDays, ['2034-05-05']);
@@ -2214,4 +2213,149 @@ test('remittances: bank deposits matched against the days they cover, with what 
   assert.equal((await ok(api(OWNER, 'GET', '/remittances?end=2034-05-07'))).start, '2034-05-05');
   for (const row of [cash, loose]) await ok(api(OWNER, 'DELETE', `/remittances/${row.id}`));
   for (const d of ['2034-05-03', '2034-05-04']) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+});
+
+test('EOD: gross less commission, cost of parts sold and the real net, which only the owner sees', async () => {
+  const D = '2035-01-09'; // used by no other test
+  const premium = await catalogItem('Premium Wash'); // S: ₱600, ₱100 commission
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').name;
+  await ok(api(OWNER, 'POST', '/inventory/import', { date: D, rows: [{ name: 'Net test bulb', price: 1000, stock: 5, unit_cost: 300, tags: [autoParts] }] }));
+  const bulb = (await ok(api(OWNER, 'GET', '/inventory'))).find(p => p.name === 'Net test bulb');
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D, department: 'parts', payment_received: true, job_done: true, payment_method: 'Cash', items: [{ part_id: bulb.id, quantity: 2 }] }));
+  await ok(api(STAFF, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Ice', amount: 50 }));
+  await ok(api(OWNER, 'POST', `/days/${D}/expenses`, { side: 'cash', description: 'Remit bulbs', amount: 200, for_resale: true }));
+
+  const day = await ok(api(OWNER, 'GET', `/days/${D}`));
+  assert.deepEqual([day.summary.collected, day.summary.commission, day.summary.net], [2600, 100, 2500], 'Net stays gross less commission');
+  // Real net = gross − commission − expenses − cost of parts sold. A supplier payment is not a second cost.
+  assert.deepEqual(day.trading, { costs: 50, partsBought: 200, partsCost: 600, profit: 2600 - 100 - 50 - 600 });
+  // The same figure as Sales Reports' profit for that day.
+  const report = await ok(api(OWNER, 'GET', `/reports/range?start=${D}&end=${D}`));
+  assert.equal(report.totals.profit, day.trading.profit);
+  assert.equal(report.totals.partsCost, 600);
+  // Costs are owner-only: staff get no cost of parts sold and no real net.
+  const staffDay = await ok(api(STAFF, 'GET', `/days/${D}`));
+  assert.equal(staffDay.trading, undefined);
+  assert.equal(staffDay.summary.partsCost, undefined);
+});
+
+test('bill envelopes are put aside by the week, from the week\'s cash or GCash; a transfer fee is an expense', async () => {
+  const [SUN, MON, TUE, WED, THU, NEXT_MON] = ['2035-03-04', '2035-03-05', '2035-03-06', '2035-03-07', '2035-03-08', '2035-03-12']; // used by no other test
+  const premium = await catalogItem('Premium Wash'); // S: ₱600, ₱100 commission
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: MON, vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  const fund = await ok(api(OWNER, 'POST', '/funds', { name: 'Water weekly test', amount: 1400, frequency: 'monthly', due_day: 28 }));
+
+  // Put aside on Monday from cash: the envelope belongs to the week, and Monday's drawer is not touched.
+  const cash = await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: MON, side: 'cash', amount: 300 }));
+  assert.deepEqual([cash.entry_date, cash.week_start, cash.side, cash.amount, cash.fee], [MON, SUN, 'cash', 300, 0]);
+  let mon = await ok(api(STAFF, 'GET', `/days/${MON}`));
+  assert.deepEqual([mon.summary.setAsideCash, mon.summary.expectedCash], [0, 500], 'the day\'s expected drawer is unchanged');
+  assert.deepEqual([mon.week.start, mon.week.envelopeCash, mon.week.envelopeGcash, mon.week.cashLeft], [SUN, 300, 0, 500 - 300]);
+
+  // From GCash with a ₱15 online fee: the full amount goes in the envelope, and the fee is an ordinary GCash expense that day.
+  const gcash = await ok(api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: TUE, side: 'gcash', amount: 200, fee: 15 }));
+  assert.deepEqual([gcash.week_start, gcash.fee], [SUN, 15]);
+  const tue = await ok(api(STAFF, 'GET', `/days/${TUE}`));
+  assert.deepEqual(tue.expenses.map(e => [e.side, e.amount, e.description, e.set_aside_id]), [['gcash', 15, 'Transfer fee: Water weekly test envelope', gcash.id]]);
+  assert.deepEqual([tue.summary.gcashExpenses, tue.summary.setAsideGcash, tue.summary.expectedGcash], [15, 0, -15]);
+  assert.deepEqual([tue.week.envelopeCash, tue.week.envelopeGcash, tue.week.gcashLeft], [300, 200, -15 - 200]);
+  assert.equal((await api(STAFF, 'POST', `/funds/${fund.id}/set-asides`, { date: TUE, side: 'gcash', amount: 200, fee: -1 })).status, 400);
+
+  // Any day of the week lists the week's envelopes, and the target counts them.
+  const funds = await ok(api(STAFF, 'GET', `/funds?date=${WED}`));
+  const water = funds.find(f => f.id === fund.id);
+  assert.deepEqual([water.week.start, water.week.end], [SUN, '2035-03-10']);
+  assert.deepEqual(water.setAsidesThisWeek.map(s => [s.id, s.entry_date, s.side, s.amount, s.fee]), [[cash.id, MON, 'cash', 300, 0], [gcash.id, TUE, 'gcash', 200, 15]]);
+  assert.deepEqual([water.balance, water.setAsideThisPeriod], [500, 500]);
+  assert.deepEqual((await ok(api(STAFF, 'GET', `/funds?date=${NEXT_MON}`))).find(f => f.id === fund.id).setAsidesThisWeek, [], 'next week starts empty');
+
+  // Envelopes made before this change stay daily: they come out of their own day's drawer.
+  await driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount) values ($1, $2, 'cash', 40)", [fund.id, THU]);
+  const thu = await ok(api(STAFF, 'GET', `/days/${THU}`));
+  assert.deepEqual([thu.summary.setAsideCash, thu.summary.expectedCash, thu.week.envelopeCash], [40, -40, 300]);
+
+  // Remittances: the envelope money never goes to the bank. It leaves on the day it was put aside.
+  await closeDays([MON, TUE, THU]);
+  const r = await ok(api(OWNER, 'GET', `/remittances?start=${SUN}&end=${THU}`));
+  assert.deepEqual(['cash', 'gcash'].map(side => r.toDeposit[side].days.map(d => [d.date, d.amount])),
+    [[[MON, 500 - 300], [THU, -40]], [[TUE, -15 - 200]]]);
+  for (const d of [MON, TUE, THU]) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+
+  // Undo takes the fee away with the envelope.
+  await ok(api(STAFF, 'DELETE', `/fund-set-asides/${gcash.id}`));
+  assert.deepEqual((await ok(api(STAFF, 'GET', `/days/${TUE}`))).expenses, []);
+  mon = await ok(api(STAFF, 'GET', `/days/${MON}`));
+  assert.equal(mon.week.envelopeGcash, 0);
+  await ok(api(STAFF, 'DELETE', `/fund-set-asides/${cash.id}`));
+  await driver.query('delete from fund_set_asides where fund_id = $1', [fund.id]);
+});
+
+test('suppliers: each item\'s supplier, what its parts sold for and cost, and what is still to pay (owner only)', async () => {
+  const [BEFORE, D1, D2] = ['2035-06-03', '2035-06-05', '2035-06-06']; // used by no other test
+  const autoParts = (await ok(api(OWNER, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts').name;
+  assert.equal((await api(STAFF, 'GET', '/suppliers')).status, 403);
+  assert.equal((await api(STAFF, 'POST', '/suppliers', { name: 'Nope' })).status, 403);
+  const gh = await ok(api(OWNER, 'POST', '/suppliers', { name: 'Greaseheads Test', pays_when_sold: true, owed_from: D1 }));
+  assert.deepEqual([gh.name, gh.pays_when_sold, gh.owed_from], ['Greaseheads Test', true, D1]);
+  assert.equal((await api(OWNER, 'POST', '/suppliers', { name: 'greaseheads test' })).status, 400, 'one supplier per name');
+  const outright = await ok(api(OWNER, 'POST', '/suppliers', { name: 'Paid Upfront Test', pays_when_sold: false }));
+
+  await ok(api(OWNER, 'POST', '/inventory/import', { date: BEFORE, rows: [
+    { name: 'GH T-Carbon key cover', price: 500, stock: 10, unit_cost: 200, tags: [autoParts] },
+    { name: 'GH Fog lamp', price: 3000, stock: 5, unit_cost: 1800, tags: [autoParts] },
+    { name: 'Upfront wiper', price: 400, stock: 5, unit_cost: 150, tags: [autoParts] },
+    { name: 'Nobody\'s horn', price: 900, stock: 5, unit_cost: 500, tags: [autoParts] },
+  ] }));
+  const items = await ok(api(OWNER, 'GET', '/inventory'));
+  const item = name => items.find(p => p.name === name);
+  // Assign several items at once (Suppliers tab), or one in its Edit form.
+  assert.equal((await api(STAFF, 'POST', `/suppliers/${gh.id}/items`, { part_ids: [item('GH Fog lamp').id] })).status, 403);
+  await ok(api(OWNER, 'POST', `/suppliers/${gh.id}/items`, { part_ids: [item('GH T-Carbon key cover').id, item('GH Fog lamp').id] }));
+  const wiper = await ok(api(OWNER, 'PATCH', `/inventory/${item('Upfront wiper').id}`, { supplier_id: outright.id }));
+  assert.equal(wiper.supplier_id, outright.id);
+  assert.equal((await api(OWNER, 'PATCH', `/inventory/${wiper.id}`, { supplier_id: 999999 })).status, 400);
+  assert.equal((await ok(api(OWNER, 'GET', '/inventory'))).find(p => p.id === item('GH Fog lamp').id).supplier_id, gh.id);
+
+  const sell = (day, lines, paid = true) => ok(api(STAFF, 'POST', '/jobs', { job_date: day, department: 'parts', payment_received: paid, job_done: true,
+    payment_method: paid ? 'Cash' : undefined, items: lines.map(([name, quantity]) => ({ part_id: item(name).id, quantity })) }));
+  await sell(BEFORE, [['GH T-Carbon key cover', 1]]); // before what is owed is counted (already settled)
+  await sell(D1, [['GH T-Carbon key cover', 3], ['GH Fog lamp', 2]]);
+  await sell(D1, [['Upfront wiper', 1], ['Nobody\'s horn', 1]], false); // sold, not paid by the customer yet: still sold
+  const voided = await sell(D1, [['GH Fog lamp', 1]]);
+  await ok(api(OWNER, 'POST', `/jobs/${voided.id}/void`, { reason: 'test' }));
+
+  assert.equal((await api(STAFF, 'GET', `/suppliers/report?start=${D1}&end=${D1}`)).status, 403);
+  let r = await ok(api(OWNER, 'GET', `/suppliers/report?start=${D1}&end=${D1}`));
+  const ghRow = r.suppliers.find(s => s.id === gh.id);
+  assert.deepEqual(ghRow.items.map(i => [i.name, i.quantity, i.sales, i.cost, i.profit]),
+    [['GH Fog lamp', 2, 6000, 3600, 2400], ['GH T-Carbon key cover', 3, 1500, 600, 900]]);
+  assert.deepEqual([ghRow.sales, ghRow.cost, ghRow.profit], [7500, 4200, 3300]);
+  assert.deepEqual([ghRow.soldSince, ghRow.paidSince, ghRow.owed], [4200, 0, 4200], 'owed: cost of parts sold since owed_from, less payments');
+  const upfront = r.suppliers.find(s => s.id === outright.id);
+  assert.deepEqual([upfront.cost, upfront.profit, upfront.owed], [150, 250, null], 'paid on delivery: tracked, nothing owed');
+  assert.deepEqual(r.none.items.map(i => [i.name, i.quantity, i.cost]), [['Nobody\'s horn', 1, 500]]);
+  assert.deepEqual([r.totals.sales, r.totals.cost, r.totals.owed], [7500 + 400 + 900, 4200 + 150 + 500, 4200]);
+
+  // Paying the supplier (from the tab, or EOD's Supplier payment) is a supplier payment: out of the drawer, not a second cost.
+  assert.equal((await api(OWNER, 'POST', `/suppliers/${gh.id}/payments`, { date: D2, side: 'cash', amount: 0 })).status, 400);
+  const pay = await ok(api(OWNER, 'POST', `/suppliers/${gh.id}/payments`, { date: D2, side: 'gcash', amount: 4000 }));
+  const d2 = await ok(api(OWNER, 'GET', `/days/${D2}`));
+  assert.deepEqual(d2.expenses.map(e => [e.side, e.amount, e.for_resale, e.supplier_id, e.description]), [['gcash', 4000, true, gh.id, 'Supplier payment: Greaseheads Test']]);
+  assert.deepEqual([d2.trading.costs, d2.trading.partsBought], [0, 4000]);
+  await ok(api(OWNER, 'POST', `/days/${D2}/expenses`, { side: 'cash', description: 'GH balance', amount: 150, for_resale: true, supplier_id: gh.id }));
+  assert.equal((await api(OWNER, 'POST', `/days/${D2}/expenses`, { side: 'cash', description: 'x', amount: 1, supplier_id: gh.id })).status, 400, 'only a supplier payment names a supplier');
+  r = await ok(api(OWNER, 'GET', `/suppliers/report?start=${D1}&end=${D2}`));
+  const paid = r.suppliers.find(s => s.id === gh.id);
+  assert.deepEqual([paid.paidInRange, paid.paidSince, paid.owed], [4150, 4150, 50]);
+  assert.deepEqual(paid.payments.map(p => [p.expense_date, p.side, p.amount]), [[D2, 'gcash', 4000], [D2, 'cash', 150]]);
+
+  // A wider range shows the earlier sale, but what is owed still starts on owed_from.
+  r = await ok(api(OWNER, 'GET', `/suppliers/report?start=${BEFORE}&end=${D2}`));
+  assert.deepEqual([r.suppliers.find(s => s.id === gh.id).cost, r.suppliers.find(s => s.id === gh.id).owed], [4400, 50]);
+
+  // Editing a supplier; the list for the tab.
+  await ok(api(OWNER, 'PATCH', `/suppliers/${gh.id}`, { name: 'Greaseheads PH Test' }));
+  assert.ok((await ok(api(OWNER, 'GET', '/suppliers'))).some(s => s.name === 'Greaseheads PH Test'));
+  await ok(api(OWNER, 'DELETE', `/expenses/${pay.expense_id}`));
 });

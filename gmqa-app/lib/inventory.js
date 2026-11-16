@@ -14,7 +14,7 @@ const CONTAINER_NAMES = { overall: 'Overall', carwash: 'Carwash', detailing: 'De
 const CONTAINERS = Object.keys(CONTAINER_NAMES);
 const FOR_SALE = `exists (select 1 from part_tags pt join tags t on t.id = pt.tag_id where pt.part_id = p.id and t.system_key = '${AUTO_PARTS}')`;
 const ITEM_SELECT = `select p.id, p.sku, p.name, p.unit, p.price, p.commission, p.set_size, p.set_price, p.set_commission,
-  p.avg_cost, p.stock, p.reorder_level, p.active,
+  p.avg_cost, p.stock, p.reorder_level, p.active, p.supplier_id,
   coalesce((select json_agg(pt.tag_id order by pt.tag_id) from part_tags pt where pt.part_id = p.id), '[]'::json) as tags,
   coalesce((select json_object_agg(d.department, d.stock) from department_stock d where d.part_id = p.id and d.stock > 0), '{}'::json) as departments,
   ${FOR_SALE} as for_sale

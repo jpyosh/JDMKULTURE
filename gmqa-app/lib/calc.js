@@ -610,13 +610,14 @@ const REMIT_SIDES = { cash: ['cash'], gcash: ['gcash'], both: ['cash', 'gcash'] 
 const byDepositOrder = (a, b) => (a.deposit_date < b.deposit_date ? -1 : a.deposit_date > b.deposit_date ? 1 : a.id - b.id);
 
 // Bank deposits checked against the days whose money they carried, and what is still to be deposited.
-// days: [{ date, closed, cash, gcash, countedCash, countedGcash, payrollCash, payrollGcash }] for start..end and every
-//   day a deposit covers; cash / gcash = EOD's expected drawer less the float, and expected GCash. payroll*: wages handed
-//   out that day from the money saved during the week, so they leave the money for the bank on that day.
+// days: [{ date, closed, cash, gcash, countedCash, countedGcash, payrollCash, payrollGcash, envelopeCash, envelopeGcash }]
+//   for start..end and every day a deposit covers; cash / gcash = EOD's expected drawer less the float, and expected GCash.
+//   payroll*: wages handed out that day, envelope*: weekly bill envelopes put aside that day, both from the money saved
+//   during the week, so they leave the money for the bank on that day.
 // remittances: deposits as stored (deposit_date, amount, source cash|gcash|both, covers_from..covers_to or none).
 // Deposits for the same money and days are added together (one passbook line per GCash transfer limit, for example).
-const PAYROLL_FIELD = { cash: 'payrollCash', gcash: 'payrollGcash' };
-const forBank = (d, side) => round2((Number(d?.[side]) || 0) - (Number(d?.[PAYROLL_FIELD[side]]) || 0));
+const WEEK_OUT_FIELDS = { cash: ['payrollCash', 'envelopeCash'], gcash: ['payrollGcash', 'envelopeGcash'] };
+const forBank = (d, side) => round2((Number(d?.[side]) || 0) - WEEK_OUT_FIELDS[side].reduce((t, f) => t + (Number(d?.[f]) || 0), 0));
 
 function remittanceReport({ days, remittances, start, end }) {
   const byDate = new Map(days.map(d => [d.date, d]));
@@ -677,8 +678,9 @@ function remittanceReport({ days, remittances, start, end }) {
 const payoutWeek = p => sundayOf(addDays(p.period_start, Math.floor(daysUntil(p.period_start, p.period_end) / 2)));
 
 // The whole pay week of `date`: each day's money after commission and expenses (days: [{ date, closed, cash, gcash }],
-// cash = expected drawer less the float), the payroll for that week, and what is left after it.
-function payWeek({ date, days, payouts }) {
+// cash = expected drawer less the float), the payroll and the bill envelopes for that week, and what is left after them.
+// setAsides: weekly envelopes ({ week_start, side, amount }); only this week's are used.
+function payWeek({ date, days, payouts, setAsides = [] }) {
   const start = sundayOf(date);
   const end = addDays(start, 6);
   const byDate = new Map(days.map(d => [d.date, d]));
@@ -692,10 +694,65 @@ function payWeek({ date, days, payouts }) {
   const gcash = sum(week, d => d.gcash);
   const payrollCash = sum(mine.filter(p => p.side === 'cash'), p => p.amount);
   const payrollGcash = sum(mine.filter(p => p.side === 'gcash'), p => p.amount);
+  const envelopes = setAsides.filter(s => s.week_start === start);
+  const envelopeCash = sum(envelopes.filter(s => s.side === 'cash'), s => s.amount);
+  const envelopeGcash = sum(envelopes.filter(s => s.side === 'gcash'), s => s.amount);
   return {
-    start, end, days: week, cash, gcash, payrollCash, payrollGcash, payouts: mine,
-    cashLeft: round2(cash - payrollCash), gcashLeft: round2(gcash - payrollGcash),
+    start, end, days: week, cash, gcash, payrollCash, payrollGcash, payouts: mine, envelopeCash, envelopeGcash,
+    cashLeft: round2(cash - payrollCash - envelopeCash), gcashLeft: round2(gcash - payrollGcash - envelopeGcash),
     openDays: week.filter(d => !d.closed && (d.cash !== 0 || d.gcash !== 0)).map(d => d.date),
+  };
+}
+
+// ---------------------------------------------------------------- suppliers (Suppliers tab)
+
+// Each supplier's parts sold in start..end: per item the pieces sold, what they sold for, what they cost and the profit
+// (sales − cost − commission), whether the customer has paid yet or not, like commission. And, for a supplier paid as its
+// parts sell (pays_when_sold), what is still owed: the cost of its parts sold from owed_from on, less what was paid to it
+// from that day on. A supplier paid on delivery is tracked for cost and profit only (owed: null).
+// lines: part lines of jobs not voided ({ supplier_id, part_id, name, unit, department, job_date, closed_on, quantity,
+//   pack_size, unit_cost, price, commission }), from the earliest day needed. The line's cost was frozen when it sold.
+// payments: supplier payments ({ id, supplier_id, expense_date, side, amount, description }).
+// Item names come from the inventory item. A job's discount is not spread over its lines.
+function supplierReport({ suppliers, lines, payments, start, end }) {
+  const sold = lines.map(l => ({ ...l, sale_date: saleDate(l), cost: round2((Number(l.unit_cost) || 0) * Number(l.quantity)) }))
+    .filter(l => l.sale_date);
+  const inRange = d => d >= start && d <= end;
+  const itemsOf = list => {
+    const byPart = new Map();
+    for (const l of list) {
+      const row = byPart.get(l.part_id) || { part_id: l.part_id, name: l.name, unit: l.unit, quantity: 0, sales: 0, cost: 0, commission: 0 };
+      row.quantity = round2(row.quantity + Number(l.quantity) * (Number(l.pack_size) || 1));
+      row.sales = round2(row.sales + Number(l.price));
+      row.cost = round2(row.cost + l.cost);
+      row.commission = round2(row.commission + Number(l.commission));
+      byPart.set(l.part_id, row);
+    }
+    return [...byPart.values()].map(r => ({ ...r, profit: round2(r.sales - r.cost - r.commission) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+  const totalsOf = items => ({ sales: sum(items, i => i.sales), cost: sum(items, i => i.cost), commission: sum(items, i => i.commission), profit: sum(items, i => i.profit) });
+  const rows = suppliers.map(s => {
+    const mine = sold.filter(l => l.supplier_id === s.id);
+    const items = itemsOf(mine.filter(l => inRange(l.sale_date)));
+    const paidTo = payments.filter(p => p.supplier_id === s.id);
+    const soldSince = sum(mine.filter(l => l.sale_date >= s.owed_from), l => l.cost);
+    const paidSince = sum(paidTo.filter(p => p.expense_date >= s.owed_from), p => p.amount);
+    const inRangePayments = paidTo.filter(p => inRange(p.expense_date)).sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id);
+    return {
+      id: s.id, name: s.name, pays_when_sold: s.pays_when_sold, owed_from: s.owed_from, note: s.note ?? null,
+      items, ...totalsOf(items),
+      payments: inRangePayments, paidInRange: sum(inRangePayments, p => p.amount),
+      soldSince, paidSince, owed: s.pays_when_sold ? round2(soldSince - paidSince) : null,
+    };
+  });
+  const noneItems = itemsOf(sold.filter(l => l.supplier_id == null && inRange(l.sale_date)));
+  const none = { items: noneItems, ...totalsOf(noneItems) };
+  const all = [...rows, none];
+  return {
+    start, end, suppliers: rows, none,
+    totals: { sales: sum(all, r => r.sales), cost: sum(all, r => r.cost), commission: sum(all, r => r.commission), profit: sum(all, r => r.profit),
+      owed: sum(rows, r => r.owed || 0) },
   };
 }
 
@@ -714,5 +771,5 @@ module.exports = {
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
-  remittanceReport, passbookExpected, payWeek,
+  remittanceReport, passbookExpected, payWeek, supplierReport,
 };

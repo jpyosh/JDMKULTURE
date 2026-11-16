@@ -3,7 +3,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries, periodTotals, profitAndLoss, datesBetween, round2 } = require('../lib/calc');
+const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries, periodTotals, profitAndLoss, datesBetween, sundayOf, round2 } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { loadPayroll, payrollNetOn, payrollEntryDates } = require('../lib/payroll-data');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
@@ -29,24 +29,27 @@ async function fundBalance(q, fundId) {
   return row;
 }
 
-// Funds with balance and the set-aside target of this week or month (each bill's choice), as of `date` (default: today).
+// Funds with balance and the set-aside target of this week or month (each bill's choice), as of `date` (default: today),
+// and the envelopes put aside in the pay week (Sunday to Saturday) of `date`, each with its transfer fee.
 router.get('/funds', async (req, res) => {
   const day = req.query.date ? date(req.query.date) : await shopToday();
   const week = setAsidePeriod({ set_aside_every: 'weekly' }, day);
   const month = setAsidePeriod({ set_aside_every: 'monthly' }, day);
-  const [funds, recent, onDay] = await Promise.all([
+  const [funds, recent, thisWeek] = await Promise.all([
     db.many(`${FUND_BALANCES} where f.active order by f.sort_order, f.id`),
     db.many('select fund_id, entry_date, amount from fund_set_asides where entry_date between $1 and $2',
       [week.start < month.start ? week.start : month.start, week.end > month.end ? week.end : month.end]),
-    db.many('select id, fund_id, side, amount, note from fund_set_asides where entry_date = $1 order by id', [day]),
+    db.many(`select s.id, s.fund_id, s.entry_date, s.week_start, s.side, s.amount, s.note,
+        coalesce((select sum(e.amount) from expenses e where e.set_aside_id = s.id), 0) as fee
+      from fund_set_asides s where s.entry_date between $1 and $2 order by s.entry_date, s.id`, [week.start, week.end]),
   ]);
   res.json(funds.map(fund => {
     const { start, end } = setAsidePeriod(fund, day);
     const setAsideThisPeriod = round2(recent.filter(s => s.fund_id === fund.id && s.entry_date >= start && s.entry_date <= end)
       .reduce((total, s) => total + s.amount, 0));
     return {
-      ...fund, setAsideThisPeriod,
-      setAsidesOnDate: onDay.filter(s => s.fund_id === fund.id),
+      ...fund, setAsideThisPeriod, week,
+      setAsidesThisWeek: thisWeek.filter(s => s.fund_id === fund.id).map(s => ({ ...s, fee: round2(s.fee) })),
       ...fundStatus({ fund, balance: fund.balance, setAsideThisPeriod, today: day }),
     };
   }));
@@ -96,17 +99,27 @@ router.patch('/funds/:id', requireOwner, async (req, res) => {
   res.json(await fundBalance(db, fundId));
 });
 
-// Set-asides are taken out of the drawer at EOD, so they follow the closed-day rule.
+// An envelope is put aside for the pay week of `date` (week_start, its Sunday): it comes out of the week's cash or GCash,
+// like payroll, never out of that day's expected drawer. It is recorded on `date`, so it follows that day's closed-day
+// rule. fee: what an online transfer charged, logged as an ordinary expense of that day, paid from the same side.
 router.post('/funds/:id/set-asides', async (req, res) => {
   const fundId = id(req.params.id, 'fund');
   const day = date(req.body.date, 'Date');
+  const side = oneOf(req.body.side, SIDES, 'Taken from');
+  const amount = money(req.body.amount, 'Amount', { min: 0.01 });
+  const fee = req.body.fee == null || req.body.fee === '' ? 0 : money(req.body.fee, 'Fee');
+  const note = text(req.body.note, 'Note', { max: 200 });
   const row = await db.tx(req.user.email, async q => {
-    await fundBalance(q, fundId);
+    const { name } = await fundBalance(q, fundId);
     await assertDayOpen(q, day, req.user);
     await assertNotFarAhead(q, day, 'Date');
-    return q.one(`insert into fund_set_asides (fund_id, entry_date, side, amount, note) values ($1, $2, $3, $4, $5)
-      returning id, fund_id, entry_date, side, amount, note`,
-    [fundId, day, oneOf(req.body.side, SIDES, 'Taken from'), money(req.body.amount, 'Amount', { min: 0.01 }), text(req.body.note, 'Note', { max: 200 })]);
+    const saved = await q.one(`insert into fund_set_asides (fund_id, entry_date, week_start, side, amount, note) values ($1, $2, $3, $4, $5, $6)
+      returning id, fund_id, entry_date, week_start, side, amount, note`, [fundId, day, sundayOf(day), side, amount, note]);
+    if (fee > 0) {
+      await q.query('insert into expenses (expense_date, side, description, amount, set_aside_id) values ($1, $2, $3, $4, $5)',
+        [day, side, `Transfer fee: ${name} envelope`.slice(0, 200), fee, saved.id]);
+    }
+    return { ...saved, fee };
   });
   res.status(201).json(row);
 });
@@ -122,6 +135,8 @@ router.delete('/fund-set-asides/:id', async (req, res) => {
     if (round2(balance - row.amount) < 0) {
       throw bad(`This money already paid a bill: the ${name} fund only holds ₱${balance.toFixed(2)} now. Undo that bill payment first (Finance → Bills paid).`);
     }
+    // Its transfer fee goes with it.
+    await q.query('delete from expenses where set_aside_id = $1', [setAsideId]);
     await q.query('delete from fund_set_asides where id = $1', [setAsideId]);
   });
   res.json({ ok: true });

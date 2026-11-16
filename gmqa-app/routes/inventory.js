@@ -96,7 +96,7 @@ function setSize(value) {
 }
 
 function cleanItem(body, partial) {
-  const f = pick(body, ['sku', 'name', 'unit', 'price', 'commission', 'set_size', 'set_price', 'set_commission', 'reorder_level', 'active']);
+  const f = pick(body, ['sku', 'name', 'unit', 'price', 'commission', 'set_size', 'set_price', 'set_commission', 'reorder_level', 'active', 'supplier_id']);
   const out = {};
   if ('sku' in f) out.sku = text(f.sku, 'SKU', { max: 40 });
   if (!partial || 'name' in f) out.name = text(f.name, 'Name', { required: true, max: 120 });
@@ -108,7 +108,13 @@ function cleanItem(body, partial) {
   if ('set_commission' in f) out.set_commission = money(f.set_commission, 'Commission per set');
   if ('reorder_level' in f) out.reorder_level = money(f.reorder_level, 'Reorder level');
   if ('active' in f) out.active = Boolean(f.active);
+  // Who the item comes from (Suppliers tab); blank = no supplier.
+  if ('supplier_id' in f) out.supplier_id = f.supplier_id == null || f.supplier_id === '' ? null : id(f.supplier_id, 'supplier');
   return out;
+}
+
+async function assertSupplier(q, supplierId) {
+  if (supplierId && !await q.one('select 1 from suppliers where id = $1 and active', [supplierId])) throw bad('Unknown supplier');
 }
 
 function tagIds(value) {
@@ -134,6 +140,7 @@ async function checkedItem(q, partId) {
 }
 
 async function insertItem(q, item, tags) {
+  await assertSupplier(q, item.supplier_id);
   const cols = Object.keys(item);
   const { id: partId } = await q.one(`insert into parts (${cols.join(', ')}) values (${cols.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
     cols.map(c => item[c]));
@@ -156,6 +163,7 @@ router.patch('/inventory/:id', requireOwner, async (req, res) => {
   res.json(await db.tx(req.user.email, async q => {
     await lockItem(q, partId);
     await loadPart(q, partId);
+    await assertSupplier(q, item.supplier_id);
     if (cols.length) await q.query(`update parts set ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} where id = $1`, [partId, ...cols.map(c => item[c])]);
     if (tags) await setTags(q, partId, tags);
     return checkedItem(q, partId);
