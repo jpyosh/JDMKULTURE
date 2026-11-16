@@ -711,7 +711,8 @@ function payWeek({ date, days, payouts, setAsides = [] }) {
 // parts sell (pays_when_sold), what is still owed: the cost of its parts sold from owed_from on, less what was paid to it
 // from that day on. A supplier paid on delivery is tracked for cost and profit only (owed: null).
 // lines: part lines of jobs not voided ({ supplier_id, part_id, name, unit, department, job_date, closed_on, quantity,
-//   pack_size, unit_cost, price, commission }), from the earliest day needed. The line's cost was frozen when it sold.
+//   pack_size, unit_cost, price, commission, job_id, jo_number, payment_received }), from the earliest day needed. The
+//   line's cost was frozen when it sold. Each item lists when it sold (sold: one entry per job, oldest first).
 // payments: supplier payments ({ id, supplier_id, expense_date, side, amount, description }).
 // Item names come from the inventory item. A job's discount is not spread over its lines.
 function supplierReport({ suppliers, lines, payments, start, end }) {
@@ -721,14 +722,20 @@ function supplierReport({ suppliers, lines, payments, start, end }) {
   const itemsOf = list => {
     const byPart = new Map();
     for (const l of list) {
-      const row = byPart.get(l.part_id) || { part_id: l.part_id, name: l.name, unit: l.unit, quantity: 0, sales: 0, cost: 0, commission: 0 };
-      row.quantity = round2(row.quantity + Number(l.quantity) * (Number(l.pack_size) || 1));
+      const row = byPart.get(l.part_id) || { part_id: l.part_id, name: l.name, unit: l.unit, quantity: 0, sales: 0, cost: 0, commission: 0, sold: [] };
+      const pieces = round2(Number(l.quantity) * (Number(l.pack_size) || 1));
+      row.quantity = round2(row.quantity + pieces);
       row.sales = round2(row.sales + Number(l.price));
       row.cost = round2(row.cost + l.cost);
       row.commission = round2(row.commission + Number(l.commission));
+      // One entry per job (a job selling the part as a set and as pieces is one sale).
+      const sale = row.sold.find(s => s.job_id === l.job_id);
+      if (sale) sale.quantity = round2(sale.quantity + pieces);
+      else row.sold.push({ job_id: l.job_id, jo_number: l.jo_number, date: l.sale_date, quantity: pieces, paid: Boolean(l.payment_received) });
       byPart.set(l.part_id, row);
     }
-    return [...byPart.values()].map(r => ({ ...r, profit: round2(r.sales - r.cost - r.commission) }))
+    const byDate = (a, b) => a.date.localeCompare(b.date) || a.job_id - b.job_id;
+    return [...byPart.values()].map(r => ({ ...r, sold: r.sold.sort(byDate), profit: round2(r.sales - r.cost - r.commission) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   };
   const totalsOf = items => ({ sales: sum(items, i => i.sales), cost: sum(items, i => i.cost), commission: sum(items, i => i.commission), profit: sum(items, i => i.profit) });

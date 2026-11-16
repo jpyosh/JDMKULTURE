@@ -30,6 +30,7 @@ function mount(el) {
       <summary>How Suppliers works</summary>
       <ul>
         <li><b>Add a supplier</b>, then <b>Give items</b> to tick the auto parts that come from them (or pick the supplier in an item's Edit form in Inventory).</li>
+        <li><b>Sold on</b>: each sale of the item in the days picked, with the day, how many and the JO number (oldest first).</li>
         <li><b>Sold</b>: the parts of that supplier sold in the days picked, booked like any sale (a parts job on the day it is done, paid or not).
           <b>Cost</b> is what they cost the shop when they sold; <b>Profit</b> = Sales − Cost − commission. A job's discount is not split over its parts.</li>
         <li><b>Pays as parts sell</b> (like consignment): <b>Still to pay</b> = the cost of every part of theirs sold since the day you picked, less what was paid to them
@@ -70,13 +71,16 @@ async function load() {
 }
 
 const shortDate = d => prettyDate(d).replace(/^\w+, /, '');
+const monthDay = d => shortDate(d).replace(/, \d{4}$/, '');
 const qty = n => Number(n).toLocaleString('en-PH', { maximumFractionDigits: 2 });
 
 function itemsTable(items) {
   if (!items.length) return '<div class="empty-state small">No parts sold in these days.</div>';
-  return `<div class="table-wrap"><table class="simple-table">
-    <thead><tr><th>Item</th><th class="num">Sold</th><th class="num">Sales</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
-    <tbody>${items.map(i => `<tr data-item="${i.part_id}"><td>${esc(i.name)}</td><td class="num">${qty(i.quantity)} ${esc(i.unit)}</td>
+  // When it sold: one line per sale (day, how many, JO number), oldest first; "not paid yet" if the customer still owes.
+  const soldOn = i => i.sold.map(s => `<span class="sold-line">${esc(monthDay(s.date))} · ${qty(s.quantity)} ${esc(i.unit)} · <span class="mono">${esc(s.jo_number || '')}</span>${s.paid ? '' : ' <span class="amber-text">not paid yet</span>'}</span>`).join('');
+  return `<div class="table-wrap"><table class="simple-table supplier-items">
+    <thead><tr><th>Item</th><th>Sold on</th><th class="num">Sold</th><th class="num">Sales</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
+    <tbody>${items.map(i => `<tr data-item="${i.part_id}"><td>${esc(i.name)}</td><td class="sold-on" data-sold-on>${soldOn(i)}</td><td class="num">${qty(i.quantity)} ${esc(i.unit)}</td>
       <td class="num money">${peso(i.sales)}</td><td class="num money">${peso(i.cost)}</td>
       <td class="num money ${i.profit < 0 ? 'neg' : 'pos'}">${peso(i.profit)}</td></tr>`).join('')}</tbody>
   </table></div>`;

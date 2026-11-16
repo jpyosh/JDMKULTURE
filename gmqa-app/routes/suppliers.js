@@ -106,7 +106,7 @@ router.get('/suppliers/report', async (req, res) => {
   const from = suppliers.reduce((d, s) => (s.pays_when_sold && s.owed_from < d ? s.owed_from : d), start);
   const [lines, payments] = await Promise.all([
     db.many(`select ji.part_id, ji.quantity, ji.pack_size, ji.unit_cost, ji.price, ji.commission,
-        p.supplier_id, p.name, p.unit, j.department, j.job_date, j.closed_on
+        p.supplier_id, p.name, p.unit, j.department, j.job_date, j.closed_on, j.id as job_id, j.jo_number, j.payment_received
       from job_items ji join jobs j on j.id = ji.job_id join parts p on p.id = ji.part_id
       where ji.kind = 'part' and j.voided_at is null and coalesce(j.closed_on, j.job_date) >= $1`, [from]),
     db.many(`select id, supplier_id, expense_date, side, amount, description from expenses
