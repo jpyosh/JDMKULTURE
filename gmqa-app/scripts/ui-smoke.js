@@ -76,8 +76,7 @@ async function launch() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, timezoneId: 'Asia/Manila' });
   const problems = [];
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
-  page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
-  // Every dialog is accepted, except the next one after declineNext() (its text is kept in lastDeclined).
+  page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });  // Every dialog is accepted, except the next one after declineNext() (its text is kept in lastDeclined).
   let declining = false;
   let lastDeclined = '';
   const declineNext = () => { declining = true; lastDeclined = ''; };
@@ -112,7 +111,7 @@ async function launch() {
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
-          'Analytics', 'Finance', 'Cash fund', 'Payroll', 'Settings']);
+          'Analytics', 'Finance', 'Cash fund', 'Remittances', 'Payroll', 'Settings']);
     });
 
     await step('design: system type, readable contrast, keyboard focus, reduced motion', async () => {
@@ -1605,6 +1604,58 @@ async function launch() {
       await shot('09b-cash-fund-undone');
     });
 
+    await step('remittances: a closed day is waiting for the bank until a deposit covers it; undo puts it back', async () => {
+      // DAY was closed at EOD above, with money left in the drawer.
+      await page.click('#nav [data-view="remittances"]');
+      const rm = page.locator('#view-remittances');
+      await rm.locator('[data-guide]').waitFor();
+      for (const words of [/passbook/i, /days/i, /difference/i]) assert.match(await rm.locator('[data-guide]').textContent(), words);
+      await rm.locator('[data-start]').fill(DAY);
+      await rm.locator('[data-end]').fill(DAY);
+      await rm.locator('[data-end]').dispatchEvent('change');
+      const waiting = rm.locator('[data-to-deposit] tr', { hasText: DAY });
+      await waiting.waitFor();
+      const cashToDeposit = (await rm.locator('[data-metric="cash"] [data-value]').textContent()).trim();
+      assert.match(await rm.locator('[data-metric="cash"] [data-sub]').textContent(), /^1 day$/);
+
+      // The passbook's printed balance, set once: from then on the screen says what the passbook should show.
+      assert.match(await rm.locator('[data-passbook]').textContent(), /not set/i);
+      await rm.locator('[data-set-start]').click();
+      await page.fill('#modal [data-b-date]', DAY);
+      await page.fill('#modal [data-b-balance]', '10000');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/saved/i);
+      await page.waitForFunction(() => /₱10,000\.00/.test(document.querySelector('#view-remittances [data-passbook] [data-value]')?.textContent || ''));
+      const peso = n => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const afterDeposit = peso(10000 + Number(cashToDeposit.replace(/[₱,]/g, '')));
+      assert.notEqual(cashToDeposit, '₱0.00', 'the closed day has cash for the bank');
+
+      // Add deposit: filled in with the days still waiting and their cash, and the app's figure for those days shown.
+      await rm.locator('[data-add]').click();
+      assert.equal(await page.inputValue('#modal [data-r-source]'), 'cash');
+      assert.deepEqual([await page.inputValue('#modal [data-r-from]'), await page.inputValue('#modal [data-r-to]')], [DAY, DAY]);
+      assert.equal(`₱${Number(await page.inputValue('#modal [data-r-amount]')).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`, cashToDeposit);
+      assert.match(await page.textContent('#modal [data-r-due]'), new RegExp(cashToDeposit.replace(/[.₱]/g, '\\$&')));
+      await page.fill('#modal [data-r-date]', '2026-09-15');
+      await page.fill('#modal [data-r-note]', 'BDO slip 0042');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/recorded/i);
+      const group = rm.locator('[data-groups] tr', { hasText: 'BDO slip 0042' });
+      await group.waitFor();
+      assert.match(await group.textContent(), /Matches/);
+      await page.waitForFunction(() => document.querySelector('#view-remittances [data-metric="cash"] [data-value]').textContent === '₱0.00');
+      assert.equal((await rm.locator('[data-passbook] [data-value]').textContent()).trim(), afterDeposit, 'the deposit adds to what the passbook should say');
+      assert.match(await rm.locator('[data-passbook]').textContent(), /1 deposit/);
+      await shot('09c-remittances');
+
+      // Undo: the day is waiting again, and the passbook figure goes back.
+      await group.locator('[data-act="del-deposit"]').click();
+      await expectToast(/removed/i);
+      await waiting.waitFor();
+      assert.equal(await rm.locator('[data-groups] tr', { hasText: 'BDO slip 0042' }).count(), 0);
+      assert.equal((await rm.locator('[data-passbook] [data-value]').textContent()).trim(), '₱10,000.00');
+    });
+
     await step('payroll: any date range, days line up with weekdays', async () => {
       await page.click('#nav [data-view="payroll"]');
       // The shop's pay week runs Sunday to Saturday: Payroll opens on it, and "This week" / "Last week" follow it.
@@ -1698,7 +1749,9 @@ async function launch() {
       await payroll.locator('[data-start]').fill('2025-09-28');
       await payroll.locator('[data-start]').dispatchEvent('change');
       await expectToast(/at most/);
-      // The browser logs the refused request (400) as a console error; that one is expected here.
+      // The browser logs the refused request (400) as a console error; that one is expected here. Typing and the change
+      // event can each send it, so wait for both to finish before setting them aside.
+      await page.waitForLoadState('networkidle');
       const expected400 = problems.slice(problemsBefore).filter(p => /status of 400/.test(p));
       assert.ok(expected400.length >= 1, 'the over-long range was refused by the server');
       problems.splice(problemsBefore, problems.length - problemsBefore, ...problems.slice(problemsBefore).filter(p => !/status of 400/.test(p)));

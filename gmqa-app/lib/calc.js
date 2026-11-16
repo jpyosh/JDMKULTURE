@@ -601,6 +601,77 @@ function serviceTrends(periods, jobs) {
   return { items, other, discounts, compare: compared ? { now: periods[now].label, before: periods[before].label } : null };
 }
 
+// ---------------------------------------------------------------- remittances (money taken to the bank)
+
+// Which of a day's money a deposit carries.
+const REMIT_SIDES = { cash: ['cash'], gcash: ['gcash'], both: ['cash', 'gcash'] };
+const byDepositOrder = (a, b) => (a.deposit_date < b.deposit_date ? -1 : a.deposit_date > b.deposit_date ? 1 : a.id - b.id);
+
+// Bank deposits checked against the days whose money they carried, and what is still to be deposited.
+// days: [{ date, closed, cash, gcash, countedCash, countedGcash }] for start..end and every day a deposit covers;
+//   cash / gcash = what the day leaves for the bank (EOD's expected drawer less the float, and expected GCash).
+// remittances: deposits as stored (deposit_date, amount, source cash|gcash|both, covers_from..covers_to or none).
+// Deposits for the same money and days are added together (one passbook line per GCash transfer limit, for example).
+function remittanceReport({ days, remittances, start, end }) {
+  const byDate = new Map(days.map(d => [d.date, d]));
+  const amountOn = (date, side) => round2(byDate.get(date)?.[side]);
+  const grouped = new Map();
+  const unlinked = [];
+  for (const r of [...remittances].sort(byDepositOrder)) {
+    if (!r.covers_from) { unlinked.push(r); continue; }
+    const key = `${r.source}|${r.covers_from}|${r.covers_to}`;
+    if (!grouped.has(key)) grouped.set(key, { key, source: r.source, from: r.covers_from, to: r.covers_to, deposits: [] });
+    grouped.get(key).deposits.push(r);
+  }
+  const groups = [...grouped.values()].sort((a, b) => a.from.localeCompare(b.from) || a.source.localeCompare(b.source) || a.to.localeCompare(b.to));
+
+  // Which deposit took each day's cash and GCash. A day's money taken by two different deposits is flagged on both.
+  const coveredBy = new Map();
+  for (const g of groups) {
+    const dates = datesBetween(g.from, g.to);
+    g.deposited = sum(g.deposits, d => d.amount);
+    g.due = sum(dates, date => sum(REMIT_SIDES[g.source], side => amountOn(date, side)));
+    g.difference = round2(g.deposited - g.due);
+    g.openDays = dates.filter(date => !byDate.get(date)?.closed);
+    g.overlaps = false;
+    for (const date of dates) {
+      for (const side of REMIT_SIDES[g.source]) {
+        const other = coveredBy.get(`${date}|${side}`);
+        if (other) { other.overlaps = true; g.overlaps = true; } else coveredBy.set(`${date}|${side}`, g);
+      }
+    }
+  }
+
+  const range = datesBetween(start, end).map(date => ({
+    ...(byDate.get(date) || { date, closed: false, cash: 0, gcash: 0, countedCash: null, countedGcash: null }),
+    cashGroup: coveredBy.get(`${date}|cash`)?.key || null,
+    gcashGroup: coveredBy.get(`${date}|gcash`)?.key || null,
+  }));
+  // Still to deposit: closed days whose money no deposit has carried yet. A day still open waits until it is closed.
+  const waiting = side => {
+    const list = range.filter(d => d.closed && !d[`${side}Group`] && round2(d[side]) !== 0).map(d => ({ date: d.date, amount: round2(d[side]) }));
+    return { amount: sum(list, d => d.amount), days: list };
+  };
+  const deposited = sum(groups, g => g.deposited);
+  const due = sum(groups, g => g.due);
+  return {
+    days: range,
+    groups,
+    unlinked,
+    toDeposit: { cash: waiting('cash'), gcash: waiting('gcash') },
+    openDays: range.filter(d => !d.closed && (round2(d.cash) !== 0 || round2(d.gcash) !== 0)).map(d => d.date),
+    totals: { deposited, due, difference: round2(deposited - due), unlinked: sum(unlinked, d => d.amount) },
+  };
+}
+
+// What the passbook should say: its balance as printed on startDate, plus every deposit made after that day
+// (those on startDate are already in the printed balance). Interest and withdrawals are not tracked.
+function passbookExpected({ startDate, startBalance, remittances }) {
+  const since = remittances.filter(r => r.deposit_date > startDate);
+  const depositedSince = sum(since, r => r.amount);
+  return { startDate, startBalance: round2(startBalance), depositedSince, count: since.length, expected: round2(Number(startBalance) + depositedSince) };
+}
+
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
@@ -608,4 +679,5 @@ module.exports = {
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
+  remittanceReport, passbookExpected,
 };

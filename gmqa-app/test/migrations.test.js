@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -641,4 +641,41 @@ test('020 lets a carwash job record the day it was paid, without changing any jo
   await assert.rejects(driver.query("update jobs set closed_on = '2027-05-02' where jo_number = 'CW-1'"), /check/i, 'carwash is still never marked done');
   // The running departments keep their rule.
   await assert.rejects(driver.query("update jobs set payment_received = true where jo_number = 'PC-1'"), /check/i, 'a running job paid needs a pay day');
+});
+
+test('021 adds bank deposits (remittances), each tied to the days it covers or to none, without changing anything else', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '020' });
+  await driver.query("insert into daily_meta (job_date, actual_cash, closed_at) values ('2027-05-01', 500, now())");
+  const before = await all(driver, 'select * from daily_meta order by job_date');
+
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '021' }), ['021']);
+  assert.deepEqual(await all(driver, 'select * from daily_meta order by job_date'), before, 'no EOD changes');
+  assert.equal((await one(driver, 'select count(*)::int n from remittances')).n, 0);
+
+  const insert = (deposit_date, amount, source, from = null, to = from) => driver.query(
+    'insert into remittances (deposit_date, amount, source, covers_from, covers_to) values ($1, $2, $3, $4, $5)', [deposit_date, amount, source, from, to]);
+  await insert('2027-05-03', 26225, 'gcash', '2027-05-01', '2027-05-02');
+  await insert('2027-05-03', 30000, 'both', '2027-05-01', '2027-05-03');
+  await insert('2027-05-03', 4750, 'cash'); // not tied to any day
+  await assert.rejects(insert('2027-05-03', 0, 'cash', '2027-05-01'), /check/i, 'an amount');
+  await assert.rejects(insert('2027-05-03', 100, 'bitcoin', '2027-05-01'), /check/i, 'cash, gcash or both');
+  await assert.rejects(insert('2027-05-03', 100, 'cash', '2027-05-02', '2027-05-01'), /check/i, 'days in order');
+  await assert.rejects(insert('2027-05-03', 100, 'cash', '2027-05-01', '2027-05-04'), /check/i, 'money from a day after the deposit');
+  await assert.rejects(driver.query("insert into remittances (deposit_date, amount, source, covers_from) values ('2027-05-03', 100, 'cash', '2027-05-01')"),
+    /check/i, 'a first day needs a last day');
+
+  const row = await one(driver, "select amount, covers_from, covers_to from remittances where source = 'gcash'");
+  assert.deepEqual(row, { amount: 26225, covers_from: '2027-05-01', covers_to: '2027-05-02' });
+  assert.ok((await one(driver, "select count(*)::int n from audit_log where table_name = 'remittances'")).n >= 3, 'audited');
+  assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'remittances'")).rls, true);
+
+  // The passbook's balance on the day tracking starts: one row, set by the owner, nothing set yet.
+  assert.equal((await one(driver, 'select count(*)::int n from bank_start')).n, 0);
+  await driver.query("insert into bank_start (start_date, balance) values ('2027-05-02', 244607.86)");
+  assert.deepEqual(await one(driver, 'select id, start_date, balance from bank_start'), { id: 1, start_date: '2027-05-02', balance: 244607.86 });
+  await assert.rejects(driver.query("insert into bank_start (id, start_date, balance) values (2, '2027-05-02', 1)"), /check/i, 'one starting balance');
+  await assert.rejects(driver.query('update bank_start set balance = -1'), /check/i);
+  assert.ok((await one(driver, "select count(*)::int n from audit_log where table_name = 'bank_start'")).n >= 1, 'audited');
+  assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'bank_start'")).rls, true);
 });

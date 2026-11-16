@@ -178,6 +178,26 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - Migration 008 adds `cash_fund`, `cash_fund_topups`, expense side `fund` and `expenses.topup_id`;
   existing expenses are unchanged.
 
+## Remittances (owner)
+
+- The money taken to the bank, one row per passbook line (`remittances`, migration 021): the date, the amount, whether it
+  carried the drawer's **cash**, the **GCash** money or **both**, and the business days it covers (`covers_from..covers_to`).
+  A deposit for several days at once is normal. Days left empty = a deposit not tied to any day yet (listed on its own).
+  A deposit cannot cover a day after it was made, nor be dated after today.
+- What a day leaves for the bank is EOD's expected drawer **less the float** (it stays for the next day) and EOD's expected
+  GCash: after commission, expenses, payroll payouts, bill envelopes and tips given out. A payday is often negative, because
+  the wages came out of the days before it; only days added together compare with a deposit.
+- Deposits for the same money and days are added together (one transfer split into several passbook lines), then compared
+  with what the app says those days left: **Matches**, **short** or **over** (`remittanceReport` in `lib/calc.js`).
+  A day's money taken by two different deposits is flagged on both.
+- **Still to deposit**: closed days whose cash or GCash no deposit has covered. Days still open are named and wait until closed.
+  **Undo** removes a deposit recorded by mistake.
+- **Passbook should say**: the owner sets the last balance printed in the passbook and its date once (`bank_start`, one row;
+  setting it again replaces it). The screen adds every deposit dated after that day (`passbookExpected` in `lib/calc.js`), so it
+  can be checked against the passbook each time it is updated. Interest and withdrawals are not tracked.
+- With no range picked, the screen starts on the passbook date (everything before it is settled), else on the first day any
+  deposit covers, else 30 days back.
+
 ## Inventory and parts
 
 - **Inventory** tab: everything the shop stocks — auto parts for sale, carwash and detailing chemicals,
