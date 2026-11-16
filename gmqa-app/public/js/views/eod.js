@@ -70,6 +70,7 @@ function mount(el) {
         <div class="card"><h2>Cash drawer</h2><div data-cash></div></div>
         <div class="card"><h2>GCash</h2><div data-gcash></div></div>
         <div class="card"><h2>Variance</h2><div data-variance></div></div>
+        <div class="card"><h2>This pay week</h2><div data-week></div></div>
       </div>
     </div>
 `;
@@ -157,6 +158,7 @@ function render() {
     render();
   }));
   renderEnvelopes();
+  renderWeek();
   renderFundHint();
   renderMath();
 }
@@ -251,10 +253,11 @@ function renderMath() {
   // Same rule as lib/calc.js: tips stay in GCash until given to the crew; what is not given carries over.
   const tipsGiven = s.tipsTracked ? num('gcash_tips_passed') : tips;
   const tipsToGive = Math.max(0, round2(s.tipsOwedBefore + tips - tipsGiven));
+  // Same rule as lib/calc.js: weekly payroll comes from the money saved during the week, never from today's count.
   const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses
-    - s.payrollCash - s.setAsideCash - s.billTopUpCash;
+    - s.setAsideCash - s.billTopUpCash;
   const expectedGcash = s.gcashReceived + tips - tipsGiven - commissionGcash - s.gcashExpenses
-    - s.payrollGcash - s.setAsideGcash - s.billTopUpGcash;
+    - s.setAsideGcash - s.billTopUpGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
   // On a day with parts counter sales, money received is split into job orders and the parts counter.
   const counter = s.partsCashReceived || s.partsGcashReceived;
@@ -267,7 +270,6 @@ function renderMath() {
     + received('+ ', 'Cash', s.cashReceived, s.partsCashReceived)
     + line('− Commission paid in cash', peso(commissionCash))
     + line('− Cash expenses', peso(s.cashExpenses))
-    + (s.payrollCash ? line('− Payroll paid out', peso(s.payrollCash)) : '')
     + (s.setAsideCash ? line('− Put aside for bills (envelopes)', peso(s.setAsideCash)) : '')
     + (s.billTopUpCash ? line('− Bill shortfall from drawer', peso(s.billTopUpCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
@@ -277,7 +279,6 @@ function renderMath() {
     + line('− Tips given to crew', peso(tipsGiven))
     + line('− Commission paid via GCash', peso(commissionGcash))
     + line('− GCash expenses', peso(s.gcashExpenses))
-    + (s.payrollGcash ? line('− Payroll paid out', peso(s.payrollGcash)) : '')
     + (s.setAsideGcash ? line('− Put aside for bills (envelopes)', peso(s.setAsideGcash)) : '')
     + (s.billTopUpGcash ? line('− Bill shortfall from GCash', peso(s.billTopUpGcash)) : '')
     + line('Expected GCash', peso(expectedGcash), 'total')
@@ -289,6 +290,14 @@ function renderMath() {
   if (s.earlierSalesPaid) notes.push(`${peso(s.earlierSalesPaid)} received today is for jobs and counter sales from earlier days. It is in today's count; the sales stay on their own days.`);
   if (s.paidLater) notes.push(`${peso(s.paidLater)} of today's sales were paid on a later day, so that money is not in today's count.`);
   $('[data-cash]', root).insertAdjacentHTML('beforeend', notes.map(n => `<div class="hint mt">${esc(n)}</div>`).join(''));
+  // Wages handed out today: named, but not taken out of today's drawer or GCash.
+  const payroll = round2(s.payrollCash + s.payrollGcash);
+  if (payroll) {
+    const split = s.payrollCash && s.payrollGcash ? ` (${peso(s.payrollCash)} cash, ${peso(s.payrollGcash)} GCash)` : s.payrollGcash ? ' (GCash)' : ' (cash)';
+    $('[data-cash]', root).insertAdjacentHTML('beforeend', `<div class="payroll-note mt" data-payroll-note>
+      <div class="row-line"><span class="k">Payroll handed out today${split}</span><span class="money">${peso(payroll)}</span></div>
+      <div class="hint">Paid from the week's cash, not this drawer, so it is not in the count above. See This pay week.</div></div>`);
+  }
 
   const variance = (key, expected) => {
     if (val(key) === '') return '<span class="muted">not counted</span>';
@@ -302,6 +311,34 @@ function renderMath() {
 }
 
 const round2 = n => Math.round(n * 100) / 100;
+
+// The whole pay week (Sunday to Saturday): each day's money after commission and expenses, the wages for that week
+// (wherever they were handed out), and what is left after them. Built by payWeek in lib/calc.js.
+function renderWeek() {
+  const w = current.day.week;
+  const box = $('[data-week]', root);
+  if (!w) { box.innerHTML = ''; return; }
+  const short = d => prettyDate(d).replace(/, \d{4}$/, '');
+  const span = (a, b) => `${short(a).replace(/^\w+, /, '')} – ${short(b).replace(/^\w+, /, '')}`;
+  const status = d => (d.date > todayLocal() ? '' : d.closed ? '<span class="muted small">closed</span>' : (d.cash || d.gcash) ? '<span class="amber-text small">open</span>' : '');
+  const paid = w.payouts.map(p => `${peso(p.amount)} ${p.side === 'gcash' ? 'GCash' : 'cash'} on ${short(p.payout_date)}`).join(', ');
+  box.innerHTML = `
+    <p class="hint">${esc(span(w.start, w.end))}. Each day's money after commission and expenses; the week's wages come out of it.</p>
+    <div class="table-wrap"><table class="simple-table week-table">
+      <thead><tr><th>Day</th><th class="num">Cash</th><th class="num">GCash</th><th></th></tr></thead>
+      <tbody>
+        ${w.days.map(d => `<tr data-week-day="${d.date}"${d.date === current.date ? ' class="is-today"' : ''}>
+          <td>${esc(short(d.date))}</td><td class="num money">${peso(d.cash)}</td><td class="num money">${peso(d.gcash)}</td><td>${status(d)}</td></tr>`).join('')}
+        <tr class="total-row"><td>Week's money</td><td class="num money" data-week-total="cash">${peso(w.cash)}</td>
+          <td class="num money" data-week-total="gcash">${peso(w.gcash)}</td><td></td></tr>
+        <tr><td>− Payroll for this week</td><td class="num money" data-week-payroll="cash">${peso(w.payrollCash)}</td>
+          <td class="num money" data-week-payroll="gcash">${peso(w.payrollGcash)}</td><td></td></tr>
+        <tr class="total-row"><td>Left after payroll</td><td class="num money" data-week-left="cash">${peso(w.cashLeft)}</td>
+          <td class="num money" data-week-left="gcash">${peso(w.gcashLeft)}</td><td></td></tr>
+      </tbody></table></div>
+    <p class="hint">${w.payouts.length ? `Wages for this week: ${esc(paid)}.` : 'No wages recorded for this week yet (Payroll → Record payout).'}
+      ${w.openDays.length ? ` Not closed yet: ${esc(w.openDays.map(short).join(', '))}.` : ''}</p>`;
+}
 
 // A reminder at the top of EOD while any GCash tip (today's or an earlier day's) has not been given out.
 function renderTipsReminder(toGive, given) {

@@ -409,6 +409,10 @@ th.num{text-align:right;}
 .simple-table{border-collapse:collapse;font-size:14px;}
 .simple-table input,.simple-table select{min-height:32px;padding:5px 9px;}
 .dept-table tr.total-row td,.funds-table tr.total-row td{border-top:1px solid var(--surface-3);font-weight:600;}
+/* EOD: the pay week box; today's row stands out, and the payroll note under the drawer */
+.week-table{font-size:13px;}
+.week-table tr.is-today td{font-weight:600;}
+.payroll-note{border-top:1px dashed var(--surface-3);padding-top:8px;}
 /* Remittances: each passbook line of a deposit on its own line, with its Undo */
 .deposit-line{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0;}
 .sa-form{display:flex;gap:6px;align-items:center;justify-content:flex-end;}

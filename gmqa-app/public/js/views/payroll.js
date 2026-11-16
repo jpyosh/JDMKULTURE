@@ -1,5 +1,5 @@
 // Payroll for any date range: attendance per day, overtime per day, dated adjustments, and the
-// payout that leaves the drawer (shown in that day's EOD).
+// payout: the wages handed out from the week's saved cash (shown in EOD's This pay week, never cut from one day's drawer).
 import { $, $$, api, apiDownload, ApiError, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, openModal, closeModal, modalHeader } from '../ui.js';
 
 let root;
@@ -73,7 +73,7 @@ function mount(el) {
     </div>
     <div class="card">
       <h2>Payouts for this range</h2>
-      <p class="hint">A payout is the wages handed out. Paid from Cash or GCash, it is subtracted from that day's expected drawer on the EOD screen.</p>
+      <p class="hint">A payout is the wages handed out from the week's saved cash or GCash. It shows in EOD under <b>This pay week</b> for the week it pays, and is not taken out of any one day's drawer.</p>
       <div data-payouts></div>
     </div>`;
   $('[data-start]', root).addEventListener('change', onRangeInput);
@@ -170,7 +170,7 @@ function render() {
     ({ ot: otModal, adjust: adjustModal, edit: employeeModal, deactivate })[btn.dataset.act](row);
   }));
   $$('[data-del-payout]', root).forEach(btn => btn.addEventListener('click', async () => {
-    if (!window.confirm('Delete this payout? It will be added back to that day\'s expected drawer.')) return;
+    if (!window.confirm('Delete this payout? It comes off that week\'s payroll in EOD and Remittances.')) return;
     await api('DELETE', `/payroll/payouts/${btn.dataset.delPayout}`);
     toast('Payout deleted');
     await reload();
@@ -513,7 +513,7 @@ async function deactivate({ employee }) {
 }
 
 function payoutModal() {
-  openModal(`${modalHeader('Record payout', `Wages for ${range.start} → ${range.end}. Paid from the drawer, so it comes off that day's EOD.`)}
+  openModal(`${modalHeader('Record payout', `Wages for ${range.start} → ${range.end}. Paid from the week's cash: it shows in EOD under This pay week.`)}
     <div class="form-grid modal-form-grid">
       <div><label>Payout date</label><input type="date" data-payout-date value="${todayLocal()}"></div>
       <div><label>Paid from</label><select data-payout-side><option value="cash">Cash</option><option value="gcash">GCash</option></select></div>
@@ -527,7 +527,7 @@ function payoutModal() {
       side: $('[data-payout-side]', card).value, amount: Number($('[data-payout-amount]', card).value || 0),
       note: $('[data-payout-note]', card).value.trim(),
     };
-    // The same payout twice would take the wages out of the drawer twice: ask first (the server refuses it otherwise).
+    // The same payout twice would count the wages twice: ask first (the server refuses it otherwise).
     const same = data.payouts.find(p => p.payout_date === body.payout_date && p.period_start === body.period_start
       && p.period_end === body.period_end && p.side === body.side && Number(p.amount) === body.amount);
     if (same) {

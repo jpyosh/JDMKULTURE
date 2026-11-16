@@ -3,17 +3,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { remittanceReport, passbookExpected } = require('../lib/calc');
 
-// The shop's real Nov 9-15, 2026: what each day should have left for the bank (cash after commission, expenses and
-// payroll; GCash after tips given out), and what was counted at EOD. Nov 15 paid the week's wages from the drawer.
-const day = (date, cash, gcash, countedCash = cash, countedGcash = gcash, closed = true) => ({ date, closed, cash, gcash, countedCash, countedGcash });
+// The shop's real Nov 9-15, 2026: what each day's drawer and GCash held after commission and expenses (GCash after tips
+// given out), what was counted at EOD, and payroll handed out that day from the money saved during the week: on Sunday
+// Nov 15, the wages for Nov 8-14. Payroll leaves the money for the bank on the day it is handed out.
+const day = (date, cash, gcash, { countedCash = cash, countedGcash = gcash, closed = true, payrollCash = 0, payrollGcash = 0 } = {}) =>
+  ({ date, closed, cash, gcash, countedCash, countedGcash, payrollCash, payrollGcash });
 const DAYS = [
   day('2026-11-09', 5580, 5890),
-  day('2026-11-10', 7350, 20335, 6350), // ₱1,000 short in the drawer
+  day('2026-11-10', 7350, 20335, { countedCash: 6350 }), // ₱1,000 short in the drawer
   day('2026-11-11', 26885, 6900),
   day('2026-11-12', 3120, 5570),
   day('2026-11-13', 16665, 12540),
   day('2026-11-14', 12100, 6340),
-  day('2026-11-15', -12429.06, 6350, 10500),
+  day('2026-11-15', 10500, 6350, { payrollCash: 22929.06 }),
 ];
 let nextId = 1;
 const deposit = (deposit_date, amount, source, covers_from = null, covers_to = covers_from, note = null) =>
@@ -42,10 +44,11 @@ test('each deposit is checked against the days it covers; days not deposited yet
   // A deposit not tied to any day is listed on its own, never mixed into a day's money.
   assert.deepEqual(r.unlinked.map(d => [d.amount, d.note]), [[4750, 'not sure yet']]);
 
-  // Nov 12-15 are still to deposit. Nov 15's payroll came out of the earlier days' cash, so the cash adds up to
+  // Nov 12-15 are still to deposit. Nov 15's payroll came out of the cash saved since Nov 12, so the cash adds up to
   // what is really left: ₱19,455.94.
   assert.equal(r.toDeposit.cash.amount, 19455.94);
-  assert.deepEqual(r.toDeposit.cash.days.map(d => d.date), ['2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15']);
+  assert.deepEqual(r.toDeposit.cash.days.map(d => [d.date, d.amount]),
+    [['2026-11-12', 3120], ['2026-11-13', 16665], ['2026-11-14', 12100], ['2026-11-15', -12429.06]]);
   assert.equal(r.toDeposit.gcash.amount, 30800);
   assert.deepEqual(r.toDeposit.gcash.days.map(d => [d.date, d.amount]),
     [['2026-11-12', 5570], ['2026-11-13', 12540], ['2026-11-14', 6340], ['2026-11-15', 6350]]);
@@ -59,7 +62,7 @@ test('each deposit is checked against the days it covers; days not deposited yet
 });
 
 test('one transfer for cash and GCash together, split over several deposits', () => {
-  const days = [day('2026-11-07', -10964.22, 9650), day('2026-11-08', 6250, 35410)];
+  const days = [day('2026-11-07', 7200, 9650, { payrollCash: 18164.22 }), day('2026-11-08', 6250, 35410)];
   const rows = [deposit('2026-11-09', 30000, 'both', '2026-11-07', '2026-11-08'), deposit('2026-11-09', 10345.78, 'both', '2026-11-07', '2026-11-08')];
   const r = remittanceReport({ days, remittances: rows, start: '2026-11-07', end: '2026-11-08' });
   assert.equal(r.groups.length, 1, 'deposits for the same days are added together');
@@ -69,7 +72,7 @@ test('one transfer for cash and GCash together, split over several deposits', ()
 });
 
 test('a day deposited twice is flagged; a day still open is named and never counted as still to deposit', () => {
-  const days = [day('2026-11-12', 3120, 5570), day('2026-11-13', 16665, 12540, null, null, false)];
+  const days = [day('2026-11-12', 3120, 5570), day('2026-11-13', 16665, 12540, { countedCash: null, countedGcash: null, closed: false })];
   const rows = [deposit('2026-11-14', 3120, 'cash', '2026-11-12'), deposit('2026-11-14', 19785, 'cash', '2026-11-12', '2026-11-13')];
   const r = remittanceReport({ days, remittances: rows, start: '2026-11-12', end: '2026-11-13' });
   assert.deepEqual(r.groups.map(g => g.overlaps), [true, true]);
