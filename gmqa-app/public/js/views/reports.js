@@ -20,7 +20,7 @@ function mount(el) {
       <button class="btn ghost small" type="button" data-preset="last-30">Last 30 days</button>
     </div>
     <div data-open-days></div>
-    <div class="weekly-summary" data-summary></div>
+    <div class="weekly-summary cols-5" data-summary></div>
     <div class="card">
       <div class="table-wrap"><table class="weekly-table">
         <thead><tr><th>Date</th><th class="num">Vehicles</th>${DEPARTMENTS.map(d => `<th class="num">${esc(d.label)}</th>`).join('')}<th class="num">Total sales</th>
@@ -37,6 +37,7 @@ function mount(el) {
         <li><b>Unpaid</b>: jobs booked that day that the customer has not paid yet. Not included in sales or profit until paid.</li>
         <li><b>Commission</b>: detailer commission on the day's sales. <b>Parts cost</b>: what the parts sold that day cost the shop.
           <b>Expenses</b>: what was spent that day, from the drawer or the cash fund. Parts bought to sell are stock, not an expense: their cost counts when they sell.</li>
+        <li>The cards: <b>Costs</b> = Commission + Expenses; <b>Cost of parts sold</b> = the Parts cost column added up.</li>
         <li><b>Profit</b> = Total sales − Commission − Parts cost − Expenses. It is the same figure as Finance before payroll and bills, which Finance also takes off.</li>
         <li>Every day with something on it is listed and counted here, including days not closed at EOD yet (marked <b>open</b>). Finance only counts a day once it is closed.</li>
       </ul>
@@ -71,7 +72,8 @@ async function load() {
   $('[data-summary]', root).innerHTML = `
     <div class="weekly-stat"><span class="weekly-stat-label">Vehicles</span><strong>${t.vehicles}</strong><span class="weekly-stat-note">${days.length} trading day${days.length === 1 ? '' : 's'}</span></div>
     <div class="weekly-stat"><span class="weekly-stat-label">Collected</span><strong>${peso(t.collected)}</strong><span class="weekly-stat-note">${DEPARTMENTS.map(d => `${esc(d.label)} ${peso(t.departments[d.key])}`).join(' · ')}</span></div>
-    <div class="weekly-stat"><span class="weekly-stat-label">Costs</span><strong class="amber-text">${peso(t.commission + t.partsCost + t.expenses)}</strong><span class="weekly-stat-note">Comm. ${peso(t.commission)}${t.partsCost ? ` · Parts ${peso(t.partsCost)}` : ''} · Exp. ${peso(t.expenses)}</span></div>
+    <div class="weekly-stat"><span class="weekly-stat-label">Costs</span><strong class="amber-text">${peso(t.commission + t.expenses)}</strong><span class="weekly-stat-note">Comm. ${peso(t.commission)} · Exp. ${peso(t.expenses)}</span></div>
+    <div class="weekly-stat" data-stat="parts-cost"><span class="weekly-stat-label">Cost of parts sold</span><strong class="amber-text">${peso(t.partsCost)}</strong><span class="weekly-stat-note">What the parts sold cost the shop</span></div>
     <div class="weekly-stat weekly-stat-profit"><span class="weekly-stat-label">Profit</span><strong class="pos">${peso(t.profit)}</strong><span class="weekly-stat-note">${t.receivables ? `${peso(t.receivables)} still unpaid` : 'All jobs paid'}</span></div>`;
   const tbody = $('[data-rows]', root);
   if (!days.length) {

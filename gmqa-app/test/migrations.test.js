@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021', '022']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -678,4 +678,48 @@ test('021 adds bank deposits (remittances), each tied to the days it covers or t
   await assert.rejects(driver.query('update bank_start set balance = -1'), /check/i);
   assert.ok((await one(driver, "select count(*)::int n from audit_log where table_name = 'bank_start'")).n >= 1, 'audited');
   assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'bank_start'")).rls, true);
+});
+
+test('022 adds suppliers, weekly bill envelopes and their fees, without changing anything that exists', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '021' });
+  await driver.query("insert into funds (name, frequency, due_day, amount) values ('Water 022', 'monthly', 20, 900)");
+  const fund = await one(driver, "select id from funds where name = 'Water 022'");
+  await driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount) values ($1, '2027-06-02', 'cash', 300)", [fund.id]);
+  await driver.query("insert into parts (name, price) values ('Key cover 022', 500)");
+  await driver.query("insert into expenses (expense_date, side, description, amount, for_resale) values ('2027-06-02', 'cash', 'Remit', 700, true)");
+  const before = {
+    setAsides: await all(driver, 'select * from fund_set_asides order by id'),
+    parts: await all(driver, 'select * from parts order by id'),
+    expenses: await all(driver, 'select * from expenses order by id'),
+  };
+
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '022' }), ['022']);
+  // Set-asides made before stay daily (taken out of their day's drawer); items and payments have no supplier yet.
+  const drop = (rows, ...keys) => rows.map(r => Object.fromEntries(Object.entries(r).filter(([k]) => !keys.includes(k))));
+  const setAsides = await all(driver, 'select * from fund_set_asides order by id');
+  assert.ok(setAsides.every(s => s.week_start === null));
+  assert.deepEqual(drop(setAsides, 'week_start'), before.setAsides);
+  const parts = await all(driver, 'select * from parts order by id');
+  assert.ok(parts.every(p => p.supplier_id === null));
+  assert.deepEqual(drop(parts, 'supplier_id'), before.parts);
+  const expenses = await all(driver, 'select * from expenses order by id');
+  assert.ok(expenses.every(e => e.supplier_id === null && e.set_aside_id === null));
+  assert.deepEqual(drop(expenses, 'supplier_id', 'set_aside_id'), before.expenses);
+
+  // A supplier: paid as its parts sell (the default) or when they are delivered, what is owed counted from a day.
+  await driver.query("insert into suppliers (name, owed_from) values ('Greaseheads', '2027-06-01')");
+  const gh = await one(driver, 'select id, name, pays_when_sold, owed_from, active from suppliers');
+  assert.deepEqual([gh.name, gh.pays_when_sold, gh.owed_from, gh.active], ['Greaseheads', true, '2027-06-01', true]);
+  await assert.rejects(driver.query("insert into suppliers (name) values ('greaseheads')"), /unique|duplicate/i, 'one active supplier per name');
+  await assert.rejects(driver.query("insert into suppliers (name) values ('  ')"), /check/i);
+  await driver.query('update parts set supplier_id = $1', [gh.id]);
+  // A payment to a supplier is a supplier payment (not a second cost).
+  await assert.rejects(driver.query("insert into expenses (expense_date, side, description, amount, supplier_id) values ('2027-06-03', 'cash', 'x', 1, $1)", [gh.id]), /check/i);
+  await driver.query("insert into expenses (expense_date, side, description, amount, for_resale, supplier_id) values ('2027-06-03', 'cash', 'Pay GH', 1, true, $1)", [gh.id]);
+  // A weekly envelope belongs to a pay week, which starts on a Sunday.
+  await assert.rejects(driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount, week_start) values ($1, '2027-06-02', 'cash', 1, '2027-05-31')", [fund.id]), /check/i);
+  await driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount, week_start) values ($1, '2027-06-02', 'gcash', 1, '2027-05-30')", [fund.id]);
+  assert.ok((await one(driver, "select count(*)::int n from audit_log where table_name = 'suppliers'")).n >= 1, 'audited');
+  assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'suppliers'")).rls, true);
 });

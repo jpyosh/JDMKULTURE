@@ -10,6 +10,7 @@ import { toCsv, parsePasted, importRows } from '../components/sheet-io.js';
 let root;
 let items = [];
 let tags = [];
+let suppliers = []; // owner only: who each item comes from (Suppliers tab)
 const filter = { tag: '', search: '', container: '' };
 const sort = { field: 'name', dir: 1 };
 let editing = null;
@@ -122,7 +123,7 @@ async function show() {
 }
 
 async function reload({ catalog = false } = {}) {
-  [items, tags] = await Promise.all([api('GET', '/inventory'), api('GET', '/tags')]);
+  [items, tags, suppliers] = await Promise.all([api('GET', '/inventory'), api('GET', '/tags'), isOwner() ? api('GET', '/suppliers') : []]);
   render();
   // Job editors and the Parts tab read the parts list from the shared catalog.
   if (catalog) await loadCatalog(true);
@@ -377,6 +378,7 @@ function itemPanel(item) {
       ${hasSet(item) ? row('Set', `set of ${qty(item.set_size)} · ${peso(item.set_price)}`) : ''}
       ${Number(item.commission) ? row('Commission', `${peso(item.commission)} per ${esc(item.unit)}`) : ''}
       ${owner ? row('Avg cost', peso(item.avg_cost)) + row('Value', peso(valueOf(item))) : ''}
+      ${owner && item.supplier_id ? row('Supplier', esc(suppliers.find(s => s.id === item.supplier_id)?.name || '—')) : ''}
       ${item.tags.length ? row('Tags', `<span class="panel-tags">${tagChips(item)}</span>`) : ''}
     </div>
     <div class="panel-actions">
@@ -403,6 +405,9 @@ function itemModal(item) {
       <div><label>Set of (pieces)</label><input type="number" min="0" step="1" data-p="set_size" value="${item?.set_size ?? ''}" placeholder="e.g. 2 for a pair"></div>
       <div><label>Set price</label><input type="number" min="0" step="0.01" data-p="set_price" value="${item?.set_price ?? ''}" placeholder="Blank: no set"></div>
       <div><label>Commission / set</label><input type="number" min="0" step="0.01" data-p="set_commission" value="${item?.set_commission ?? 0}"></div>
+      <div class="span-2"><label>Supplier</label><select data-p="supplier_id" title="Who it comes from (Suppliers tab)">
+        <option value="">No supplier</option>${suppliers.map(s => `<option value="${s.id}" ${item?.supplier_id === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+      </select></div>
     </div>
     <div class="inv-label">Tags</div>
     <div class="tag-pick-list">${tags.map(t => `<label class="tag-pick" data-tag-pick><input type="checkbox" value="${t.id}" ${item?.tags.includes(t.id) ? 'checked' : ''}> ${tagChip(t)}</label>`).join('')}</div>
@@ -416,7 +421,7 @@ function itemModal(item) {
       const body = { sku: get('sku'), name: get('name'), unit: get('unit'), price: Number(get('price') || 0),
         commission: Number(get('commission') || 0), reorder_level: Number(get('reorder_level') || 0),
         set_size: get('set_size') === '' ? null : Number(get('set_size')), set_price: get('set_price') === '' ? null : Number(get('set_price')),
-        set_commission: Number(get('set_commission') || 0),
+        set_commission: Number(get('set_commission') || 0), supplier_id: get('supplier_id') ? Number(get('supplier_id')) : null,
         tags: $$('[data-tag-pick] input:checked', card).map(i => Number(i.value)) };
       if (item) await api('PATCH', `/inventory/${item.id}`, body);
       else await api('POST', '/inventory', body);

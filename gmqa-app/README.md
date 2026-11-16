@@ -14,6 +14,7 @@ Auth, deployed on Vercel.
 | Inventory — everything stocked, tags, department containers, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
+| Suppliers — each supplier's parts sold, cost, profit and what is still to pay | ✓ | — |
 | Analytics — daily, weekly, monthly, quarterly trends | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
 | Settings — users & roles, vehicle classes, change history | ✓ | — |
@@ -69,7 +70,10 @@ theme before the first paint. All motion stops with the system's reduced-motion 
 - **Net** = Collected − Commission. **Profit** (Sales Reports) = Collected − Commission − Cost of
   parts sold − Expenses, where parts bought to sell are stock, not an expense (`tradingProfit`). It is the Finance
   figure before payroll and bills. Sales Reports lists every day and marks the ones still open; Finance and
-  Analytics count a day once it is closed.
+  Analytics count a day once it is closed. Its cards: Costs (commission + expenses), **Cost of parts sold**, Profit.
+- EOD's cards: **Gross − Commission** (Collected − Commission), then for the owner only **Cost of parts sold** and **Net** =
+  Gross − Commission − Expenses − Cost of parts sold: the day's Sales Reports profit (`trading` in `GET /days/:date`,
+  removed for staff by `lib/redact.js`).
 - Money counts in the drawer or GCash on the day it was received: a running job's or a counter sale's
   payment day (`paid_on`), otherwise the job's own day.
 - Expected cash = float + cash collected − commission paid in cash − cash expenses.
@@ -141,9 +145,14 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   amount and due date. The owner chooses per bill whether to **set money aside every week or every month**
   (`funds.set_aside_every`, weekly by default). The **target** = what is still needed ÷ weeks left, or ÷ calendar
   months left counting this one.
-- At EOD, the **Bill envelopes** card lists each bill that has an amount with this week's or month's share and one
-  button ("Put ₱800.00 aside"); "Other amount" allows a different amount or GCash. It leaves the drawer:
-  the money goes in a labelled envelope handed to the owner with the day's tape.
+- At EOD, the **Bill envelopes** card shows the pay week of the day picked ("Week of Nov 15 – 21") and lists each bill
+  that has an amount with this week's or month's share and one button ("Put ₱800.00 aside", from cash); "Other amount"
+  allows a different amount, GCash, and an online **transfer fee**. Envelopes are put aside **by the week** (migration 022,
+  `fund_set_asides.week_start`): once a week on any day of it, from the week's money like payroll, never out of that day's
+  expected drawer. EOD's **This pay week** box takes them off ("Bill envelopes this week"), and Remittances leaves them out
+  of the money for the bank on the day they were put aside. A fee is an ordinary expense of that day, paid from the same
+  side, and is removed when the envelope is undone. Envelopes put aside before migration 022 stay daily (they came out of their
+  day's drawer), so no closed day changes.
 - When a bill is paid (Finance → Pay bill) it comes out of its fund; any shortfall comes out of that
   day's drawer and shows on that day's EOD.
 - Set-asides are not costs. The cost is counted when the bill is paid.
@@ -261,6 +270,14 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   add an EOD expense and tick **Supplier payment** (owner only): the money leaves the drawer or fund, but it is
   not a second cost in Finance. The Sales Reports profit is a plain total, so it does subtract the payment, as it
   does for parts bought to sell. Consigned stock counts in the Inventory stock value until sold.
+- **Suppliers** tab (owner, migration 022): each item can have one supplier (**Give items** on the tab, or Supplier in the
+  item's Edit form). For any date range it lists each supplier's parts sold (pieces, sales, cost frozen when sold, profit =
+  sales − cost − commission), paid by the customer or not, and the parts sold with no supplier. A supplier either **pays as
+  parts sell** (consignment-like) or is **paid on delivery**. For the first, **Still to pay** = cost of its parts sold since
+  its "count what is owed from" day, less supplier payments to it since then (`supplierReport` in `lib/calc.js`).
+  **Record payment** adds a supplier payment (an EOD expense with `for_resale` and `supplier_id`), so it is not a second
+  cost; EOD's Supplier payment box can name the supplier too. The item is the supplier's now, so changing an item's
+  supplier moves its past sales with it. A job's discount is not split over its parts.
 - Parts can be added with a quantity to any Carwash, Detailing or Tint & PPF job, or sold as a job order on the
   Parts tab ("Parts counter" department, `PC-` numbers, no vehicle needed). A part can stay for days until it is
   installed, so the tab is a running board with the same cards, date arrows and form as Tint & PPF. A walk-in ticks

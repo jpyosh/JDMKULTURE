@@ -1,6 +1,7 @@
 // Costs and margins are owner-only. For everyone else, cost fields are removed from every API
 // response here, in one place, so a new endpoint cannot leak them by accident.
-const HIDDEN_KEYS = new Set(['unit_cost', 'avg_cost', 'partsCost']);
+// trading: EOD's cost of parts sold and real net (routes/days.js).
+const HIDDEN_KEYS = new Set(['unit_cost', 'avg_cost', 'partsCost', 'trading']);
 
 function redactCosts(value, parentKey = null) {
   if (Array.isArray(value)) return value.map(v => redactCosts(v, parentKey));

@@ -111,7 +111,7 @@ async function launch() {
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
         ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
-          'Analytics', 'Finance', 'Cash fund', 'Remittances', 'Payroll', 'Settings']);
+          'Analytics', 'Finance', 'Cash fund', 'Remittances', 'Suppliers', 'Payroll', 'Settings']);
     });
 
     await step('design: system type, readable contrast, keyboard focus, reduced motion', async () => {
@@ -568,13 +568,17 @@ async function launch() {
       await meralcoRow.waitFor();
       const guideText = await envelopes.textContent();
       for (const words of [/envelope/i, /owner/i, /this week/i]) assert.match(guideText, words);
+      // The envelopes are for the pay week (Sunday to Saturday) of the day shown.
+      assert.match(await envelopes.locator('[data-envelope-week]').textContent(), /Week of Sep 13 – 19/);
       const oneTap = meralcoRow.locator('[data-put-aside]');
       const target = (await oneTap.textContent()).match(/₱[\d,.]+/)[0];
       await oneTap.click();
       await expectToast(/aside/i);
       await page.waitForFunction(() => /Done for this week/i.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
-      const cashBox = await eod.locator('[data-cash]').textContent();
-      assert.ok(/Put aside for bills/.test(cashBox) && cashBox.includes(target), `drawer shows the ${target} put aside`);
+      // It comes out of the week's money (This pay week), never out of today's drawer count.
+      assert.doesNotMatch(await eod.locator('[data-cash]').textContent(), /Put aside for bills/, 'the drawer count is untouched');
+      const weekBox = await eod.locator('[data-week]').textContent();
+      assert.ok(/Bill envelopes/.test(weekBox) && weekBox.includes(target), `the pay week shows the ${target} put aside`);
       assert.deepEqual(await typed(), ['777', '4321'], 'putting money aside keeps them too');
       // They were never saved, so leaving the day drops them: another day never shows this day's typing.
       await eod.locator('[data-shift="1"]').click();
@@ -588,11 +592,17 @@ async function launch() {
       await meralcoRow.locator('[data-del-sa]').click();
       await expectToast(/removed|undone/i);
       await meralcoRow.locator('[data-other]').click();
+      assert.equal(await meralcoRow.locator('[data-sa-side]').inputValue(), 'cash', 'cash first; GCash is an option');
       await meralcoRow.locator('[data-sa-amount]').fill('500');
-      await meralcoRow.locator('[data-sa-side]').selectOption('cash');
+      await meralcoRow.locator('[data-sa-side]').selectOption('gcash');
+      await meralcoRow.locator('[data-sa-fee]').fill('15');
       await meralcoRow.locator('[data-sa-add]').click();
       await expectToast(/aside/i);
-      await page.waitForFunction(() => /₱500\.00/.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
+      await page.waitForFunction(() => /₱500\.00 GCash/.test(document.querySelector('#view-eod [data-envelope]')?.textContent || ''));
+      assert.match(await meralcoRow.textContent(), /fee ₱15\.00/);
+      // The online fee is an ordinary GCash expense of the day.
+      await page.waitForFunction(() => /Transfer fee: Meralco envelope[\s\S]*₱15\.00/.test(document.querySelector('#view-eod [data-expenses]').textContent));
+      assert.match(await eod.locator('[data-gcash]').textContent(), /GCash expenses\s*₱15\.00/);
       const rowHeight = (await meralcoRow.boundingBox()).height;
       assert.ok(rowHeight < 160, `envelope rows are too tall (${Math.round(rowHeight)}px)`);
       await eod.locator('[data-m="cash_float"]').fill('1000');
@@ -600,6 +610,10 @@ async function launch() {
       await eod.locator('[data-m="actual_cash"]').fill(expected);
       await eod.locator('[data-m="actual_gcash"]').fill('0');
       assert.match(await eod.locator('[data-variance]').textContent(), /✓/);
+      // Gross less commission, then (owner only) the cost of parts sold and the real net.
+      assert.deepEqual(await eod.locator('[data-metrics] .metric .label').allTextContents(),
+        ['Vehicles', 'Collected', 'Unpaid (receivable)', 'Commission', 'Gross − Commission', 'Cost of parts sold', 'Net']);
+      assert.match(await eod.locator('[data-metric="net"]').getAttribute('title'), /Gross − commission − expenses − cost of parts sold/);
       // Unpaid and commission need attention but are not errors: amber, not the error red.
       const caution = colorOf(await eod.locator('[data-metrics] .value.amber').first().evaluate(el => getComputedStyle(el).color));
       assert.ok(isAmber(caution), `unpaid/commission should read amber, got rgb(${caution.r},${caution.g},${caution.b})`);
@@ -1339,7 +1353,14 @@ async function launch() {
       const money = async label => Number((await page.locator(`#view-reports tr.weekly-total td[data-label="${label}"]`).textContent()).replace(/[₱,]/g, ''));
       assert.equal(await money('Cash received') + await money('GCash received'), await money('Total sales'),
         'everything sold in September was also paid in September');
-      const costs = colorOf(await page.locator('#view-reports .weekly-stat strong.amber-text').evaluate(el => getComputedStyle(el).color));
+      // Cost of parts sold has its own card, between Costs (commission and expenses) and Profit.
+      assert.deepEqual(await page.locator('#view-reports .weekly-stat-label').allTextContents(), ['Vehicles', 'Collected', 'Costs', 'Cost of parts sold', 'Profit']);
+      const statValue = async label => Number((await page.locator('#view-reports .weekly-stat', { has: page.locator('.weekly-stat-label', { hasText: new RegExp(`^${label}$`) }) })
+        .locator('strong').textContent()).replace(/[₱,]/g, ''));
+      const partsCostTotal = Number((await page.locator('#view-reports tr.weekly-total td[data-label="Parts cost"]').textContent()).replace(/[₱,—]/g, ''));
+      assert.equal(await statValue('Cost of parts sold'), partsCostTotal, 'the card is the Parts cost total');
+      assert.equal(Math.round((await money('Commission') + await money('Expenses')) * 100) / 100, await statValue('Costs'), 'Costs = commission + expenses');
+      const costs = colorOf(await page.locator('#view-reports .weekly-stat strong.amber-text').first().evaluate(el => getComputedStyle(el).color));
       assert.ok(isAmber(costs), `costs should read amber, got rgb(${costs.r},${costs.g},${costs.b})`);
       await shot('08-reports');
     });
@@ -1531,6 +1552,74 @@ async function launch() {
       assert.match(await row.textContent(), /Supplier payment/);
       assert.equal(await eod.locator('[data-e="for_resale"]').isChecked(), false, 'the next expense starts as an ordinary one');
       await row.locator('[data-del-expense]').click();
+      await expectToast(/Expense deleted/);
+    });
+
+    await step('suppliers: add one, give it items, see what sold, its cost and profit, and what is still to pay', async () => {
+      const asOwner = (method, url, body) => page.evaluate(async ([m, u, b]) => (await fetch(`/api${u}`, { method: m,
+        headers: { Authorization: 'Bearer owner@sandbox', 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })).json(), [method, url, body]);
+      await page.click('#nav [data-view="suppliers"]');
+      const sv = page.locator('#view-suppliers');
+      await sv.locator('[data-add-supplier]').click();
+      assert.equal(await page.isChecked('#modal [data-s="pays_when_sold"]'), true, 'paid as its parts sell is the default');
+      await page.fill('#modal [data-s="name"]', 'Greaseheads');
+      await page.fill('#modal [data-s="owed_from"]', '2026-09-01');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Supplier saved/);
+      const card = sv.locator('[data-supplier]', { hasText: 'Greaseheads' });
+      await card.waitFor();
+      assert.match(await card.textContent(), /No items yet/);
+
+      // Give it items: search, tick, save. "Tick all shown" ticks every item the search shows.
+      await card.locator('[data-assign]').click();
+      await page.waitForSelector('#modal[open] [data-item-row]');
+      await page.fill('#modal [data-item-search]', 'zzz-no-such-item');
+      assert.equal(await page.locator('#modal [data-item-row]:visible').count(), 0, 'the search filters the list');
+      await page.fill('#modal [data-item-search]', '');
+      await page.click('#modal [data-tick-all]');
+      const ticked = await page.locator('#modal [data-item-row] input:checked').count();
+      assert.ok(ticked > 0);
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Greaseheads/);
+
+      // September: each item sold, what it sold for, cost and profit; and what is still to pay.
+      await sv.locator('[data-start]').fill('2026-09-01');
+      await sv.locator('[data-end]').fill('2026-09-30');
+      await sv.locator('[data-end]').dispatchEvent('change');
+      const report = await asOwner('GET', '/suppliers/report?start=2026-09-01&end=2026-09-30');
+      const gh = report.suppliers.find(s => s.name === 'Greaseheads');
+      assert.ok(gh.items.length > 0, 'the sandbox sold parts in September');
+      await page.waitForFunction(n => document.querySelectorAll('#view-suppliers [data-supplier] [data-item]').length >= n, gh.items.length);
+      const shown = name => card.locator('[data-item]', { hasText: name });
+      assert.match(await shown(gh.items[0].name).textContent(), new RegExp(`₱${gh.items[0].cost.toLocaleString('en-PH', { minimumFractionDigits: 2 }).replace('.', '\\.')}`));
+      const owedText = async () => (await card.locator('[data-owed]').textContent()).trim();
+      const peso = n => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      assert.equal(await owedText(), peso(gh.owed));
+      assert.match(await sv.locator('[data-total-owed]').textContent(), new RegExp(peso(report.totals.owed).replace(/[.]/g, '\\.')));
+
+      // Pay part of it: a supplier payment at EOD that day. What is owed goes down by it.
+      await card.locator('[data-pay]').click();
+      await page.fill('#modal [data-p="date"]', '2026-09-22');
+      assert.equal(await page.inputValue('#modal [data-p="side"]'), 'cash');
+      await page.fill('#modal [data-p="amount"]', '100');
+      await page.click('#modal [data-confirm]');
+      await expectToast(/Payment recorded/);
+      await page.waitForFunction(([want]) => document.querySelector('#view-suppliers [data-supplier] [data-owed]')?.textContent.trim() === want,
+        [peso(Math.round((gh.owed - 100) * 100) / 100)]);
+      await shot('08f-suppliers');
+
+      // EOD names the supplier of a supplier payment.
+      await page.click('#nav [data-view="eod"]');
+      await eod.locator('[data-date]').fill('2026-09-22');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      const paid = eod.locator('[data-expenses] .row-line', { hasText: 'Supplier payment: Greaseheads' });
+      await paid.waitFor();
+      await eod.locator('[data-e="for_resale"]').check();
+      assert.ok((await eod.locator('[data-e="supplier_id"] option').allTextContents()).includes('Greaseheads'), 'the supplier can be picked at EOD');
+      await eod.locator('[data-e="for_resale"]').uncheck();
+      assert.equal(await eod.locator('[data-e="supplier_id"]').isHidden(), true);
+      // Leave September as it was for the steps after this one.
+      await paid.locator('[data-del-expense]').click();
       await expectToast(/Expense deleted/);
     });
 
@@ -2227,6 +2316,9 @@ async function launch() {
       await page.click('#nav [data-view="eod"]');
       await eod.locator('[data-add-expense]').waitFor();
       assert.equal(await eod.locator('[data-e="for_resale"]').count(), 0, 'only the owner records a supplier payment');
+      const staffCards = await eod.locator('[data-metrics] .metric .label').allTextContents();
+      assert.ok(staffCards.includes('Gross − Commission'), 'staff see gross less commission');
+      assert.ok(!staffCards.includes('Cost of parts sold') && !staffCards.includes('Net'), `costs are owner-only: ${JSON.stringify(staffCards)}`);
       await page.click('#nav [data-view="carwash"]');
       await daily.locator('[data-date]').fill(DAY);
       await daily.locator('[data-date]').dispatchEvent('change');
