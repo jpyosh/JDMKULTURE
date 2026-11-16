@@ -36,6 +36,7 @@ function createApp({ verifyToken, sandbox = false } = {}) {
   app.use('/api', require('./routes/finance').router);
   app.use('/api', require('./routes/inventory').router);
   app.use('/api', require('./routes/cash-fund').router);
+  app.use('/api', require('./routes/remittances').router);
   app.use('/api', () => { throw new HttpError(404, 'Unknown API endpoint'); });
 
   app.use(errorHandler);

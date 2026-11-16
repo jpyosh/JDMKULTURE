@@ -12,6 +12,7 @@ import reports from './views/reports.js';
 import analytics from './views/analytics.js';
 import finance from './views/finance.js';
 import cashFund from './views/cash-fund.js';
+import remittances from './views/remittances.js';
 import payroll from './views/payroll.js';
 import settings from './views/settings.js';
 
@@ -27,6 +28,7 @@ const VIEWS = [
   { key: 'analytics', label: 'Analytics', module: analytics, roles: ['owner'] },
   { key: 'finance', label: 'Finance', module: finance, roles: ['owner'] },
   { key: 'cash_fund', label: 'Cash fund', module: cashFund, roles: ['owner'] },
+  { key: 'remittances', label: 'Remittances', module: remittances, roles: ['owner'] },
   { key: 'payroll', label: 'Payroll', module: payroll, roles: ['owner'] },
   { key: 'settings', label: 'Settings', module: settings, roles: ['owner'] },
 ];
@@ -60,6 +62,7 @@ const ICONS = {
   analytics: '<path d="M3.5 17.5l5.5-5.5 4 4 7.5-8"/><path d="M15.5 8h5v5"/>',
   finance: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 10h17M15.5 15h2"/>',
   cash_fund: '<path d="M4.5 8.5h15v11h-15z"/><path d="M7.5 8.5V6.5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v2"/><circle cx="12" cy="14" r="2.2"/>',
+  remittances: '<path d="M3.5 9.5L12 4.5l8.5 5M5.5 10v7M10 10v7M14 10v7M18.5 10v7M3.5 19.5h17"/>',
   payroll: '<circle cx="9" cy="8.5" r="3.3"/><path d="M3 19.5a6 6 0 0 1 12 0M15.5 5.3a3.3 3.3 0 0 1 0 6.4M17.5 14a5.6 5.6 0 0 1 3.5 5.5"/>',
   settings: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
 };

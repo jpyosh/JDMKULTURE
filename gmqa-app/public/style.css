@@ -408,7 +408,9 @@ th.num{text-align:right;}
 /* simple, department, funds and parts tables */
 .simple-table{border-collapse:collapse;font-size:14px;}
 .simple-table input,.simple-table select{min-height:32px;padding:5px 9px;}
-.dept-table tr.total-row td{border-top:1px solid var(--surface-3);font-weight:600;}
+.dept-table tr.total-row td,.funds-table tr.total-row td{border-top:1px solid var(--surface-3);font-weight:600;}
+/* Remittances: each passbook line of a deposit on its own line, with its Undo */
+.deposit-line{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0;}
 .sa-form{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
 .sa-form input{width:110px;}
 .sa-form select{width:auto;min-width:92px;}

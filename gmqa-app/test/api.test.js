@@ -2102,3 +2102,77 @@ test('dates: nothing is closed, finished or paid after today, and nothing is ent
     setShopToday('2099-12-31');
   }
 });
+
+test('remittances: bank deposits matched against the days they cover, with what is still to deposit (owner only)', async () => {
+  const premium = await catalogItem('Premium Wash'); // S: ₱600, ₱100 commission
+  // May 3: a cash job (₱500 left in the drawer after commission). May 4: a GCash job whose commission is paid in cash.
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2034-05-03', vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2034-05-04', vehicle_class: 'S', payment_method: 'GCash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  // The float stays in the drawer: it is never money for the bank.
+  await ok(api(OWNER, 'PUT', '/days/2034-05-03', { cash_float: 1000, actual_cash: 1500, actual_gcash: 0 }));
+  // May 5 is still open: named, never counted as money to deposit until it is closed.
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: '2034-05-05', vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  await closeDays(['2034-05-03', '2034-05-04']);
+  const range = '/remittances?start=2034-05-01&end=2034-05-07';
+
+  assert.equal((await api(STAFF, 'GET', range)).status, 403);
+  assert.equal((await api(STAFF, 'POST', '/remittances', { deposit_date: '2034-05-06', amount: 400, source: 'cash' })).status, 403);
+
+  let r = await ok(api(OWNER, 'GET', range));
+  assert.deepEqual([r.start, r.end], ['2034-05-01', '2034-05-07']);
+  assert.deepEqual(r.days.find(d => d.date === '2034-05-03'),
+    { date: '2034-05-03', closed: true, cash: 500, gcash: 0, countedCash: 500, countedGcash: 0, cashGroup: null, gcashGroup: null });
+  assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.cash.days.map(d => d.date)], [400, ['2034-05-03', '2034-05-04']]);
+  assert.deepEqual([r.toDeposit.gcash.amount, r.toDeposit.gcash.days.map(d => d.date)], [600, ['2034-05-04']]);
+  assert.deepEqual(r.openDays, ['2034-05-05']);
+
+  // Both days' cash in one deposit; the GCash transferred ₱50 short; one deposit nobody can place yet.
+  const cash = await ok(api(OWNER, 'POST', '/remittances', { deposit_date: '2034-05-06', amount: 400, source: 'cash', covers_from: '2034-05-03', covers_to: '2034-05-04', note: 'BDO slip 123' }));
+  assert.deepEqual([cash.deposit_date, cash.amount, cash.source, cash.covers_from, cash.covers_to, cash.note], ['2034-05-06', 400, 'cash', '2034-05-03', '2034-05-04', 'BDO slip 123']);
+  const gcash = await ok(api(OWNER, 'POST', '/remittances', { deposit_date: '2034-05-06', amount: 550, source: 'gcash', covers_from: '2034-05-04', covers_to: '2034-05-04' }));
+  const loose = await ok(api(OWNER, 'POST', '/remittances', { deposit_date: '2034-05-06', amount: 4750, source: 'cash', note: 'owner money?' }));
+  r = await ok(api(OWNER, 'GET', range));
+  assert.deepEqual(r.groups.map(g => [g.source, g.from, g.to, g.deposited, g.due, g.difference]),
+    [['cash', '2034-05-03', '2034-05-04', 400, 400, 0], ['gcash', '2034-05-04', '2034-05-04', 550, 600, -50]]);
+  assert.deepEqual(r.unlinked.map(d => [d.id, d.amount, d.note]), [[loose.id, 4750, 'owner money?']]);
+  assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.gcash.amount], [0, 0]);
+  assert.deepEqual(r.totals, { deposited: 950, due: 1000, difference: -50, unlinked: 4750 });
+  const audit = await driver.query("select actor from audit_log where table_name = 'remittances' and action = 'INSERT'");
+  assert.ok(audit.rows.length >= 3 && audit.rows.every(a => a.actor === OWNER), 'the change history names who recorded it');
+
+  // Mistakes the form refuses.
+  const refused = async body => (await api(OWNER, 'POST', '/remittances', { deposit_date: '2034-05-06', amount: 100, source: 'cash', ...body })).status;
+  assert.equal(await refused({ amount: 0 }), 400);
+  assert.equal(await refused({ source: 'bitcoin' }), 400);
+  assert.equal(await refused({ covers_from: '2034-05-03' }), 400, 'a first day needs a last day');
+  assert.equal(await refused({ covers_from: '2034-05-04', covers_to: '2034-05-03' }), 400);
+  assert.equal(await refused({ covers_from: '2034-05-03', covers_to: '2034-05-07' }), 400, 'money from a day after the deposit');
+  assert.equal((await api(OWNER, 'GET', '/remittances?start=2034-05-07&end=2034-05-01')).status, 400);
+
+  // Undo one recorded by mistake: its day is waiting again.
+  assert.equal((await api(STAFF, 'DELETE', `/remittances/${gcash.id}`)).status, 403);
+  await ok(api(OWNER, 'DELETE', `/remittances/${gcash.id}`));
+  assert.equal((await api(OWNER, 'DELETE', `/remittances/${gcash.id}`)).status, 404);
+  r = await ok(api(OWNER, 'GET', range));
+  assert.deepEqual([r.toDeposit.gcash.amount, r.groups.length], [600, 1]);
+
+  // With no range picked, it starts on the first day any deposit covers.
+  const auto = await ok(api(OWNER, 'GET', '/remittances?end=2034-05-07'));
+  assert.deepEqual([auto.start, auto.end], ['2034-05-03', '2034-05-07']);
+  assert.equal(auto.bank, null, 'no passbook balance set yet');
+
+  // The passbook's printed balance: from then on the app knows what the passbook should say.
+  const start = { start_date: '2034-05-05', balance: 10000 };
+  assert.equal((await api(STAFF, 'PUT', '/remittances/start', start)).status, 403);
+  assert.equal((await api(OWNER, 'PUT', '/remittances/start', { ...start, balance: -1 })).status, 400);
+  assert.equal((await api(OWNER, 'PUT', '/remittances/start', { ...start, start_date: 'soon' })).status, 400);
+  await ok(api(OWNER, 'PUT', '/remittances/start', { start_date: '2034-05-01', balance: 1 }));
+  assert.deepEqual(await ok(api(OWNER, 'PUT', '/remittances/start', start)), { startDate: '2034-05-05', startBalance: 10000 }, 'set again: replaced');
+  r = await ok(api(OWNER, 'GET', range));
+  // The ₱400 cash and the ₱4,750 nobody can place yet were deposited on May 6, after the printed balance.
+  assert.deepEqual(r.bank, { startDate: '2034-05-05', startBalance: 10000, depositedSince: 5150, count: 2, expected: 15150 });
+  // With a passbook balance set, the screen starts on that day: everything before it is settled.
+  assert.equal((await ok(api(OWNER, 'GET', '/remittances?end=2034-05-07'))).start, '2034-05-05');
+  for (const row of [cash, loose]) await ok(api(OWNER, 'DELETE', `/remittances/${row.id}`));
+  for (const d of ['2034-05-03', '2034-05-04']) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+});
