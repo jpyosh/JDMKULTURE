@@ -224,7 +224,7 @@ router.post('/payroll/payouts', async (req, res) => {
   ];
   const row = await db.tx(req.user.email, async q => {
     await assertNotFarAhead(q, values[0], 'Payout date');
-    // The same payout entered twice would take the wages out of the drawer twice: ask first (confirm_duplicate).
+    // The same payout entered twice would count the wages twice: ask first (confirm_duplicate).
     const same = await q.one(`select 1 from payroll_payouts where payout_date = $1 and period_start = $2 and period_end = $3
       and side = $4 and amount = $5`, values.slice(0, 5));
     if (same && req.body.confirm_duplicate !== true) {

@@ -2049,14 +2049,26 @@ async function launch() {
       assert.ok(nameVisible, 'employee names scroll out of view');
       await shot('09-payroll');
 
-      // The payout leaves the drawer on its date: EOD shows it and expects it gone.
+      // Payroll is paid from the week's saved cash: payday's EOD names it but its drawer is not touched (no sales that day).
+      const money = text => Number(text.replace(/[^\d.-]/g, ''));
       await page.click('#nav [data-view="eod"]');
       await eod.locator('[data-date]').fill('2026-09-20');
       await eod.locator('[data-date]').dispatchEvent('change');
-      await page.waitForFunction(() => /Payroll paid out/.test(document.querySelector('#view-eod [data-cash]').textContent));
+      await page.waitForFunction(() => /week's cash/.test(document.querySelector('#view-eod [data-payroll-note]')?.textContent || ''));
+      assert.equal(money(await eod.locator('[data-payroll-note] .money').textContent()), paidOut);
       await eod.locator('[data-m="cash_float"]').fill('0');
-      const expected = Number((await eod.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, ''));
-      assert.equal(expected, -paidOut, 'no sales that day, so the drawer is short exactly the payout');
+      assert.equal(money(await eod.locator('[data-cash] .row-line.total .money').textContent()), 0, 'payday\'s drawer is not short the wages');
+      assert.doesNotMatch(await eod.locator('[data-cash]').textContent(), /Payroll paid out/);
+      // The week it pays for (Sun Sep 13 - Sat Sep 19) shows the wages against the week's money, on any day of it.
+      await eod.locator('[data-date]').fill('2026-09-16');
+      await eod.locator('[data-date]').dispatchEvent('change');
+      await page.waitForFunction(() => /Sep 13/.test(document.querySelector('#view-eod [data-week]')?.textContent || ''));
+      const week = eod.locator('[data-week]');
+      assert.equal(await week.locator('[data-week-day]').count(), 7, 'Sunday to Saturday');
+      assert.equal(money(await week.locator('[data-week-payroll="cash"]').textContent()), paidOut);
+      const cashWeek = money(await week.locator('[data-week-total="cash"]').textContent());
+      assert.equal(money(await week.locator('[data-week-left="cash"]').textContent()), Math.round((cashWeek - paidOut) * 100) / 100);
+      await shot('06b-eod-week');
       await page.click('#nav [data-view="payroll"]');
     });
 

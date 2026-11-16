@@ -111,8 +111,13 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   live preview from the server (`POST /payroll/preview`, `previewChange` in `lib/payroll-data.js`): what
   one OT hour pays, whose recorded pay changes, and any payout already made for a week whose pay would
   change. Such a change needs a second confirm (`confirm_paid`); the server refuses it otherwise (409).
-- A payroll payout (wages handed out, weekly from that week's sales) is subtracted from that day's
-  expected drawer in EOD.
+- A payroll payout (wages handed out, weekly) is paid from the money saved during the week, **not** from the payday's
+  drawer or GCash: EOD names it under the drawer ("Payroll handed out today") but never takes it out of the expected count,
+  so payday is not negative. This applies to every payout, including those recorded before the rule changed.
+- EOD's **This pay week** box shows the whole pay week (Sunday to Saturday) of the day picked: each day's money after
+  commission and expenses (expected drawer less the float, and expected GCash), the **payroll for that week**, and what is
+  left after it (`payWeek` in `lib/calc.js`). A payout belongs to the week holding the middle of its period, so wages for
+  Sun–Sat handed out the next Sunday stay with the week they were earned in.
 - **Sign-off sheet** (Payroll → Download sign-off sheet): a PDF for the selected pay period (up to 16
   days) with each employee's days, overtime, gross, adjustments, net pay and a signature / date-received
   box, plus Prepared / Checked / Approved / Released by. Employees with nothing to pay are left off.
@@ -185,8 +190,9 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   A deposit for several days at once is normal. Days left empty = a deposit not tied to any day yet (listed on its own).
   A deposit cannot cover a day after it was made, nor be dated after today.
 - What a day leaves for the bank is EOD's expected drawer **less the float** (it stays for the next day) and EOD's expected
-  GCash: after commission, expenses, payroll payouts, bill envelopes and tips given out. A payday is often negative, because
-  the wages came out of the days before it; only days added together compare with a deposit.
+  GCash: after commission, expenses, bill envelopes and tips given out, **less wages handed out that day** (they come out
+  of the money saved before the bank gets it). So a payday is often negative here; only days added together compare with a
+  deposit.
 - Deposits for the same money and days are added together (one transfer split into several passbook lines), then compared
   with what the app says those days left: **Matches**, **short** or **over** (`remittanceReport` in `lib/calc.js`).
   A day's money taken by two different deposits is flagged on both.

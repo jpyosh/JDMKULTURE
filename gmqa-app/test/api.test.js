@@ -233,11 +233,14 @@ test('payroll: any date range, daily records, dated rates, adjustments and payou
   assert.equal(cleared.days['2026-09-18'], undefined);
   assert.equal(cleared.pay.net, after.pay.net + 100);
 
-  // Weekly payout from the drawer appears in that day's EOD and in the payroll range.
+  // A weekly payout is shown in that day's EOD and in the payroll range, but it comes from the week's saved cash:
+  // the day's expected drawer does not change.
+  const drawerBefore = (await ok(api(OWNER, 'GET', '/days/2026-09-20'))).summary.expectedCash;
   await ok(api(OWNER, 'POST', '/payroll/payouts', {
     payout_date: '2026-09-20', period_start: '2026-09-14', period_end: '2026-09-20', side: 'cash', amount: 2712.5,
   }));
-  assert.equal((await ok(api(OWNER, 'GET', '/days/2026-09-20'))).summary.payrollCash, 2712.5);
+  const payday = (await ok(api(OWNER, 'GET', '/days/2026-09-20'))).summary;
+  assert.deepEqual([payday.payrollCash, payday.expectedCash], [2712.5, drawerBefore]);
   const withPayout = (await rowFor('2026-09-14', '2026-09-20')).range;
   assert.equal(withPayout.payouts.length, 1);
   await ok(api(OWNER, 'DELETE', `/payroll/payouts/${withPayout.payouts[0].id}`));
@@ -2103,6 +2106,42 @@ test('dates: nothing is closed, finished or paid after today, and nothing is ent
   }
 });
 
+test('weekly payroll: paid from the week\'s cash, never the payday drawer; EOD shows the whole pay week', async () => {
+  const [SUN, MON, SAT, NEXT_SUN] = ['2034-06-04', '2034-06-05', '2034-06-10', '2034-06-11']; // used by no other test
+  const premium = await catalogItem('Premium Wash'); // S: ₱600, ₱100 commission
+  for (const d of [SUN, MON]) {
+    await ok(api(STAFF, 'POST', '/jobs', { job_date: d, vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  }
+  // The wages for Jun 4-10 are handed out the next day, a Sunday, partly in cash and partly by GCash.
+  const period = { period_start: SUN, period_end: SAT };
+  const cash = await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: NEXT_SUN, ...period, side: 'cash', amount: 800 }));
+  const gcash = await ok(api(OWNER, 'POST', '/payroll/payouts', { payout_date: NEXT_SUN, ...period, side: 'gcash', amount: 100 }));
+
+  // Payday: no sales, nothing comes out of its drawer or GCash. The payout is still shown.
+  const payday = await ok(api(STAFF, 'GET', `/days/${NEXT_SUN}`));
+  assert.deepEqual([payday.summary.payrollCash, payday.summary.payrollGcash, payday.summary.expectedCash, payday.summary.expectedGcash], [800, 100, 0, 0]);
+
+  // Any day of the pay week shows the whole week (Sunday to Saturday) and the wages for it.
+  const monday = await ok(api(STAFF, 'GET', `/days/${MON}`));
+  const w = monday.week;
+  assert.deepEqual([w.start, w.end, w.days.length], [SUN, SAT, 7]);
+  assert.deepEqual(w.days.slice(0, 2).map(d => [d.date, d.cash, d.gcash]), [[SUN, 500, 0], [MON, 500, 0]]);
+  assert.deepEqual([w.cash, w.gcash, w.payrollCash, w.payrollGcash, w.cashLeft, w.gcashLeft], [1000, 0, 800, 100, 200, -100]);
+  assert.deepEqual(w.payouts.map(p => [p.payout_date, p.side, p.amount]), [[NEXT_SUN, 'cash', 800], [NEXT_SUN, 'gcash', 100]]);
+  assert.deepEqual(w.openDays, [SUN, MON], 'days with money not closed yet are named');
+  assert.equal((await ok(api(STAFF, 'GET', `/days/${NEXT_SUN}`))).week.payrollCash, 0, 'last week\'s wages are not in the new week');
+
+  // Remittances: the cash for the bank is the week's cash less the wages, on the day they were handed out.
+  await closeDays([SUN, MON, NEXT_SUN]);
+  const r = await ok(api(OWNER, 'GET', `/remittances?start=${SUN}&end=${NEXT_SUN}`));
+  assert.deepEqual(r.days.find(d => d.date === NEXT_SUN), { date: NEXT_SUN, closed: true, cash: 0, gcash: 0, countedCash: null, countedGcash: null,
+    payrollCash: 800, payrollGcash: 100, cashGroup: null, gcashGroup: null });
+  assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.gcash.amount], [200, -100]);
+
+  for (const p of [cash, gcash]) await ok(api(OWNER, 'DELETE', `/payroll/payouts/${p.id}`));
+  for (const d of [SUN, MON, NEXT_SUN]) await ok(api(OWNER, 'POST', `/days/${d}/reopen`));
+});
+
 test('remittances: bank deposits matched against the days they cover, with what is still to deposit (owner only)', async () => {
   const premium = await catalogItem('Premium Wash'); // S: ₱600, ₱100 commission
   // May 3: a cash job (₱500 left in the drawer after commission). May 4: a GCash job whose commission is paid in cash.
@@ -2121,7 +2160,7 @@ test('remittances: bank deposits matched against the days they cover, with what 
   let r = await ok(api(OWNER, 'GET', range));
   assert.deepEqual([r.start, r.end], ['2034-05-01', '2034-05-07']);
   assert.deepEqual(r.days.find(d => d.date === '2034-05-03'),
-    { date: '2034-05-03', closed: true, cash: 500, gcash: 0, countedCash: 500, countedGcash: 0, cashGroup: null, gcashGroup: null });
+    { date: '2034-05-03', closed: true, cash: 500, gcash: 0, countedCash: 500, countedGcash: 0, payrollCash: 0, payrollGcash: 0, cashGroup: null, gcashGroup: null });
   assert.deepEqual([r.toDeposit.cash.amount, r.toDeposit.cash.days.map(d => d.date)], [400, ['2034-05-03', '2034-05-04']]);
   assert.deepEqual([r.toDeposit.gcash.amount, r.toDeposit.gcash.days.map(d => d.date)], [600, ['2034-05-04']]);
   assert.deepEqual(r.openDays, ['2034-05-05']);

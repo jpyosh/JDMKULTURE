@@ -2,8 +2,8 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { daySummary, tipsOwed, salesReport, TIPS_TRACKED_FROM } = require('../lib/calc');
-const { loadJobs, assertDayOpen } = require('../lib/store');
+const { daySummary, tipsOwed, salesReport, payWeek, sundayOf, addDays, TIPS_TRACKED_FROM } = require('../lib/calc');
+const { loadJobs, assertDayOpen, loadDayMoney } = require('../lib/store');
 const { bad, notFound, forbidden, conflict, money, text, date, oneOf, id, pick } = require('../lib/http');
 const { assertFundCovers } = require('../lib/cash-fund');
 const { assertNotAfterToday, assertNotFarAhead } = require('../lib/clock');
@@ -35,7 +35,20 @@ async function loadDay(day, q = db) {
   const summary = daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
     tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) });
   return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, summary,
-    report: salesReport({ date: day, summary }) };
+    report: salesReport({ date: day, summary }), week: await loadPayWeek(day, q) };
+}
+
+// The pay week (Sunday to Saturday) of `day`: each day's money and the wages for that week, wherever they were handed
+// out. A payout's period can run a little past the week (paid the next Sunday), so nearby payouts are read too.
+async function loadPayWeek(day, q = db) {
+  const start = sundayOf(day);
+  const end = addDays(start, 6);
+  const [days, payouts] = await Promise.all([
+    loadDayMoney(start, end, q),
+    q.many(`select id, payout_date, period_start, period_end, side, amount from payroll_payouts
+      where period_end >= $1 and period_start <= $2 order by payout_date, id`, [addDays(start, -14), addDays(end, 14)]),
+  ]);
+  return payWeek({ date: day, days, payouts });
 }
 
 router.get('/days/:date', async (req, res) => {

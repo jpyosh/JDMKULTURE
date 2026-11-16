@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { rateOn, payrollForRange: payWith, datesBetween, daySummary, otRuleOn, otHourly, otRuleNote: noteWith } = require('../lib/calc');
+const { rateOn, payrollForRange: payWith, datesBetween, daySummary, otRuleOn, otHourly, otRuleNote: noteWith, payWeek } = require('../lib/calc');
 
 // The shop's overtime rules as migration 011 seeds them (the owner can change them on the Payroll screen).
 const SHOP_RULES = [
@@ -150,13 +150,39 @@ test('the shop overtime rule comes from the rules passed in, so the owner can ch
   assert.equal(noteWith(rules, '2027-01-03', '2027-01-09'), 'OT pays the carwash rate ÷ 10 (construction rate ÷ 8) × 1.25 per hour.');
 });
 
-test('payroll paid out of the drawer reduces expected cash/GCash that day', () => {
+test('weekly payroll is paid from the week\'s cash: payday\'s drawer and GCash are not touched, the payout is shown', () => {
   const s = daySummary({
     date: '2026-09-20', jobs: [], meta: { cash_float: 5000 },
     outflows: { payrollPayouts: [{ side: 'cash', amount: 3000 }, { side: 'gcash', amount: 500 }] },
   });
   assert.equal(s.payrollCash, 3000);
   assert.equal(s.payrollGcash, 500);
-  assert.equal(s.expectedCash, 2000);
-  assert.equal(s.expectedGcash, -500);
+  assert.equal(s.expectedCash, 5000, 'only the float: the wages came out of the money saved during the week');
+  assert.equal(s.expectedGcash, 0);
+});
+
+test('the pay week: each day\'s money after commission and expenses, less the payroll for that week', () => {
+  // The shop's real pay week, Sun Nov 8 - Sat Nov 14, 2026. Its wages (₱22,929.06) were handed out on Sunday Nov 15
+  // from the money saved during the week, so they belong to Nov 8-14, not to the week that starts on the 15th.
+  const day = (date, cash, gcash, closed = true) => ({ date, closed, cash, gcash });
+  const days = [day('2026-11-08', 6250, 35410), day('2026-11-09', 5580, 5890), day('2026-11-10', 7350, 20335), day('2026-11-11', 26885, 6900),
+    day('2026-11-12', 3120, 5570), day('2026-11-13', 16665, 12540), day('2026-11-14', 12100, 6340), day('2026-11-15', 10500, 6350, false)];
+  const payouts = [
+    { payout_date: '2026-11-15', period_start: '2026-11-08', period_end: '2026-11-14', side: 'cash', amount: 22929.06 },
+    { payout_date: '2026-11-07', period_start: '2026-11-01', period_end: '2026-11-07', side: 'cash', amount: 18164.22 },
+  ];
+  const w = payWeek({ date: '2026-11-14', days, payouts });
+  assert.deepEqual([w.start, w.end, w.days.map(d => d.date)],
+    ['2026-11-08', '2026-11-14', ['2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14']]);
+  assert.deepEqual([w.cash, w.gcash], [77950, 92985]);
+  assert.deepEqual([w.payrollCash, w.payrollGcash], [22929.06, 0], 'the wages for this week, though handed out the day after');
+  assert.deepEqual(w.payouts.map(p => p.payout_date), ['2026-11-15']);
+  assert.deepEqual([w.cashLeft, w.gcashLeft], [55020.94, 92985]);
+  assert.deepEqual(w.openDays, []);
+
+  // Any day of the week shows the whole week, Sunday to Saturday.
+  assert.deepEqual(payWeek({ date: '2026-11-10', days, payouts }), w);
+  // The next week starts on the 15th: last week's wages are not in it, and its open day is named.
+  const next = payWeek({ date: '2026-11-15', days, payouts });
+  assert.deepEqual([next.start, next.end, next.cash, next.payrollCash, next.openDays], ['2026-11-15', '2026-11-21', 10500, 0, ['2026-11-15']]);
 });

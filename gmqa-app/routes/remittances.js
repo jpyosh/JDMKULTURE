@@ -1,11 +1,11 @@
 // Remittances (owner): the money taken to the bank, as it shows in the passbook, matched against the days whose
-// money it carried. What each day leaves for the bank follows the EOD rules (daySummary): the expected drawer
-// less the float, and the expected GCash. The matching itself is remittanceReport in lib/calc.js.
+// money it carried. What each day leaves for the bank follows the EOD rules (loadDayMoney): the expected drawer
+// less the float, and the expected GCash, less wages handed out that day. The matching is remittanceReport in lib/calc.js.
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { daySummary, remittanceReport, passbookExpected, datesBetween, addDays, round2 } = require('../lib/calc');
-const { loadJobs } = require('../lib/store');
+const { remittanceReport, passbookExpected, datesBetween, addDays } = require('../lib/calc');
+const { loadDayMoney } = require('../lib/store');
 const { bad, notFound, money, text, date, oneOf, id } = require('../lib/http');
 const { shopToday, assertNotAfterToday } = require('../lib/clock');
 
@@ -14,35 +14,6 @@ const MAX_DAYS = 400;
 const DEFAULT_DAYS = 30;
 const SOURCES = ['cash', 'gcash', 'both'];
 const COLUMNS = 'id, deposit_date, amount, source, covers_from, covers_to, note, created_by, created_at';
-
-// What each day from start to end leaves for the bank, and what was counted at EOD.
-async function loadDays(start, end) {
-  const between = [start, end];
-  const [jobs, expenses, metas, payrollPayouts, setAsides, billTopUps] = await Promise.all([
-    loadJobs('sale_date between $1 and $2 or paid_on between $1 and $2', between),
-    db.many('select expense_date, side, amount, for_resale from expenses where expense_date between $1 and $2', between),
-    db.many('select * from daily_meta where job_date between $1 and $2', between),
-    db.many('select payout_date, side, amount from payroll_payouts where payout_date between $1 and $2', between),
-    db.many('select entry_date, side, amount from fund_set_asides where entry_date between $1 and $2', between),
-    db.many(`select paid_on, drawer_side as side, from_drawer as amount from bill_payments
-      where paid_on between $1 and $2 and from_drawer > 0`, between),
-  ]);
-  const metaOn = new Map(metas.map(m => [m.job_date, m]));
-  const on = (list, key, day) => list.filter(x => x[key] === day);
-  return datesBetween(start, end).map(day => {
-    const meta = metaOn.get(day) || {};
-    const s = daySummary({
-      date: day, jobs, expenses: on(expenses, 'expense_date', day), meta,
-      outflows: { payrollPayouts: on(payrollPayouts, 'payout_date', day), setAsides: on(setAsides, 'entry_date', day), billTopUps: on(billTopUps, 'paid_on', day) },
-    });
-    // The float stays in the drawer for the next day: it is never money for the bank.
-    return {
-      date: day, closed: Boolean(meta.closed_at),
-      cash: round2(s.expectedCash - s.cashFloat), gcash: s.expectedGcash,
-      countedCash: s.actualCash == null ? null : round2(s.actualCash - s.cashFloat), countedGcash: s.actualGcash,
-    };
-  });
-}
 
 // The passbook's printed balance (null until the owner sets it) and what the passbook should say since.
 async function loadBank() {
@@ -72,7 +43,7 @@ router.get('/remittances', requireOwner, async (req, res) => {
   const covered = remittances.filter(r => r.covers_from);
   const loadFrom = covered.reduce((d, r) => (r.covers_from < d ? r.covers_from : d), start);
   const loadTo = covered.reduce((d, r) => (r.covers_to > d ? r.covers_to : d), end);
-  const days = await loadDays(loadFrom, loadTo);
+  const days = await loadDayMoney(loadFrom, loadTo);
   res.json({ start, end, bank, ...remittanceReport({ days, remittances, start, end }) });
 });
 

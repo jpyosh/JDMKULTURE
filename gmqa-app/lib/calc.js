@@ -168,10 +168,12 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   const billTopUpCash = bySide(outflows.billTopUps, 'cash');
   const billTopUpGcash = bySide(outflows.billTopUps, 'gcash');
 
+  // Weekly payroll is handed out from the money saved during the week, not from the payday's drawer or GCash:
+  // it is shown (payrollCash / payrollGcash) but never taken out of the day's expected count. See payWeek.
   const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses
-    - payrollCash - setAsideCash - billTopUpCash);
+    - setAsideCash - billTopUpCash);
   const expectedGcash = round2(gcashReceived + tips - tipsGiven - commissionGcash - gcashExpenses
-    - payrollGcash - setAsideGcash - billTopUpGcash);
+    - setAsideGcash - billTopUpGcash);
   const actualCash = meta.actual_cash ?? null;
   const actualGcash = meta.actual_gcash ?? null;
 
@@ -608,13 +610,17 @@ const REMIT_SIDES = { cash: ['cash'], gcash: ['gcash'], both: ['cash', 'gcash'] 
 const byDepositOrder = (a, b) => (a.deposit_date < b.deposit_date ? -1 : a.deposit_date > b.deposit_date ? 1 : a.id - b.id);
 
 // Bank deposits checked against the days whose money they carried, and what is still to be deposited.
-// days: [{ date, closed, cash, gcash, countedCash, countedGcash }] for start..end and every day a deposit covers;
-//   cash / gcash = what the day leaves for the bank (EOD's expected drawer less the float, and expected GCash).
+// days: [{ date, closed, cash, gcash, countedCash, countedGcash, payrollCash, payrollGcash }] for start..end and every
+//   day a deposit covers; cash / gcash = EOD's expected drawer less the float, and expected GCash. payroll*: wages handed
+//   out that day from the money saved during the week, so they leave the money for the bank on that day.
 // remittances: deposits as stored (deposit_date, amount, source cash|gcash|both, covers_from..covers_to or none).
 // Deposits for the same money and days are added together (one passbook line per GCash transfer limit, for example).
+const PAYROLL_FIELD = { cash: 'payrollCash', gcash: 'payrollGcash' };
+const forBank = (d, side) => round2((Number(d?.[side]) || 0) - (Number(d?.[PAYROLL_FIELD[side]]) || 0));
+
 function remittanceReport({ days, remittances, start, end }) {
   const byDate = new Map(days.map(d => [d.date, d]));
-  const amountOn = (date, side) => round2(byDate.get(date)?.[side]);
+  const amountOn = (date, side) => forBank(byDate.get(date), side);
   const grouped = new Map();
   const unlinked = [];
   for (const r of [...remittances].sort(byDepositOrder)) {
@@ -643,13 +649,13 @@ function remittanceReport({ days, remittances, start, end }) {
   }
 
   const range = datesBetween(start, end).map(date => ({
-    ...(byDate.get(date) || { date, closed: false, cash: 0, gcash: 0, countedCash: null, countedGcash: null }),
+    ...(byDate.get(date) || { date, closed: false, cash: 0, gcash: 0, countedCash: null, countedGcash: null, payrollCash: 0, payrollGcash: 0 }),
     cashGroup: coveredBy.get(`${date}|cash`)?.key || null,
     gcashGroup: coveredBy.get(`${date}|gcash`)?.key || null,
   }));
   // Still to deposit: closed days whose money no deposit has carried yet. A day still open waits until it is closed.
   const waiting = side => {
-    const list = range.filter(d => d.closed && !d[`${side}Group`] && round2(d[side]) !== 0).map(d => ({ date: d.date, amount: round2(d[side]) }));
+    const list = range.filter(d => d.closed && !d[`${side}Group`] && forBank(d, side) !== 0).map(d => ({ date: d.date, amount: forBank(d, side) }));
     return { amount: sum(list, d => d.amount), days: list };
   };
   const deposited = sum(groups, g => g.deposited);
@@ -659,8 +665,37 @@ function remittanceReport({ days, remittances, start, end }) {
     groups,
     unlinked,
     toDeposit: { cash: waiting('cash'), gcash: waiting('gcash') },
-    openDays: range.filter(d => !d.closed && (round2(d.cash) !== 0 || round2(d.gcash) !== 0)).map(d => d.date),
+    openDays: range.filter(d => !d.closed && (forBank(d, 'cash') !== 0 || forBank(d, 'gcash') !== 0)).map(d => d.date),
     totals: { deposited, due, difference: round2(deposited - due), unlinked: sum(unlinked, d => d.amount) },
+  };
+}
+
+// ---------------------------------------------------------------- the pay week (EOD)
+
+// The pay week (Sunday to Saturday) a payout belongs to: the one holding the middle of the period it pays, so wages
+// for Sun-Sat handed out on the next Sunday stay with the week they were earned in.
+const payoutWeek = p => sundayOf(addDays(p.period_start, Math.floor(daysUntil(p.period_start, p.period_end) / 2)));
+
+// The whole pay week of `date`: each day's money after commission and expenses (days: [{ date, closed, cash, gcash }],
+// cash = expected drawer less the float), the payroll for that week, and what is left after it.
+function payWeek({ date, days, payouts }) {
+  const start = sundayOf(date);
+  const end = addDays(start, 6);
+  const byDate = new Map(days.map(d => [d.date, d]));
+  const week = datesBetween(start, end).map(day => {
+    const d = byDate.get(day);
+    return { date: day, closed: Boolean(d?.closed), cash: round2(d?.cash), gcash: round2(d?.gcash) };
+  });
+  const mine = payouts.filter(p => payoutWeek(p) === start)
+    .map(p => ({ id: p.id, payout_date: p.payout_date, period_start: p.period_start, period_end: p.period_end, side: p.side, amount: round2(p.amount) }));
+  const cash = sum(week, d => d.cash);
+  const gcash = sum(week, d => d.gcash);
+  const payrollCash = sum(mine.filter(p => p.side === 'cash'), p => p.amount);
+  const payrollGcash = sum(mine.filter(p => p.side === 'gcash'), p => p.amount);
+  return {
+    start, end, days: week, cash, gcash, payrollCash, payrollGcash, payouts: mine,
+    cashLeft: round2(cash - payrollCash), gcashLeft: round2(gcash - payrollGcash),
+    openDays: week.filter(d => !d.closed && (d.cash !== 0 || d.gcash !== 0)).map(d => d.date),
   };
 }
 
@@ -679,5 +714,5 @@ module.exports = {
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
-  remittanceReport, passbookExpected,
+  remittanceReport, passbookExpected, payWeek,
 };
