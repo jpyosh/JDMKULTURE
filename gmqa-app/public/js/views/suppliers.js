@@ -18,6 +18,7 @@ function mount(el) {
       </div>
     </div>
     <div class="preset-row">
+      <button class="btn ghost small" type="button" data-preset="since-counted">Since counting started</button>
       <button class="btn ghost small" type="button" data-preset="this-week">This week</button>
       <button class="btn ghost small" type="button" data-preset="last-week">Last week</button>
       <button class="btn ghost small" type="button" data-preset="this-month">This month</button>
@@ -30,6 +31,8 @@ function mount(el) {
       <summary>How Suppliers works</summary>
       <ul>
         <li><b>Add a supplier</b>, then <b>Give items</b> to tick the auto parts that come from them (or pick the supplier in an item's Edit form in Inventory).</li>
+        <li>The screen opens on <b>Since counting started</b>: every sale from the earliest "counted from" day, so the sales listed add up to <b>Still to pay</b>.
+          Pick other days or press another button to see a shorter stretch.</li>
         <li><b>Sold on</b>: each sale of the item in the days picked, with the day, how many and the JO number (oldest first).</li>
         <li><b>Sold</b>: the parts of that supplier sold in the days picked, booked like any sale (a parts job on the day it is done, paid or not).
           <b>Cost</b> is what they cost the shop when they sold; <b>Profit</b> = Sales − Cost − commission. A job's discount is not split over its parts.</li>
@@ -43,12 +46,21 @@ function mount(el) {
   $('[data-end]', root).addEventListener('change', load);
   $$('[data-preset]', root).forEach(b => b.addEventListener('click', () => preset(b.dataset.preset)));
   $('[data-add-supplier]', root).addEventListener('click', () => supplierModal(null));
-  preset('this-month', false);
+}
+
+// The earliest "counted from" day of a supplier paid as its parts sell, so the sales shown add up to "Still to pay".
+// At most 400 days back (the report's limit); this month when no supplier counts what is owed.
+function sinceCounted(today) {
+  const from = suppliers.filter(s => s.pays_when_sold && s.owed_from).map(s => s.owed_from).sort()[0];
+  if (!from) return `${today.slice(0, 8)}01`;
+  const floor = addDays(today, -399);
+  return from < floor ? floor : from > today ? today : from;
 }
 
 function preset(name, reload = true) {
   const today = todayLocal();
   const ranges = {
+    'since-counted': [sinceCounted(today), today],
     'this-week': [sundayOf(today), today],
     'last-week': [addDays(sundayOf(today), -7), addDays(sundayOf(today), -1)],
     'this-month': [`${today.slice(0, 8)}01`, today],
@@ -58,7 +70,14 @@ function preset(name, reload = true) {
   if (reload) load();
 }
 
-async function show() { await load(); }
+// The first time the screen opens it shows every sale since counting started; after that it keeps the days picked.
+async function show() {
+  if (!$('[data-start]', root).value) {
+    suppliers = await api('GET', '/suppliers');
+    preset('since-counted', false);
+  }
+  await load();
+}
 
 async function load() {
   const start = $('[data-start]', root).value;
