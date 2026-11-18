@@ -1582,6 +1582,31 @@ async function launch() {
       await page.click('#modal [data-confirm]');
       await expectToast(/Greaseheads/);
 
+      // Opening the screen shows every sale since the earliest "counted from" day of a supplier paid as its parts sell
+      // (here Sep 1), at most 400 days back, so the rows match "Still to pay"; the button goes back there.
+      const browserToday = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+      const back399 = new Date(`${browserToday}T00:00:00Z`); back399.setUTCDate(back399.getUTCDate() - 399);
+      const sinceCounted = ['2026-09-01', back399.toISOString().slice(0, 10)].sort().pop();
+      await page.reload();
+      await page.click('#nav [data-view="suppliers"]');
+      await card.waitFor();
+      await page.waitForFunction(want => document.querySelector('#view-suppliers [data-start]').value === want, sinceCounted);
+      assert.equal(await sv.locator('[data-end]').inputValue(), browserToday);
+      const opened = await asOwner('GET', `/suppliers/report?start=${sinceCounted}&end=${browserToday}`);
+      const openedItems = opened.suppliers.find(s => s.name === 'Greaseheads').items;
+      assert.ok(openedItems.some(i => i.sold.some(s => s.date < `${browserToday.slice(0, 8)}01`)), 'a sale from before this month is in range');
+      await page.waitForFunction(n => document.querySelectorAll('#view-suppliers [data-supplier] [data-item]').length >= n, openedItems.length);
+      await sv.locator('[data-preset="this-month"]').click();
+      assert.equal(await sv.locator('[data-start]').inputValue(), `${browserToday.slice(0, 8)}01`);
+      await sv.locator('[data-preset="since-counted"]').click();
+      assert.equal(await sv.locator('[data-start]').inputValue(), sinceCounted);
+      // Dates picked stay when coming back to the screen.
+      await sv.locator('[data-preset="this-month"]').click();
+      await page.click('#nav [data-view="inventory"]');
+      await page.click('#nav [data-view="suppliers"]');
+      await card.waitFor();
+      assert.equal(await sv.locator('[data-start]').inputValue(), `${browserToday.slice(0, 8)}01`, 'coming back keeps the dates picked');
+
       // September: each item sold, what it sold for, cost and profit; and what is still to pay.
       await sv.locator('[data-start]').fill('2026-09-01');
       await sv.locator('[data-end]').fill('2026-09-30');

@@ -275,6 +275,8 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   sales − cost − commission, and **Sold on**: each sale's day, pieces and JO number, marked if the customer has not paid), paid by the customer or not, and the parts sold with no supplier. A supplier either **pays as
   parts sell** (consignment-like) or is **paid on delivery**. For the first, **Still to pay** = cost of its parts sold since
   its "count what is owed from" day, less supplier payments to it since then (`supplierReport` in `lib/calc.js`).
+  The tab opens on **Since counting started** (the earliest such day, at most 400 days back), so the sales listed add up
+  to Still to pay; it keeps the days picked when you come back to it.
   **Record payment** adds a supplier payment (an EOD expense with `for_resale` and `supplier_id`), so it is not a second
   cost; EOD's Supplier payment box can name the supplier too. The item is the supplier's now, so changing an item's
   supplier moves its past sales with it. A job's discount is not split over its parts.
