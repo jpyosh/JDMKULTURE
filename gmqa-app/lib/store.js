@@ -35,7 +35,7 @@ async function assertDayOpen(q, date, user) {
 // less the float, which stays for the next day, and the expected GCash), what was counted, and wages handed out that day.
 async function loadDayMoney(start, end, q = db) {
   const between = [start, end];
-  const [jobs, expenses, metas, payrollPayouts, setAsides, billTopUps] = await Promise.all([
+  const [jobs, expenses, metas, payrollPayouts, setAsides, billTopUps, partsLoans] = await Promise.all([
     loadJobs('sale_date between $1 and $2 or paid_on between $1 and $2', between, q),
     q.many('select expense_date, side, amount, for_resale from expenses where expense_date between $1 and $2', between),
     q.many('select * from daily_meta where job_date between $1 and $2', between),
@@ -43,6 +43,7 @@ async function loadDayMoney(start, end, q = db) {
     q.many('select entry_date, side, amount, week_start from fund_set_asides where entry_date between $1 and $2', between),
     q.many(`select paid_on, drawer_side as side, from_drawer as amount from bill_payments
       where paid_on between $1 and $2 and from_drawer > 0`, between),
+    q.many('select entry_date, kind, side, amount from parts_loans where entry_date between $1 and $2', between),
   ]);
   const metaOn = new Map(metas.map(m => [m.job_date, m]));
   const on = (list, key, day) => list.filter(x => x[key] === day);
@@ -54,7 +55,8 @@ async function loadDayMoney(start, end, q = db) {
     const meta = metaOn.get(day) || {};
     const s = daySummary({
       date: day, jobs, expenses: on(expenses, 'expense_date', day), meta,
-      outflows: { payrollPayouts: on(payrollPayouts, 'payout_date', day), setAsides: on(daily, 'entry_date', day), billTopUps: on(billTopUps, 'paid_on', day) },
+      outflows: { payrollPayouts: on(payrollPayouts, 'payout_date', day), setAsides: on(daily, 'entry_date', day), billTopUps: on(billTopUps, 'paid_on', day),
+        partsLoans: on(partsLoans, 'entry_date', day) },
     });
     const envelopes = on(weekly, 'entry_date', day);
     return {

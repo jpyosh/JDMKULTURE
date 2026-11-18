@@ -74,6 +74,19 @@ function mount(el) {
       <div class="card"><h2>Profit &amp; loss</h2><div data-pl></div></div>
       <div class="card"><h2>Money in &amp; out of the drawer</h2><div data-cashflow></div></div>
     </div>
+    <div class="card" data-parts-weeks>
+      <div class="section-header"><h2>Parts department</h2></div>
+      <p class="hint">Parts keeps its sales in its own Excel file. Every Saturday, open its <b>WEEKLY</b> tab and type the week's
+        <b>NET PROFIT</b> here (a loss with a minus sign). It is added to the profit above, in the month the week's Saturday falls in.</p>
+      <div class="expense-form parts-week-form" data-enter="[data-save-parts-week]">
+        <label class="sr-only" for="parts-week">Week</label>
+        <select data-pw="week" id="parts-week"></select>
+        <input type="number" step="0.01" data-pw="amount" placeholder="Net profit" aria-label="Net profit for the week">
+        <input type="text" data-pw="note" placeholder="Note (optional)" maxlength="200" aria-label="Note">
+        <button class="btn" type="button" data-save-parts-week>Save week</button>
+      </div>
+      <div class="table-wrap"><table class="simple-table" data-parts-weeks-table></table></div>
+    </div>
     <div class="card">
       <div class="section-header"><h2>Bill funds</h2><button class="btn ghost" type="button" data-add-fund>+ Add fund</button></div>
       <p class="hint">Each week or month, by what you chose for the bill, set aside its <b>target</b> at EOD (EOD Closing → Bill envelopes). When the bill comes,
@@ -94,6 +107,67 @@ function mount(el) {
   $('[data-end]', root).addEventListener('change', onRangeInput);
   $$('[data-preset]', root).forEach(b => b.addEventListener('click', () => setRange(...presets()[b.dataset.preset])));
   $('[data-add-fund]', root).addEventListener('click', () => fundModal(null));
+  $('[data-save-parts-week]', root).addEventListener('click', e => busy(e.currentTarget, savePartsWeek));
+}
+
+// ---------------------------------------------------------------- parts department weekly net
+const PARTS_FIRST_WEEK = '2026-11-15'; // the week parts moved to its Excel file (Nov 15-17 is still in the app)
+let partsWeeks = [];
+
+// Every pay week from the first one to this one, newest first; the select starts on the latest week not entered yet.
+function partsWeekList() {
+  const out = [];
+  for (let w = sundayOf(todayLocal()); w >= PARTS_FIRST_WEEK; w = addDays(w, -7)) out.push(w);
+  return out;
+}
+const weekLabel = w => {
+  const day = d => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `${day(w)} – ${day(addDays(w, 6))}`;
+};
+
+function renderPartsWeeks() {
+  const entered = new Map(partsWeeks.map(w => [w.week_start, w]));
+  const weeks = partsWeekList();
+  const select = $('[data-pw="week"]', root);
+  const chosen = select.value;
+  select.innerHTML = weeks.map(w => `<option value="${w}">Week of ${esc(weekLabel(w))}${entered.has(w) ? ' (entered)' : ''}</option>`).join('');
+  select.value = chosen && weeks.includes(chosen) ? chosen : (weeks.find(w => !entered.has(w) && addDays(w, 6) < todayLocal()) || weeks[0]);
+  $('[data-parts-weeks-table]', root).innerHTML = `
+    <thead><tr><th>Week</th><th class="num">Net profit</th><th>Note</th><th></th></tr></thead>
+    <tbody>${weeks.map(w => {
+    const row = entered.get(w);
+    const over = addDays(w, 6) < todayLocal();
+    return `<tr data-parts-week="${w}"><td>${esc(weekLabel(w))}</td>
+      <td class="num money">${row ? `<span class="${row.amount < 0 ? 'neg' : ''}">${peso(row.amount)}</span>` : over ? '<span class="amber-text">not entered yet</span>' : '<span class="muted">this week</span>'}</td>
+      <td>${esc(row?.note || '')}</td>
+      <td class="row-actions">${row ? `<button class="btn ghost small" type="button" data-pw-edit>Edit</button>
+        <button class="icon-btn" type="button" data-pw-del title="Delete" aria-label="Delete the week of ${esc(weekLabel(w))}">✕</button>` : ''}</td></tr>`;
+  }).join('')}</tbody>`;
+  $$('[data-pw-edit]', root).forEach(b => b.addEventListener('click', () => {
+    const row = entered.get(b.closest('tr').dataset.partsWeek);
+    select.value = row.week_start;
+    $('[data-pw="amount"]', root).value = row.amount;
+    $('[data-pw="note"]', root).value = row.note || '';
+    $('[data-pw="amount"]', root).focus();
+  }));
+  $$('[data-pw-del]', root).forEach(b => b.addEventListener('click', async () => {
+    const week = b.closest('tr').dataset.partsWeek;
+    if (!window.confirm(`Delete the parts figure for the week of ${weekLabel(week)}?`)) return;
+    await api('DELETE', `/parts-weekly-net/${week}`);
+    toast('Parts week deleted');
+    await reload();
+  }));
+}
+
+async function savePartsWeek() {
+  const week = $('[data-pw="week"]', root).value;
+  const amount = $('[data-pw="amount"]', root).value;
+  if (amount === '') return toast('Type the week\'s net profit from the parts Excel file', 'error');
+  await api('PUT', `/parts-weekly-net/${week}`, { amount: Number(amount), note: $('[data-pw="note"]', root).value.trim() });
+  $('[data-pw="amount"]', root).value = '';
+  $('[data-pw="note"]', root).value = '';
+  toast(`Parts, week of ${weekLabel(week)}: ${peso(Number(amount))} saved`);
+  await reload();
 }
 
 async function show() {
@@ -112,11 +186,14 @@ async function setRange(start, end) {
   range = { start, end };
   $('[data-start]', root).value = start;
   $('[data-end]', root).value = end;
-  const [summary, funds] = await Promise.all([
+  const [summary, funds, weeks] = await Promise.all([
     api('GET', `/finance/summary?start=${start}&end=${end}`),
     api('GET', `/funds?date=${todayLocal()}`),
+    api('GET', '/parts-weekly-net'),
   ]);
+  partsWeeks = weeks;
   render(summary, funds);
+  renderPartsWeeks();
 }
 
 const reload = () => setRange(range.start, range.end);
@@ -127,7 +204,7 @@ function render(s, fundStatus) {
   $('[data-open-days]', root).innerHTML = openDaysBanner(s.openDays);
   $('[data-pl]', root).innerHTML = `
     <div class="pl-section">Income</div>
-    ${DEPARTMENTS.map(d => line(`${esc(d.label)} sales`, peso(i.departments[d.key]))).join('')}
+    ${DEPARTMENTS.filter(d => d.key !== 'parts' || i.departments.parts).map(d => line(`${esc(d.label)} sales`, peso(i.departments[d.key]))).join('')}
     ${line('<b>Gross sales</b>', `<b>${peso(i.gross)}</b>`)}
     ${line('− Commission', peso(i.commission))}
     ${line('<b>Net sales</b>', `<b>${peso(i.net)}</b>`)}
@@ -139,6 +216,9 @@ function render(s, fundStatus) {
     ${o.fundExpenses ? line('Bought with the cash fund (abonos)', peso(o.fundExpenses)) : ''}
     ${line('<b>Total operating expenses</b>', `<b>${peso(o.total)}</b>`)}
     ${line('Net profit', peso(s.netProfit), `total ${s.netProfit < 0 ? 'neg-total' : ''}`)}
+    ${s.partsNet.weeks.length ? `<div data-parts-net>
+      ${line(`+ Parts department <span class="muted small">(${s.partsNet.weeks.length} week${s.partsNet.weeks.length === 1 ? '' : 's'} from its Excel file)</span>`, peso(s.partsNet.total))}
+      ${line('Total net profit', peso(s.totalProfit), `total ${s.totalProfit < 0 ? 'neg-total' : ''}`)}</div>` : ''}
     ${o.partsBought ? `<p class="hint mt">${peso(o.partsBought)} of auto parts bought to sell or paid to suppliers is not counted above:
       each part's cost counts as “Cost of parts sold” when it sells.</p>` : ''}
     ${i.receivables ? `<p class="hint mt">${peso(i.receivables)} of jobs in this period are still unpaid and not counted above.</p>` : ''}`;
@@ -150,7 +230,10 @@ function render(s, fundStatus) {
     ${line('− Payroll paid out', peso(c.payrollPayouts))}
     ${line('− Set aside to bill funds', peso(c.setAsides))}
     ${line('− Bill shortfalls paid from drawer', peso(c.billTopUps))}
+    ${s.partsMoney.lent ? line('− Lent to Parts', peso(s.partsMoney.lent)) : ''}
+    ${s.partsMoney.repaid ? line('+ Parts paid back', peso(s.partsMoney.repaid)) : ''}
     ${line('Left over for the owner', peso(c.net), 'total')}
+    ${s.partsMoney.owes ? `<p class="hint mt" data-parts-owes>Parts owes the shop <b>${peso(s.partsMoney.owes)}</b> (lent from the drawer, not paid back yet).</p>` : ''}
     <p class="hint mt">Set-asides are not costs: they move money into the funds below. The cost is counted when the bill is paid.</p>`;
 
   const rows = s.funds.filter(f => f.active).map(f => ({ ...f, ...(fundStatus.find(x => x.id === f.id) || {}) }));

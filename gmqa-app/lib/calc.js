@@ -167,13 +167,21 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
   const setAsideGcash = bySide(outflows.setAsides, 'gcash');
   const billTopUpCash = bySide(outflows.billTopUps, 'cash');
   const billTopUpGcash = bySide(outflows.billTopUps, 'gcash');
+  // Money lent to the parts department (its own Excel business since 2026-11-18) and paid back: it moves the drawer
+  // on its day, never profit. public/js/views/eod.js mirrors this.
+  const loans = outflows.partsLoans || [];
+  const loan = (kind, side) => sum(loans.filter(l => l.kind === kind && l.side === side), l => l.amount);
+  const partsLentCash = loan('lent', 'cash');
+  const partsLentGcash = loan('lent', 'gcash');
+  const partsRepaidCash = loan('repaid', 'cash');
+  const partsRepaidGcash = loan('repaid', 'gcash');
 
   // Weekly payroll is handed out from the money saved during the week, not from the payday's drawer or GCash:
   // it is shown (payrollCash / payrollGcash) but never taken out of the day's expected count. See payWeek.
   const expectedCash = round2(cashFloat + cashReceived - commissionCash - cashExpenses
-    - setAsideCash - billTopUpCash);
+    - setAsideCash - billTopUpCash - partsLentCash + partsRepaidCash);
   const expectedGcash = round2(gcashReceived + tips - tipsGiven - commissionGcash - gcashExpenses
-    - setAsideGcash - billTopUpGcash);
+    - setAsideGcash - billTopUpGcash - partsLentGcash + partsRepaidGcash);
   const actualCash = meta.actual_cash ?? null;
   const actualGcash = meta.actual_gcash ?? null;
 
@@ -190,6 +198,7 @@ function daySummary({ date, jobs, expenses = [], meta = {}, outflows = {}, tipsO
     jobTips, otherTips, tips, tipsTracked, tipsGiven, tipsOwedBefore: owedBefore, tipsToGive,
     cashFloat, commissionCash, commissionGcash, payrollCash, payrollGcash,
     setAsideCash, setAsideGcash, billTopUpCash, billTopUpGcash,
+    partsLentCash, partsLentGcash, partsRepaidCash, partsRepaidGcash,
     expectedCash, expectedGcash, expectedTotal: round2(expectedCash + expectedGcash),
     actualCash, actualGcash,
     cashVariance: actualCash == null ? null : round2(actualCash - expectedCash),
@@ -495,10 +504,21 @@ function tradingProfit(s) {
   return { costs, partsBought, partsCost: s.partsCost, profit: round2(s.collected - s.commission - s.partsCost - costs) };
 }
 
+// The parts department's weekly net profit (typed in from its Excel file since 2026-11-18) counted in start..end:
+// a pay week (Sunday to Saturday) counts in the period holding its Saturday, so a week is never split or counted
+// twice, and one whose Saturday is not reached yet waits. weeks: [{ week_start, amount, note }].
+function partsNetIn(weeks, start, end) {
+  const counted = weeks.map(w => ({ week_start: w.week_start, week_end: addDays(w.week_start, 6), amount: round2(w.amount), note: w.note ?? null }))
+    .filter(w => w.week_end >= start && w.week_end <= end)
+    .sort((a, b) => a.week_start.localeCompare(b.week_start));
+  return { total: sum(counted, w => w.amount), weeks: counted };
+}
+
 // One row of Analytics. staffDays: days someone worked the carwash; such a day without sales may mean
 // the jobs were never entered, which would make the period's profit look too low. A day still open is
 // not checked: it has not been counted yet, and is listed in openDays instead.
-function analyticsRow(period, t, { payroll, billsTotal, staffDays, countedDates, openDays }) {
+// partsNet: the parts department's weekly figures counted in the period (partsNetIn), added on top of the shop's profit.
+function analyticsRow(period, t, { payroll, billsTotal, staffDays, countedDates, openDays, partsNet = 0 }) {
   const { income, opex, netProfit } = profitAndLoss(t, { payroll, billsTotal });
   const salesDays = t.salesDays.length;
   return {
@@ -507,6 +527,7 @@ function analyticsRow(period, t, { payroll, billsTotal, staffDays, countedDates,
     sales: income.gross, departments: income.departments, receivables: income.receivables,
     commission: income.commission, expenses: round2(opex.drawerExpenses + opex.fundExpenses),
     payroll: opex.payroll, bills: opex.billsTotal, partsCost: income.partsCost, netProfit,
+    partsNet: round2(partsNet), totalProfit: round2(netProfit + partsNet),
     perDay: salesDays ? round2(income.gross / salesDays) : 0,
     perCar: t.vehicles ? round2(income.gross / t.vehicles) : 0,
   };
@@ -777,6 +798,6 @@ module.exports = {
   ATTENDANCE_CODES, otRuleOn, otHourly, otRuleNote, longDate, rateOn, payrollForRange,
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
-  periodTotals, profitAndLoss, tradingProfit, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
+  periodTotals, profitAndLoss, tradingProfit, partsNetIn, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
   remittanceReport, passbookExpected, payWeek, supplierReport,
 };

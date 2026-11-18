@@ -2,7 +2,7 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { analyticsRow, closedDates, datesBetween, openDatesWithEntries, periodBuckets, periodTotals, pctChange, round2, saleDate, serviceTrends, PERIOD_COUNTS } = require('../lib/calc');
+const { analyticsRow, addDays, closedDates, datesBetween, openDatesWithEntries, partsNetIn, periodBuckets, periodTotals, pctChange, round2, saleDate, serviceTrends, PERIOD_COUNTS } = require('../lib/calc');
 const { loadJobs } = require('../lib/store');
 const { loadPayroll, payrollNetOn, payrollEntryDates, carwashWorkDays, SHOP_TODAY } = require('../lib/payroll-data');
 const { date, oneOf } = require('../lib/http');
@@ -15,12 +15,14 @@ router.get('/analytics', requireOwner, async (req, res) => {
   const buckets = periodBuckets(grain, day);
   const between = [buckets[0].start, day];
 
-  const [jobs, expenses, metas, bills, payroll] = await Promise.all([
+  const [jobs, expenses, metas, bills, payroll, partsWeeks] = await Promise.all([
     loadJobs('sale_date between $1 and $2 or paid_on between $1 and $2', between),
     db.many('select expense_date, side, amount, for_resale from expenses where expense_date between $1 and $2', between),
     db.many('select * from daily_meta where job_date between $1 and $2', between),
     db.many('select paid_on, amount from bill_payments where paid_on between $1 and $2', between),
     loadPayroll(...between),
+    // The parts department's weekly net (its Excel file), counted like Finance: in the period holding the week's Saturday.
+    db.many('select week_start, amount from parts_weekly_net where week_start between $1 and $2', [addDays(between[0], -6), day]),
   ]);
   const staffDays = carwashWorkDays(payroll);
   const entryDates = [
@@ -37,6 +39,7 @@ router.get('/analytics', requireOwner, async (req, res) => {
       billsTotal: round2(bills.filter(b => countedDates.includes(b.paid_on)).reduce((t, b) => t + b.amount, 0)),
       staffDays, countedDates,
       openDays: openDatesWithEntries(dates, metas, entryDates),
+      partsNet: partsNetIn(partsWeeks, period.start, period.end).total,
     });
   });
   const closed = new Set(closedDates(datesBetween(...between), metas));

@@ -4,6 +4,7 @@ const { db } = require('./lib/db');
 const { createAuth } = require('./lib/auth');
 const { errorHandler, HttpError } = require('./lib/http');
 const { redactCostsForStaff } = require('./lib/redact');
+const { partsRetiredFrom } = require('./lib/parts-retired');
 
 // verifyToken/sandbox are only passed by tests and scripts/sandbox.js, never in production.
 function createApp({ verifyToken, sandbox = false } = {}) {
@@ -14,9 +15,12 @@ function createApp({ verifyToken, sandbox = false } = {}) {
   app.use(express.static(path.join(__dirname, 'public'), { maxAge: sandbox ? 0 : '5m' }));
 
   // ---- public endpoints
+  // parts_retired_from: the day the parts department moved to its Excel file (lib/parts-retired.js); the screens hide
+  // selling parts from then. Not a secret, so it comes with the sign-in settings the page loads first.
   app.get('/api/auth/config', (req, res) => {
-    if (sandbox) return res.json({ sandbox: true });
-    res.json({ url: process.env.SUPABASE_URL || '', anonKey: process.env.SUPABASE_ANON_KEY || '' });
+    const parts = { parts_retired_from: partsRetiredFrom() };
+    if (sandbox) return res.json({ sandbox: true, ...parts });
+    res.json({ url: process.env.SUPABASE_URL || '', anonKey: process.env.SUPABASE_ANON_KEY || '', ...parts });
   });
   app.get('/api/health', async (req, res) => {
     const row = await db.one('select max(version) as version from schema_migrations');

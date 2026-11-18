@@ -4,6 +4,7 @@ const { migratedDb, closeAllDrivers } = require('./helpers');
 const { createApp } = require('../server');
 const { clearUserCache } = require('../lib/auth');
 const { setShopToday } = require('../lib/clock');
+const { setPartsRetiredFrom, PARTS_RETIRED_FROM } = require('../lib/parts-retired');
 const crypto = require('crypto');
 
 // Test tokens are just the email; the fake verifier maps them to identities.
@@ -17,6 +18,10 @@ let server, base, driver;
 test.before(async () => {
   // Date guards compare with today: these tests use dates up to 2033, so today is pinned after them all.
   setShopToday('2099-12-31');
+  // The parts department moved to Excel on 2026-11-18 (lib/parts-retired.js). The older tests below sell parts on later
+  // dates, describing the parts counter as it worked before; they run with the cutover turned off. The tests at the end
+  // turn it on.
+  setPartsRetiredFrom(null);
   driver = await migratedDb();
   await driver.query("insert into app_users (email, role) values ($1, 'owner'), ($2, 'staff')", [OWNER, STAFF]);
   server = createApp({ verifyToken }).listen(0);
@@ -2364,4 +2369,129 @@ test('suppliers: each item\'s supplier, what its parts sold for and cost, and wh
   await ok(api(OWNER, 'PATCH', `/suppliers/${gh.id}`, { name: 'Greaseheads PH Test' }));
   assert.ok((await ok(api(OWNER, 'GET', '/suppliers'))).some(s => s.name === 'Greaseheads PH Test'));
   await ok(api(OWNER, 'DELETE', `/expenses/${pay.expense_id}`));
+});
+
+// ---------------------------------------------------------------- parts moved to Excel (2026-11-18)
+
+test('parts moved to Excel: from the cutover day no new parts sale or part line is taken; older parts jobs still edit', async () => {
+  assert.equal(PARTS_RETIRED_FROM, '2026-11-18', 'the day the parts department moved to Excel');
+  assert.equal((await ok(api(null, 'GET', '/auth/config'))).parts_retired_from, null, 'turned off for the older tests');
+  const autoParts = (await ok(api(STAFF, 'GET', '/tags'))).find(t => t.system_key === 'auto_parts');
+  const part = await ok(api(OWNER, 'POST', '/inventory', { name: 'Cutover bulb 2036', unit: 'pc', price: 500, tags: [autoParts.id] }));
+  await ok(api(OWNER, 'POST', `/inventory/${part.id}/receive`, { date: '2036-06-01', quantity: 10, unit_cost: 300, paid_from: 'none' }));
+  // Sold the day before the cutover, as the parts counter did.
+  const sold = await ok(api(STAFF, 'POST', '/jobs', {
+    job_date: '2036-06-09', department: 'parts', payment_method: 'Cash', payment_received: true, job_done: true, items: [{ part_id: part.id }],
+  }));
+  setPartsRetiredFrom('2036-06-10');
+  try {
+    assert.equal((await ok(api(null, 'GET', '/auth/config'))).parts_retired_from, '2036-06-10', 'the screens read it before sign-in');
+    const counter = await api(STAFF, 'POST', '/jobs', { job_date: '2036-06-10', department: 'parts', payment_method: 'Cash', items: [{ name: 'Bulb', price: 500, commission: 0 }] });
+    assert.equal(counter.status, 400, 'no parts counter sale from the cutover day');
+    assert.match(counter.data.error, /Excel/);
+    const premium = await catalogItem('Premium Wash');
+    const withPart = await api(STAFF, 'POST', '/jobs', { job_date: '2036-06-11', vehicle_class: 'S', items: [{ catalog_item_id: premium.id }, { part_id: part.id }] });
+    assert.equal(withPart.status, 400, 'no part on a carwash job either');
+    assert.match(withPart.data.error, /Excel/);
+    const wash = await ok(api(STAFF, 'POST', '/jobs', { job_date: '2036-06-11', vehicle_class: 'S', items: [{ catalog_item_id: premium.id }] }));
+    assert.equal((await api(STAFF, 'PATCH', `/jobs/${wash.id}`, { items: [{ id: wash.items[0].id }, { part_id: part.id }] })).status, 400);
+    // The job sold before the cutover keeps its part line and can still be edited.
+    const edited = await ok(api(OWNER, 'PATCH', `/jobs/${sold.id}`, { remarks: 'Installed' }));
+    assert.deepEqual([edited.remarks, edited.items.filter(i => i.kind === 'part').length], ['Installed', 1]);
+    assert.equal((await ok(api(STAFF, 'GET', '/parts'))).find(p => p.id === part.id).stock, 9, 'the refused sales took nothing from stock');
+  } finally {
+    setPartsRetiredFrom(null);
+  }
+});
+
+test('lent to parts and paid back: the shop drawer lends the parts department money; profit never moves', async () => {
+  const D1 = '2036-06-24';
+  const D2 = '2036-06-25';
+  const premium = await catalogItem('Premium Wash');
+  await ok(api(STAFF, 'POST', '/jobs', { job_date: D1, vehicle_class: 'S', payment_method: 'Cash', payment_received: true, items: [{ catalog_item_id: premium.id }] }));
+  await ok(api(STAFF, 'PUT', `/days/${D1}`, { cash_float: 2000 }));
+  const before = await ok(api(OWNER, 'GET', `/days/${D1}`));
+  assert.deepEqual([before.partsLoans, before.partsOwes], [[], 0]);
+  const financeBefore = await financeOfClosed(D1, D2, [D1, D2]);
+
+  for (const body of [{ kind: 'gift', side: 'cash', amount: 1 }, { kind: 'lent', side: 'fund', amount: 1 }, { kind: 'lent', side: 'cash', amount: 0 }]) {
+    assert.equal((await api(STAFF, 'POST', `/days/${D1}/parts-loans`, body)).status, 400, JSON.stringify(body));
+  }
+  // Staff lends ₱800 cash for the mechanic's labor, before the customer has paid parts.
+  const day1 = await ok(api(STAFF, 'POST', `/days/${D1}/parts-loans`, { kind: 'lent', side: 'cash', amount: 800, note: 'Mechanic labor, Fortuner' }));
+  assert.equal(day1.summary.partsLentCash, 800);
+  assert.equal(day1.summary.expectedCash, before.summary.expectedCash - 800);
+  assert.equal(day1.partsOwes, 800);
+  assert.deepEqual(day1.partsLoans.map(l => [l.kind, l.side, l.amount, l.note]), [['lent', 'cash', 800, 'Mechanic labor, Fortuner']]);
+  const ownerDay1 = await ok(api(OWNER, 'GET', `/days/${D1}`));
+  assert.deepEqual(ownerDay1.trading, before.trading, 'a loan is not a cost');
+
+  // Parts never pays back more than it owes.
+  const tooMuch = await api(STAFF, 'POST', `/days/${D2}/parts-loans`, { kind: 'repaid', side: 'gcash', amount: 900 });
+  assert.equal(tooMuch.status, 400);
+  assert.match(tooMuch.data.error, /800/);
+  const day2 = await ok(api(STAFF, 'POST', `/days/${D2}/parts-loans`, { kind: 'repaid', side: 'gcash', amount: 300 }));
+  assert.deepEqual([day2.summary.partsRepaidGcash, day2.summary.expectedGcash, day2.partsOwes], [300, 300, 500]);
+  // The pay week (and so Remittances) sees the same drawer as EOD.
+  assert.equal(day2.week.days.find(d => d.date === D1).cash, Math.round((ownerDay1.summary.expectedCash - 2000) * 100) / 100);
+
+  // Finance: the same profit; the money shows in cash flow, with what parts still owes.
+  const f = await financeOfClosed(D1, D2, [D1, D2]);
+  assert.equal(f.netProfit, financeBefore.netProfit);
+  assert.deepEqual(f.income, financeBefore.income);
+  assert.deepEqual(f.opex, financeBefore.opex);
+  assert.deepEqual(f.partsMoney, { lent: 800, repaid: 300, owes: 500 });
+  assert.equal(f.cashflow.net, Math.round((financeBefore.cashflow.net - 800 + 300) * 100) / 100);
+
+  // A loan already paid back cannot be removed first; the repayment can, then the loan.
+  const early = await api(STAFF, 'DELETE', `/parts-loans/${day1.partsLoans[0].id}`);
+  assert.equal(early.status, 400);
+  assert.match(early.data.error, /paid back/);
+  await ok(api(STAFF, 'DELETE', `/parts-loans/${day2.partsLoans[0].id}`));
+  const gone = await ok(api(STAFF, 'DELETE', `/parts-loans/${day1.partsLoans[0].id}`));
+  assert.deepEqual([gone.date, gone.partsOwes, gone.summary.expectedCash], [D1, 0, before.summary.expectedCash]);
+  assert.equal((await api(STAFF, 'DELETE', `/parts-loans/${day1.partsLoans[0].id}`)).status, 404);
+
+  // A closed day is locked for staff, like an expense.
+  await closeDays([D1]);
+  assert.equal((await api(STAFF, 'POST', `/days/${D1}/parts-loans`, { kind: 'lent', side: 'cash', amount: 100 })).status, 403);
+  await ok(api(OWNER, 'POST', `/days/${D1}/reopen`));
+});
+
+test('parts weekly net: the owner types each week from the parts Excel file; Finance and Analytics count it in the period of its Saturday', async () => {
+  const W1 = '2036-06-22'; // Saturday 28 June
+  const W2 = '2036-06-29'; // Saturday 5 July
+  assert.equal((await api(STAFF, 'PUT', `/parts-weekly-net/${W1}`, { amount: 1 })).status, 403);
+  assert.equal((await api(STAFF, 'GET', '/parts-weekly-net')).status, 403);
+  const notSunday = await api(OWNER, 'PUT', '/parts-weekly-net/2036-06-23', { amount: 1 });
+  assert.equal(notSunday.status, 400);
+  assert.match(notSunday.data.error, /Sunday/);
+  assert.equal((await api(OWNER, 'PUT', '/parts-weekly-net/2026-11-08', { amount: 1 })).status, 400, 'a week before parts moved to Excel');
+  assert.equal((await api(OWNER, 'PUT', `/parts-weekly-net/${W1}`, {})).status, 400, 'an amount is needed');
+
+  await ok(api(OWNER, 'PUT', `/parts-weekly-net/${W1}`, { amount: 4000 }));
+  await ok(api(OWNER, 'PUT', `/parts-weekly-net/${W1}`, { amount: 5000, note: 'From the parts Excel' })); // corrected
+  await ok(api(OWNER, 'PUT', `/parts-weekly-net/${W2}`, { amount: -1200 })); // a loss
+  const list = await ok(api(OWNER, 'GET', '/parts-weekly-net'));
+  assert.deepEqual(list.filter(w => w.week_start >= W1).map(w => [w.week_start, w.amount, w.note]),
+    [[W2, -1200, null], [W1, 5000, 'From the parts Excel']], 'newest first');
+
+  const june = await ok(api(OWNER, 'GET', '/finance/summary?start=2036-06-01&end=2036-06-30'));
+  assert.deepEqual([june.partsNet.total, june.partsNet.weeks.map(w => w.week_start)], [5000, [W1]]);
+  assert.equal(june.totalProfit, Math.round((june.netProfit + 5000) * 100) / 100);
+  const july = await ok(api(OWNER, 'GET', '/finance/summary?start=2036-07-01&end=2036-07-31'));
+  assert.deepEqual([july.partsNet.total, july.partsNet.weeks.map(w => w.week_start)], [-1200, [W2]]);
+
+  // Analytics says the same, month by month.
+  const { periods } = await ok(api(OWNER, 'GET', '/analytics?grain=month&date=2036-07-31'));
+  for (const p of periods) {
+    const f = await ok(api(OWNER, 'GET', `/finance/summary?start=${p.start}&end=${p.end}`));
+    assert.equal(p.partsNet, f.partsNet.total, `${p.label} parts net`);
+    assert.equal(p.totalProfit, f.totalProfit, `${p.label} total profit`);
+  }
+  assert.deepEqual(periods.slice(-2).map(p => p.partsNet), [5000, -1200]);
+
+  await ok(api(OWNER, 'DELETE', `/parts-weekly-net/${W2}`));
+  assert.equal((await ok(api(OWNER, 'GET', '/finance/summary?start=2036-07-01&end=2036-07-31'))).partsNet.total, 0);
+  assert.equal((await api(OWNER, 'DELETE', `/parts-weekly-net/${W2}`)).status, 404);
 });

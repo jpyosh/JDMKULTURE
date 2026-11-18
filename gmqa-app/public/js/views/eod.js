@@ -1,4 +1,7 @@
-import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, prettyTime, isOwner, DEPARTMENTS, openModal, closeModal, modalHeader } from '../ui.js';
+import { $, $$, api, esc, peso, toast, busy, todayLocal, addDays, sundayOf, weekday, prettyDate, prettyTime, isOwner, state, DEPARTMENTS, openModal, closeModal, modalHeader } from '../ui.js';
+
+// Supplier payments for parts are kept in the parts Excel file once parts moved there.
+const supplierPayments = () => isOwner() && !state.partsRetiredFrom;
 
 let root;
 let current = { date: todayLocal(), day: null };
@@ -64,11 +67,27 @@ function mount(el) {
             <input type="text" data-e="description" placeholder="What was it for?" maxlength="200">
             <input type="number" min="0.01" step="0.01" data-e="amount" placeholder="Amount">
             <button class="btn ghost" type="button" data-add-expense>+ Add</button>
-            ${isOwner() ? `<label class="check expense-check"><input type="checkbox" data-e="for_resale"> Supplier payment (consigned parts already sold)</label>
+            ${supplierPayments() ? `<label class="check expense-check"><input type="checkbox" data-e="for_resale"> Supplier payment (consigned parts already sold)</label>
               <label class="sr-only" for="expense-supplier">Supplier paid</label>
               <select data-e="supplier_id" id="expense-supplier" title="Supplier paid (Suppliers tab: what is still owed)" hidden></select>` : ''}
           </div>
           <div class="hint" data-fund-hint></div>
+        </div>
+        <div class="card" data-parts-money>
+          <h2>Parts department</h2>
+          <p class="hint">Parts keeps its own money and its own Excel file. If the drawer pays something for parts (like the
+            mechanic's labor before the customer has paid), add it here as <b>Lent to Parts</b> so the count still matches.
+            When parts gives the money back, add <b>Parts paid back</b>. Neither changes the shop's profit.</p>
+          <div data-parts-loans></div>
+          <div class="expense-form parts-loan-form" data-enter="[data-add-parts-loan]">
+            <label class="sr-only" for="parts-loan-kind">Lent or paid back</label>
+            <select data-pl="kind" id="parts-loan-kind"><option value="lent">Lent to Parts</option><option value="repaid">Parts paid back</option></select>
+            <label class="sr-only" for="parts-loan-side">Cash or GCash</label>
+            <select data-pl="side" id="parts-loan-side"><option value="cash">Drawer cash</option><option value="gcash">GCash</option></select>
+            <input type="text" data-pl="note" placeholder="What for? (e.g. mechanic's labor)" maxlength="200">
+            <input type="number" min="0.01" step="0.01" data-pl="amount" placeholder="Amount">
+            <button class="btn ghost" type="button" data-add-parts-loan>+ Add</button>
+          </div>
         </div>
       </div>
       <div>
@@ -86,6 +105,7 @@ function mount(el) {
   $$('[data-m]', root).forEach(el => el.addEventListener('input', () => { typed.add(el.dataset.m); renderMath(); }));
   $('[data-save]', root).addEventListener('click', e => busy(e.currentTarget, save));
   $('[data-add-expense]', root).addEventListener('click', e => busy(e.currentTarget, addExpense));
+  $('[data-add-parts-loan]', root).addEventListener('click', e => busy(e.currentTarget, addPartsLoan));
   $('[data-sales-report]', root).addEventListener('click', e => busy(e.currentTarget, copySalesReport));
   $('[data-e="side"]', root).addEventListener('change', renderFundHint);
   $('[data-e="for_resale"]', root)?.addEventListener('change', () => { showSupplierPicker(); renderFundHint(); });
@@ -109,7 +129,7 @@ async function setDate(date) {
   current.date = date;
   $('[data-date]', root).value = date;
   const [day, funds, cashFund, suppliers] = await Promise.all([api('GET', `/days/${date}`), api('GET', `/funds?date=${date}`), api('GET', '/cash-fund'),
-    isOwner() ? api('GET', '/suppliers') : []]);
+    supplierPayments() ? api('GET', '/suppliers') : []]);
   if (date !== current.date) return;
   current.day = day;
   current.funds = funds;
@@ -179,10 +199,41 @@ function render() {
     toast('Expense deleted');
     render();
   }));
+  renderPartsLoans();
   renderEnvelopes();
   renderWeek();
   renderFundHint();
   renderMath();
+}
+
+// Money the drawer lent the parts department today and what it paid back, with what parts owes at the end of the day.
+function renderPartsLoans() {
+  const { partsLoans = [], partsOwes = 0 } = current.day;
+  const label = { lent: 'Lent to Parts', repaid: 'Parts paid back' };
+  $('[data-parts-loans]', root).innerHTML = partsLoans.map(l => `<div class="row-line" data-parts-loan="${l.kind}">
+      <span class="k"><span class="kind-pill ${l.side === 'cash' ? 'service' : 'addon'}">${l.side === 'cash' ? 'Cash' : 'GCash'}</span>
+        ${label[l.kind]}${l.note ? ` · ${esc(l.note)}` : ''}</span>
+      <span>${l.kind === 'lent' ? '−' : '+'}${peso(l.amount)} ${locked() ? '' : `<button class="icon-btn" type="button" data-del-parts-loan="${l.id}" title="Delete">✕</button>`}</span></div>`).join('')
+    + `<div class="row-line total" data-parts-owes><span class="k">Parts owes the shop</span><span class="money">${peso(partsOwes)}</span></div>`;
+  $$('[data-pl], [data-add-parts-loan]', root).forEach(el => { el.disabled = locked(); });
+  $$('[data-del-parts-loan]', root).forEach(b => b.addEventListener('click', async () => {
+    if (!window.confirm('Delete this entry?')) return;
+    current.day = await api('DELETE', `/parts-loans/${b.dataset.delPartsLoan}`);
+    toast('Entry deleted');
+    render();
+  }));
+}
+
+async function addPartsLoan() {
+  const field = key => $(`[data-pl="${key}"]`, root);
+  const amount = Number(field('amount').value || 0);
+  if (!(amount > 0)) return toast('Type the amount', 'error');
+  const kind = field('kind').value;
+  current.day = await api('POST', `/days/${current.date}/parts-loans`, { kind, side: field('side').value, amount, note: field('note').value.trim() });
+  field('amount').value = '';
+  field('note').value = '';
+  toast(kind === 'lent' ? `${peso(amount)} lent to Parts` : `Parts paid back ${peso(amount)}`);
+  render();
 }
 
 const EXPENSE_PILL = { cash: { cls: 'service', label: 'Cash' }, gcash: { cls: 'addon', label: 'GCash' }, fund: { cls: 'part', label: 'Cash fund' } };
@@ -284,10 +335,11 @@ function renderMath() {
   const tipsGiven = s.tipsTracked ? num('gcash_tips_passed') : tips;
   const tipsToGive = Math.max(0, round2(s.tipsOwedBefore + tips - tipsGiven));
   // Same rule as lib/calc.js: weekly payroll comes from the money saved during the week, never from today's count.
+  // Same rule as lib/calc.js: money lent to the parts department leaves the drawer, money it pays back comes in.
   const expectedCash = num('cash_float') + s.cashReceived - commissionCash - s.cashExpenses
-    - s.setAsideCash - s.billTopUpCash;
+    - s.setAsideCash - s.billTopUpCash - s.partsLentCash + s.partsRepaidCash;
   const expectedGcash = s.gcashReceived + tips - tipsGiven - commissionGcash - s.gcashExpenses
-    - s.setAsideGcash - s.billTopUpGcash;
+    - s.setAsideGcash - s.billTopUpGcash - s.partsLentGcash + s.partsRepaidGcash;
   const line = (k, v, cls = '') => `<div class="row-line ${cls}"><span class="k">${k}</span><span class="money">${v}</span></div>`;
   // On a day with parts counter sales, money received is split into job orders and the parts counter.
   const counter = s.partsCashReceived || s.partsGcashReceived;
@@ -302,6 +354,8 @@ function renderMath() {
     + line('− Cash expenses', peso(s.cashExpenses))
     + (s.setAsideCash ? line('− Put aside for bills (envelopes)', peso(s.setAsideCash)) : '')
     + (s.billTopUpCash ? line('− Bill shortfall from drawer', peso(s.billTopUpCash)) : '')
+    + (s.partsLentCash ? line('− Lent to Parts', peso(s.partsLentCash)) : '')
+    + (s.partsRepaidCash ? line('+ Parts paid back', peso(s.partsRepaidCash)) : '')
     + line('Expected in drawer', peso(expectedCash), 'total');
   $('[data-gcash]', root).innerHTML =
     received('', 'GCash', s.gcashReceived, s.partsGcashReceived)
@@ -311,6 +365,8 @@ function renderMath() {
     + line('− GCash expenses', peso(s.gcashExpenses))
     + (s.setAsideGcash ? line('− Put aside for bills (envelopes)', peso(s.setAsideGcash)) : '')
     + (s.billTopUpGcash ? line('− Bill shortfall from GCash', peso(s.billTopUpGcash)) : '')
+    + (s.partsLentGcash ? line('− Lent to Parts', peso(s.partsLentGcash)) : '')
+    + (s.partsRepaidGcash ? line('+ Parts paid back', peso(s.partsRepaidGcash)) : '')
     + line('Expected GCash', peso(expectedGcash), 'total')
     + (tipsToGive ? `<div class="hint mt">${peso(tipsToGive)} in tips is still in GCash until it is given to the crew.</div>` : '');
   renderTipsReminder(tipsToGive, tipsGiven);

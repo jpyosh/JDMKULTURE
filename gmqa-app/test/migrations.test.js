@@ -122,7 +122,7 @@ test('status is read-only: it never creates anything', async () => {
 
 test('migrate is idempotent', async () => {
   const driver = await newDriver();
-  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021', '022']);
+  assert.deepEqual(await migrate(driver, quiet), ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021', '022', '023']);
   assert.deepEqual(await migrate(driver, quiet), []);
 });
 
@@ -722,4 +722,41 @@ test('022 adds suppliers, weekly bill envelopes and their fees, without changing
   await driver.query("insert into fund_set_asides (fund_id, entry_date, side, amount, week_start) values ($1, '2027-06-02', 'gcash', 1, '2027-05-30')", [fund.id]);
   assert.ok((await one(driver, "select count(*)::int n from audit_log where table_name = 'suppliers'")).n >= 1, 'audited');
   assert.equal((await one(driver, "select relrowsecurity as rls from pg_class where relname = 'suppliers'")).rls, true);
+});
+
+test('023 adds the parts weekly net and the money lent to parts, without changing anything that exists', async () => {
+  const driver = await newDriver();
+  await migrate(driver, { ...quiet, to: '022' });
+  await driver.query("insert into expenses (expense_date, side, description, amount) values ('2027-07-02', 'cash', 'Soap', 120)");
+  await driver.query("insert into daily_meta (job_date, cash_float, closed_at) values ('2027-07-02', 2000, now())");
+  const before = { expenses: await all(driver, 'select * from expenses order by id'), metas: await all(driver, 'select * from daily_meta order by job_date') };
+
+  assert.deepEqual(await migrate(driver, { ...quiet, to: '023' }), ['023']);
+  assert.deepEqual(await all(driver, 'select * from expenses order by id'), before.expenses);
+  assert.deepEqual(await all(driver, 'select * from daily_meta order by job_date'), before.metas);
+  assert.equal((await one(driver, 'select count(*)::int n from parts_weekly_net')).n, 0);
+  assert.equal((await one(driver, 'select count(*)::int n from parts_loans')).n, 0);
+
+  // One figure per pay week (Sunday to Saturday), from the week parts moved to Excel; a loss is negative.
+  const week = (start, amount) => driver.query('insert into parts_weekly_net (week_start, amount) values ($1, $2)', [start, amount]);
+  await week('2026-11-15', 12034);
+  await week('2027-07-04', -500);
+  await assert.rejects(week('2027-07-05', 1), /check/i, 'a week starts on a Sunday');
+  await assert.rejects(week('2026-11-08', 1), /check/i, 'not before parts moved to Excel');
+  await assert.rejects(week('2026-11-15', 1), /unique|duplicate|primary/i, 'one figure per week');
+  await driver.query("update parts_weekly_net set amount = 12534, note = 'Labor added' where week_start = '2026-11-15'");
+  assert.deepEqual(await one(driver, "select amount, note from parts_weekly_net where week_start = '2026-11-15'"), { amount: 12534, note: 'Labor added' });
+
+  // Money the shop drawer lends the parts department, and what it pays back.
+  const loan = (kind, side, amount) => driver.query("insert into parts_loans (entry_date, kind, side, amount) values ('2027-07-02', $1, $2, $3)", [kind, side, amount]);
+  await loan('lent', 'cash', 800);
+  await loan('repaid', 'gcash', 300);
+  await assert.rejects(loan('gift', 'cash', 1), /check/i);
+  await assert.rejects(loan('lent', 'fund', 1), /check/i, 'from the drawer: cash or GCash');
+  await assert.rejects(loan('lent', 'cash', 0), /check/i);
+
+  for (const table of ['parts_weekly_net', 'parts_loans']) {
+    assert.ok((await one(driver, `select count(*)::int n from audit_log where table_name = '${table}'`)).n >= 2, `${table} audited`);
+    assert.equal((await one(driver, `select relrowsecurity as rls from pg_class where relname = '${table}'`)).rls, true, `${table} RLS`);
+  }
 });

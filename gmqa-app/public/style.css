@@ -264,6 +264,11 @@ select option,select optgroup{background-color:var(--surface-alt);color:var(--te
 .inline-form{grid-template-columns:1.4fr 1fr 110px auto;}
 .expense-check{grid-column:1/-1;white-space:normal;}
 .expense-form [data-e="supplier_id"]{grid-column:1/-1;}
+/* EOD → Parts department: lent or paid back + cash or GCash, then what for, then the amount. */
+.expense-form.parts-loan-form{grid-template-columns:1fr 1fr;}
+.parts-loan-form [data-pl="note"]{grid-column:1/-1;}
+/* Finance → Parts department: the week, its net profit, a note, save. */
+.expense-form.parts-week-form{grid-template-columns:minmax(200px,1.3fr) 150px 1fr auto;}
 /* Suppliers tab */
 .supplier-figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:6px 0 14px;}
 .supplier-figures>div{display:flex;flex-direction:column;gap:2px;min-width:0;}
@@ -661,7 +666,8 @@ body:not([data-role="owner"]) .owner-only{display:none !important;}
   .submit-cell .btn,.entry-actions .btn{flex:1 1 auto;}
   .line-row{grid-template-columns:64px 1fr 30px;}
   .line-row > :nth-child(3),.line-row > :nth-child(4){grid-column:2;}
-  .expense-form,.inline-form{grid-template-columns:1fr 1fr;}
+  .expense-form,.inline-form,.expense-form.parts-week-form{grid-template-columns:1fr 1fr;}
+  .parts-week-form [data-pw="week"]{grid-column:1/-1;}
   .editor-totals{justify-content:flex-start;}
   .editor-totals .warn{text-align:left;}
   .two-col{gap:14px;}
