@@ -2443,6 +2443,18 @@ test('lent to parts and paid back: the shop drawer lends the parts department mo
   assert.deepEqual(f.partsMoney, { lent: 800, repaid: 300, owes: 500 });
   assert.equal(f.cashflow.net, Math.round((financeBefore.cashflow.net - 800 + 300) * 100) / 100);
 
+  // What parts owes never drops below zero on any day, whatever order the entries are typed in.
+  const D3 = '2036-06-26';
+  const later = await ok(api(STAFF, 'POST', `/days/${D3}/parts-loans`, { kind: 'repaid', side: 'cash', amount: 500 }));
+  assert.equal(later.partsOwes, 0);
+  const backdated = await api(STAFF, 'POST', `/days/${D2}/parts-loans`, { kind: 'repaid', side: 'cash', amount: 100 });
+  assert.equal(backdated.status, 400, 'a repayment dated earlier would make the later one more than was owed');
+  await ok(api(STAFF, 'DELETE', `/parts-loans/${later.partsLoans[0].id}`));
+  const newLoan = await ok(api(STAFF, 'POST', `/days/${D3}/parts-loans`, { kind: 'lent', side: 'cash', amount: 1000 }));
+  const coveredLater = await api(STAFF, 'DELETE', `/parts-loans/${day1.partsLoans[0].id}`);
+  assert.equal(coveredLater.status, 400, 'a later loan does not cover the repayment made before it');
+  await ok(api(STAFF, 'DELETE', `/parts-loans/${newLoan.partsLoans[0].id}`));
+
   // A loan already paid back cannot be removed first; the repayment can, then the loan.
   const early = await api(STAFF, 'DELETE', `/parts-loans/${day1.partsLoans[0].id}`);
   assert.equal(early.status, 400);

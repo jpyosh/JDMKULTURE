@@ -46,6 +46,16 @@ async function loadDay(day, q = db) {
 
 // What the parts department owes the shop drawer at the end of `day`: everything lent up to then, less what it paid back.
 // `day` null: as it stands now, whatever the dates.
+// What parts owes, day by day, never drops below zero: it cannot have paid back more than was lent by then. Checked
+// after each change inside its transaction, so an entry typed out of order (a back-dated repayment, a removed loan
+// that a later loan seemed to cover) rolls back.
+async function assertPartsNeverOverpaid(q, message) {
+  const { low } = await q.one(`select coalesce(min(running), 0) as low from (
+      select sum(sum(case when kind = 'lent' then amount else -amount end)) over (order by entry_date) as running
+      from parts_loans group by entry_date) by_day`);
+  if (Number(low) < -0.004) throw bad(message);
+}
+
 async function partsOwedOn(q, day = null) {
   const { owes } = await q.one(`select coalesce(sum(case when kind = 'lent' then amount else -amount end), 0) as owes
     from parts_loans where $1::date is null or entry_date <= $1`, [day]);
@@ -184,6 +194,7 @@ router.post('/days/:date/parts-loans', async (req, res) => {
       if (amount > owes) throw bad(`Parts only owes the shop ₱${owes.toFixed(2)} on ${day}, not ₱${amount.toFixed(2)}.`);
     }
     await q.query('insert into parts_loans (entry_date, kind, side, amount, note) values ($1, $2, $3, $4, $5)', [day, kind, side, amount, note]);
+    await assertPartsNeverOverpaid(q, 'With the repayments on later days, that is more than parts owes. Check the "Parts paid back" entries.');
   });
   res.status(201).json(await loadDay(day));
 });
@@ -194,11 +205,9 @@ router.delete('/parts-loans/:id', async (req, res) => {
     const row = await q.one('select entry_date, kind, amount from parts_loans where id = $1', [loanId]);
     if (!row) throw notFound('Entry');
     await assertDayOpen(q, row.entry_date, req.user);
-    // Money already paid back cannot lose the loan it paid: remove the repayment first.
-    if (row.kind === 'lent' && Math.round((await partsOwedOn(q) - row.amount) * 100) / 100 < 0) {
-      throw bad('Part of this was already paid back. Remove the "Parts paid back" entry first.');
-    }
     await q.query('delete from parts_loans where id = $1', [loanId]);
+    // Money already paid back cannot lose the loan it paid: remove the repayment first.
+    await assertPartsNeverOverpaid(q, 'Part of this was already paid back. Remove the "Parts paid back" entry first.');
     return row.entry_date;
   });
   res.json(await loadDay(day));

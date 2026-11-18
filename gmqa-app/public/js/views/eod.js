@@ -172,7 +172,7 @@ function render() {
   $('[data-departments]', root).innerHTML = `
     <thead><tr><th>Department</th><th class="num">Jobs</th><th class="num">Sales collected</th><th class="num">Unpaid</th>
       <th class="num">Commission</th><th class="num">Gross − Comm.</th></tr></thead>
-    <tbody>${DEPARTMENTS.map(d => deptRow(esc(d.label), s.departments[d.key])).join('')}
+    <tbody>${DEPARTMENTS.filter(d => d.key !== 'parts' || s.departments.parts.jobs).map(d => deptRow(esc(d.label), s.departments[d.key])).join('')}
       ${deptRow('<b>All departments</b>', { jobs: s.vehicles, collected: s.collected, receivables: s.receivables, commission: s.commission, net: s.net }, 'total-row')}</tbody>`;
 
   for (const el of $$('[data-m]', root)) {
