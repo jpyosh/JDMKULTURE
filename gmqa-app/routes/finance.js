@@ -3,11 +3,11 @@
 const express = require('express');
 const { requireOwner } = require('../lib/auth');
 const { db } = require('../lib/db');
-const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries, periodTotals, profitAndLoss, datesBetween, sundayOf, round2 } = require('../lib/calc');
+const { fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries, periodTotals, profitAndLoss, partsNetIn, datesBetween, sundayOf, addDays, round2 } = require('../lib/calc');
 const { loadJobs, assertDayOpen } = require('../lib/store');
 const { loadPayroll, payrollNetOn, payrollEntryDates } = require('../lib/payroll-data');
 const { bad, notFound, money, text, date, oneOf, id, pick } = require('../lib/http');
-const { assertNotFarAhead } = require('../lib/clock');
+const { assertNotFarAhead, assertNotAfterToday } = require('../lib/clock');
 
 const router = express.Router();
 const MAX_SUMMARY_DAYS = 400;
@@ -177,7 +177,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   if (dates.length > MAX_SUMMARY_DAYS) throw bad(`Pick a range of at most ${MAX_SUMMARY_DAYS} days`);
 
   const between = [start, end];
-  const [jobs, expenses, metas, payouts, setAsides, bills, funds, payroll] = await Promise.all([
+  const [jobs, expenses, metas, payouts, setAsides, bills, funds, payroll, partsLoans, partsWeeks, owes] = await Promise.all([
     loadJobs('sale_date between $1 and $2 or paid_on between $1 and $2', between),
     db.many('select expense_date, side, amount, for_resale from expenses where expense_date between $1 and $2', between),
     db.many('select * from daily_meta where job_date between $1 and $2', between),
@@ -187,6 +187,10 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
       from bill_payments b join funds f on f.id = b.fund_id where b.paid_on between $1 and $2 order by f.sort_order, f.id, b.paid_on, b.id`, between),
     db.many(`${FUND_BALANCES} order by f.sort_order, f.id`),
     loadPayroll(start, end),
+    db.many('select entry_date, kind, side, amount from parts_loans where entry_date between $1 and $2', between),
+    // A pay week counts where its Saturday falls (partsNetIn), so only weeks starting up to 6 days before `start` matter.
+    db.many('select week_start, amount, note from parts_weekly_net where week_start between $1 and $2', [addDays(start, -6), end]),
+    db.one(`select coalesce(sum(case when kind = 'lent' then amount else -amount end), 0) as owes from parts_loans where entry_date <= $1`, [end]),
   ]);
 
   // Same per-day rules as EOD, added up over the days closed at EOD. A day still open is not counted yet.
@@ -195,7 +199,7 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
   const openDays = openDatesWithEntries(dates, metas, [
     ...jobs.filter(j => !j.voided_at).flatMap(j => [j.sale_date, j.paid_on]),
     ...expenses.map(e => e.expense_date), ...payouts.map(p => p.payout_date), ...setAsides.map(s => s.entry_date),
-    ...bills.map(b => b.paid_on), ...payrollEntryDates(payroll),
+    ...bills.map(b => b.paid_on), ...payrollEntryDates(payroll), ...partsLoans.map(l => l.entry_date),
   ]);
   const t = periodTotals({ dates: countedDates, jobs, expenses, metas });
   const r = n => round2(n);
@@ -218,11 +222,22 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
     setAsides: sumOf(setAsides.filter(s => counted.has(s.entry_date))),
     billTopUps: r(countedBills.reduce((s, b) => s + b.from_drawer, 0)),
   };
+  // Lent to the parts department and paid back on the counted days: drawer money only, never profit. owes: what parts
+  // owes the shop at the end of the period.
+  const partsMoney = {
+    lent: sumOf(partsLoans.filter(l => l.kind === 'lent' && counted.has(l.entry_date))),
+    repaid: sumOf(partsLoans.filter(l => l.kind === 'repaid' && counted.has(l.entry_date))),
+    owes: r(owes.owes),
+  };
   cashflow.net = r(cashflow.cashIn + cashflow.gcashIn - cashflow.commissionPaid - cashflow.drawerExpenses
-    - cashflow.payrollPayouts - cashflow.setAsides - cashflow.billTopUps);
+    - cashflow.payrollPayouts - cashflow.setAsides - cashflow.billTopUps - partsMoney.lent + partsMoney.repaid);
+
+  // The parts department's own net profit (its Excel file, one figure a week) on top of the shop's.
+  const partsNet = partsNetIn(partsWeeks, start, end);
 
   res.json({
     start, end, income, opex, netProfit, cashflow, openDays,
+    partsNet, totalProfit: r(netProfit + partsNet.total), partsMoney,
     // Each bill paid in the period, even on a day still open, so one recorded by mistake can be found and undone.
     billPayments: bills,
     // Fund money is real as soon as it moves, so these stay live whether or not the day is closed.
@@ -232,6 +247,45 @@ router.get('/finance/summary', requireOwner, async (req, res) => {
       paid: sumOf(bills.filter(b => b.fund_id === f.id)),
     })),
   });
+});
+
+// ---------------------------------------------------------------- parts department weekly net (owner)
+// Since 2026-11-18 the parts department keeps its sales in its own Excel file. Each pay week (Sunday to Saturday) the
+// owner types its NET PROFIT here; Finance and Analytics add it to the shop's profit in the period holding its Saturday.
+
+const PARTS_FIRST_WEEK = '2026-11-15';
+
+router.get('/parts-weekly-net', requireOwner, async (req, res) => {
+  res.json(await db.many('select week_start, amount, note, created_by, updated_at from parts_weekly_net order by week_start desc'));
+});
+
+function partsWeek(value) {
+  const week = date(value, 'Week');
+  if (sundayOf(week) !== week) throw bad(`A parts week starts on a Sunday (the one of ${week} is ${sundayOf(week)})`);
+  if (week < PARTS_FIRST_WEEK) throw bad(`The parts department moved to Excel in the week of ${PARTS_FIRST_WEEK}; earlier weeks are already in the app`);
+  return week;
+}
+
+router.put('/parts-weekly-net/:week', requireOwner, async (req, res) => {
+  const week = partsWeek(req.params.week);
+  if (req.body.amount === '' || req.body.amount == null) throw bad('Type the week\'s net profit from the parts Excel file');
+  // A loss is entered as a negative amount.
+  const amount = money(req.body.amount, 'Net profit', { min: -10_000_000 });
+  const note = text(req.body.note, 'Note', { max: 200 });
+  const row = await db.tx(req.user.email, async q => {
+    await assertNotAfterToday(q, week, 'Week');
+    return q.one(`insert into parts_weekly_net (week_start, amount, note) values ($1, $2, $3)
+      on conflict (week_start) do update set amount = excluded.amount, note = excluded.note
+      returning week_start, amount, note, created_by, updated_at`, [week, amount, note]);
+  });
+  res.json(row);
+});
+
+router.delete('/parts-weekly-net/:week', requireOwner, async (req, res) => {
+  const week = date(req.params.week, 'Week');
+  const changed = await db.tx(req.user.email, q => q.exec('delete from parts_weekly_net where week_start = $1', [week]));
+  if (!changed) throw notFound('Parts week');
+  res.json({ ok: true });
 });
 
 module.exports = { router };

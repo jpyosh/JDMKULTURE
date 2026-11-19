@@ -47,8 +47,11 @@ function showGate({ login = false, message = '', signout = false } = {}) {
   $('#gate-signout').hidden = !signout;
 }
 
+// The parts department keeps its sales in its own Excel file (since 2026-11-18): its tabs are hidden from then.
+const PARTS_VIEWS = ['parts', 'suppliers'];
+
 function allowedViews() {
-  return VIEWS.filter(v => v.roles.includes(state.user.role));
+  return VIEWS.filter(v => v.roles.includes(state.user.role) && !(state.partsRetiredFrom && PARTS_VIEWS.includes(v.key)));
 }
 
 // Line icons for the sidebar, drawn on a 24px grid in the text colour.
@@ -130,6 +133,7 @@ function sandboxClient() {
 
 async function init() {
   const config = await fetch('/api/auth/config').then(r => r.json()).catch(() => ({}));
+  state.partsRetiredFrom = config.parts_retired_from || null;
   if (config.sandbox) {
     supabase = sandboxClient();
     document.title = `[SANDBOX] ${document.title}`;

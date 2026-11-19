@@ -72,10 +72,10 @@ export function createJobEditor(root, { job = null, department = job?.department
             ${items.filter(i => i.kind === 'service').map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select>
           <select data-add="addon"><option value="">+ Add add-on…</option>
             ${items.filter(i => i.kind === 'addon').map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select>` : ''}
-          <select data-add="part"><option value="">+ Add part…</option>
+          ${state.partsRetiredFrom ? '' : `<select data-add="part"><option value="">+ Add part…</option>
             ${parts.length ? parts.map(p => `<option value="${p.id}" ${p.stock > 0 ? '' : 'disabled'}>${esc(p.name)} · ${peso(p.price)} per ${esc(p.unit)} · ${p.stock} ${esc(p.unit)} left</option>`
               + (hasSet(p) ? `<option value="${p.id}:set" ${p.stock >= p.set_size ? '' : 'disabled'}>${esc(p.name)} — set of ${p.set_size} · ${peso(p.set_price)}</option>` : '')).join('')
-    : '<option value="" disabled>No parts for sale yet: tag items Auto Parts in Inventory</option>'}</select>
+    : '<option value="" disabled>No parts for sale yet: tag items Auto Parts in Inventory</option>'}</select>`}
           <button class="btn ghost" type="button" data-add-custom>+ Custom item</button>
         </div>
         <div class="lines" data-lines></div>

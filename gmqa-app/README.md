@@ -10,11 +10,11 @@ Auth, deployed on Vercel.
 |---|---|---|
 | Daily Log — job orders with line items (service, add-ons, custom items) | ✓ | ✓ (not on closed days) |
 | EOD Closing — float, expenses, expected vs counted, variance, close the day | ✓ | ✓ (not on closed days) |
-| Parts — job orders (open, done, paid; labor, itemized) and the auto parts for sale | ✓ | ✓ (no costs) |
+| Parts — job orders and auto parts for sale. **Hidden since 2026-11-18** (the parts department moved to Excel) | ✓ | ✓ (no costs) |
 | Inventory — everything stocked, tags, department containers, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
 | Sales Reports — any date range | ✓ | — |
-| Suppliers — each supplier's parts sold, cost, profit and what is still to pay | ✓ | — |
+| Suppliers — each supplier's parts sold, cost, profit and what is still to pay. **Hidden since 2026-11-18** | ✓ | — |
 | Analytics — daily, weekly, monthly, quarterly trends | ✓ | — |
 | Payroll — weekly attendance, OT, deductions | ✓ | — |
 | Settings — users & roles, vehicle classes, change history | ✓ | — |
@@ -61,6 +61,30 @@ theme before the first paint. All motion stops with the system's reduced-motion 
   any dated after today, so a finished job never drops out of sight. Completed jobs can still be edited,
   have their payment undone, be marked not done, or be voided by the owner.
 - Older `JO-` numbers from before departments existed are kept as they were.
+
+## Parts department moved to Excel (2026-11-18)
+
+From **2026-11-18** the app handles Carwash, Detailing and Tint & PPF only. The parts department is run as its own
+business from its own Excel file (sales, stock, suppliers, what it owes the carwash) and keeps its own money.
+
+- **History stays.** Every parts sale up to Nov 17 stays in the app: EOD, Sales Reports, Finance and Analytics show
+  those days exactly as before. Nothing is deleted (the `parts` table also holds the shop's supplies).
+- **No new parts sales** (`lib/parts-retired.js`): a parts counter job, or a part line on any job, dated from the cutover
+  is refused. Older jobs keep their part lines and can still be edited. The Parts and Suppliers tabs, "+ Add part" and
+  EOD's supplier-payment tick are hidden (`/api/auth/config` sends the date). Tests and the UI smoke test turn the
+  cutover off for the older parts steps and on for the new ones.
+- **Lent to Parts / Parts paid back** (EOD → Parts department, staff and owner, migration 023 `parts_loans`): when the
+  shop drawer pays something for parts (the mechanic's labor before the customer has paid), it is recorded as lent; when
+  parts gives it back, as paid back. Cash or GCash. It moves the expected drawer on its day (`daySummary`, mirrored in
+  `eod.js`; the pay week and Remittances follow), never profit. Parts never pays back more than it owes, and a loan
+  already paid back cannot be deleted before its repayment. EOD and Finance show what **parts owes the shop**.
+- **Parts weekly net** (Finance → Parts department, owner only, `parts_weekly_net`): each pay week (Sunday to Saturday)
+  the owner types the NET PROFIT from the Excel file's WEEKLY tab (a loss is negative). Finance adds it under the shop's
+  Net profit as **Total net profit**, and Analytics shows it per period (`partsNetIn`): a week counts in the period
+  holding its **Saturday**, so a week is never split between months. The first week (Nov 15–21) covers Nov 18–21 only;
+  Nov 15–17 is in the app. Weeks not entered yet are marked in Finance.
+- Parts' own costs (items, mechanic labor, its expenses) are in its Excel net. Shared costs (rent, bills, staff payroll)
+  stay in the app, so they are not taken out twice.
 
 ## Business rules (all in `lib/calc.js`)
 

@@ -12,6 +12,7 @@ const { joPrefix, department, DEPARTMENT_KEYS, isRunning } = require('../lib/cal
 const { loadJobs, loadJob, assertDayOpen } = require('../lib/store');
 const { loadPart, takeStock, returnStock, piecesOf } = require('../lib/inventory');
 const { assertNotAfterToday, assertNotFarAhead } = require('../lib/clock');
+const { assertPartsSaleAllowed } = require('../lib/parts-retired');
 const { peso } = require('../lib/cash-fund');
 const { bad, notFound, money, text, date, oneOf, time, id, pick } = require('../lib/http');
 
@@ -51,7 +52,8 @@ async function cleanJobFields(q, body, job = null) {
 
 // inputs: [{ id }] keeps an existing frozen line, [{ catalog_item_id }] adds a priced catalog line,
 // [{ name, price, commission }] adds a custom line, [{ labor }] the labor line. Order of the list = display order.
-async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
+// jobDate: no new part line on a job dated after parts moved to Excel (lib/parts-retired.js).
+async function buildLines(q, inputs, vehicleClass, dept, existing, jobDate) {
   if (!Array.isArray(inputs)) throw bad('items must be a list');
   if (inputs.length > MAX_LINES) throw bad(`A job can have at most ${MAX_LINES} line items`);
   const existingById = new Map(existing.map(line => [line.id, line]));
@@ -65,6 +67,7 @@ async function buildLines(q, inputs, vehicleClass, dept, existing = []) {
       // Only items tagged Auto Parts are sold; lines already on a job are kept above whatever their tags now.
       // as_set: sold as a set (set price, takes set_size pieces per set); unit_cost is the cost of what is sold.
       // unit_price: the price per piece (or set) on this sale, raised above the list price; lower goes through the discount.
+      assertPartsSaleAllowed(jobDate);
       const part = await loadPart(q, id(input.part_id, 'part'), { activeOnly: true, forSale: true });
       const quantity = money(input.quantity ?? 1, 'Quantity', { min: 0.01 });
       const asSet = Boolean(input.as_set);
@@ -204,6 +207,7 @@ router.post('/jobs', async (req, res) => {
   const dept = oneOf(req.body.department ?? 'carwash', DEPARTMENT_KEYS, 'Department');
   const running = department(dept).running;
   const done = running && Boolean(req.body.job_done);
+  if (dept === 'parts') assertPartsSaleAllowed(jobDate);
   const jobId = await db.tx(req.user.email, async q => {
     // A plain running job touches no day's numbers; paid or done, it does.
     if (!running || done || req.body.payment_received) await assertDayOpen(q, jobDate, req.user);
@@ -214,7 +218,7 @@ router.post('/jobs', async (req, res) => {
     const fields = await cleanJobFields(q, req.body);
     if (!fields.vehicle_class && department(dept).catalog) throw bad('Choose a vehicle class');
     if (dept === 'parts' && fields.payment_received && !fields.payment_method) throw bad('Choose how the customer paid: Cash or GCash');
-    const lines = await buildLines(q, req.body.items || [], fields.vehicle_class, dept);
+    const lines = await buildLines(q, req.body.items || [], fields.vehicle_class, dept, [], jobDate);
     if (!lines.length) throw bad('Add at least one service, add-on or custom item');
     assertDiscount(fields.discount || 0, lines);
     const values = {
@@ -274,7 +278,7 @@ router.patch('/jobs/:id', async (req, res) => {
           return line && line.catalog_item_id ? { catalog_item_id: line.catalog_item_id } : input;
         });
       }
-      lines = await buildLines(q, inputs, vehicleClass, job.department, job.items);
+      lines = await buildLines(q, inputs, vehicleClass, job.department, job.items, job.job_date);
       if (!lines.length) throw bad('A job needs at least one line item. Void the job instead.');
     }
     assertDiscount('discount' in fields ? fields.discount : job.discount, lines);

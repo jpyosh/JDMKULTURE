@@ -13,7 +13,7 @@ const EMPTY_META = { supervisor: '', cash_float: 0, actual_cash: null, actual_gc
   gcash_tips_to_distribute: 0, gcash_tips_passed: 0, commission_gcash_paid: 0, closed_at: null, closed_by: null };
 
 async function loadDay(day, q = db) {
-  const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps, tipJobs, tipMetas] = await Promise.all([
+  const [meta, expenses, jobs, payrollPayouts, setAsides, billTopUps, tipJobs, tipMetas, partsLoans, owes] = await Promise.all([
     q.one('select * from daily_meta where job_date = $1', [day]),
     // from_stock: recorded by Inventory → Receive (undone from there, not here).
     q.many(`select e.id, e.side, e.description, e.amount, e.topup_id, e.for_resale, e.supplier_id, e.set_aside_id, e.created_by, e.created_at,
@@ -31,14 +31,35 @@ async function loadDay(day, q = db) {
     loadJobs('tip_gcash > 0 and voided_at is null and (job_date >= $1 or paid_on >= $1) and (job_date < $2 or paid_on < $2)', [TIPS_TRACKED_FROM, day], q),
     q.many(`select job_date, gcash_tips_to_distribute, gcash_tips_passed from daily_meta where job_date >= $1 and job_date < $2
       and (gcash_tips_to_distribute > 0 or gcash_tips_passed > 0)`, [TIPS_TRACKED_FROM, day]),
+    q.many('select id, kind, side, amount, note, created_by from parts_loans where entry_date = $1 order by id', [day]),
+    partsOwedOn(q, day),
   ]);
   const m = { ...EMPTY_META, ...meta, job_date: day };
-  const summary = daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps },
+  const summary = daySummary({ date: day, jobs, expenses, meta: m, outflows: { payrollPayouts, setAsides, billTopUps, partsLoans },
     tipsOwedBefore: tipsOwed({ jobs: tipJobs, metas: tipMetas, before: day }) });
   // trading: the day's cost of parts sold and real net (gross − commission − expenses − cost of parts sold), the same
   // figure as Sales Reports' profit. Owner-only: lib/redact.js removes it for staff.
-  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, summary, trading: tradingProfit(summary),
+  // partsLoans: money lent to the parts department today, and paid back; partsOwes: what it owes the shop at the end of the day.
+  return { date: day, meta: m, expenses, payrollPayouts, setAsides, billTopUps, partsLoans, partsOwes: owes, summary, trading: tradingProfit(summary),
     report: salesReport({ date: day, summary }), week: await loadPayWeek(day, q) };
+}
+
+// What the parts department owes the shop drawer at the end of `day`: everything lent up to then, less what it paid back.
+// `day` null: as it stands now, whatever the dates.
+// What parts owes, day by day, never drops below zero: it cannot have paid back more than was lent by then. Checked
+// after each change inside its transaction, so an entry typed out of order (a back-dated repayment, a removed loan
+// that a later loan seemed to cover) rolls back.
+async function assertPartsNeverOverpaid(q, message) {
+  const { low } = await q.one(`select coalesce(min(running), 0) as low from (
+      select sum(sum(case when kind = 'lent' then amount else -amount end)) over (order by entry_date) as running
+      from parts_loans group by entry_date) by_day`);
+  if (Number(low) < -0.004) throw bad(message);
+}
+
+async function partsOwedOn(q, day = null) {
+  const { owes } = await q.one(`select coalesce(sum(case when kind = 'lent' then amount else -amount end), 0) as owes
+    from parts_loans where $1::date is null or entry_date <= $1`, [day]);
+  return Math.round(Number(owes) * 100) / 100;
 }
 
 // The pay week (Sunday to Saturday) of `day`: each day's money and the wages for that week, wherever they were handed
@@ -150,6 +171,44 @@ router.delete('/expenses/:id', async (req, res) => {
     await assertDayOpen(q, expense.expense_date, req.user);
     await q.query('delete from expenses where id = $1', [expenseId]);
     return expense.expense_date;
+  });
+  res.json(await loadDay(day));
+});
+
+// ---------------------------------------------------------------- money lent to the parts department
+// The parts department runs from its own Excel file (since 2026-11-18). When the shop drawer pays something for it (the
+// mechanic's labor before the customer has paid), that is a loan: the drawer is short until parts pays it back. Neither
+// is a cost or a sale, so profit never moves. Whoever runs EOD records them, like expenses.
+
+router.post('/days/:date/parts-loans', async (req, res) => {
+  const day = date(req.params.date);
+  const kind = oneOf(req.body.kind, ['lent', 'repaid'], 'Lent or paid back');
+  const side = oneOf(req.body.side, ['cash', 'gcash'], 'Cash or GCash');
+  const amount = money(req.body.amount, 'Amount', { min: 0.01 });
+  const note = text(req.body.note, 'Note', { max: 200 });
+  await db.tx(req.user.email, async q => {
+    await assertDayOpen(q, day, req.user);
+    await assertNotFarAhead(q, day, 'Date');
+    if (kind === 'repaid') {
+      const owes = await partsOwedOn(q, day);
+      if (amount > owes) throw bad(`Parts only owes the shop ₱${owes.toFixed(2)} on ${day}, not ₱${amount.toFixed(2)}.`);
+    }
+    await q.query('insert into parts_loans (entry_date, kind, side, amount, note) values ($1, $2, $3, $4, $5)', [day, kind, side, amount, note]);
+    await assertPartsNeverOverpaid(q, 'With the repayments on later days, that is more than parts owes. Check the "Parts paid back" entries.');
+  });
+  res.status(201).json(await loadDay(day));
+});
+
+router.delete('/parts-loans/:id', async (req, res) => {
+  const loanId = id(req.params.id, 'entry');
+  const day = await db.tx(req.user.email, async q => {
+    const row = await q.one('select entry_date, kind, amount from parts_loans where id = $1', [loanId]);
+    if (!row) throw notFound('Entry');
+    await assertDayOpen(q, row.entry_date, req.user);
+    await q.query('delete from parts_loans where id = $1', [loanId]);
+    // Money already paid back cannot lose the loan it paid: remove the repayment first.
+    await assertPartsNeverOverpaid(q, 'Part of this was already paid back. Remove the "Parts paid back" entry first.');
+    return row.entry_date;
   });
   res.json(await loadDay(day));
 });

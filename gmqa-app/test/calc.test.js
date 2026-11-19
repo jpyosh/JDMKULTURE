@@ -421,3 +421,36 @@ test('a day\'s profit in Sales Reports follows Finance: parts bought to sell are
   assert.equal(t.profit, finance.netProfit);
   assert.equal(t.costs, finance.opex.drawerExpenses + finance.opex.fundExpenses);
 });
+
+// Parts moved to Excel on 2026-11-18. The shop drawer can still lend the parts department money (the mechanic's labor
+// before the customer pays) and be paid back: the drawer moves, profit never does.
+test('lent to parts and paid back: the drawer moves, the day\'s profit does not', () => {
+  const { tradingProfit } = require('../lib/calc');
+  const date = '2036-06-24';
+  const jobs = [job({ job_date: date, payment_received: true, items: [line(1000, 200)] })];
+  const meta = { cash_float: 2000 };
+  const without = daySummary({ date, jobs, meta });
+  const s = daySummary({ date, jobs, meta, outflows: { partsLoans: [
+    { kind: 'lent', side: 'cash', amount: 800 }, { kind: 'lent', side: 'gcash', amount: 100 },
+    { kind: 'repaid', side: 'gcash', amount: 300 }, { kind: 'repaid', side: 'cash', amount: 50 },
+  ] } });
+  assert.deepEqual([s.partsLentCash, s.partsLentGcash, s.partsRepaidCash, s.partsRepaidGcash], [800, 100, 50, 300]);
+  assert.equal(s.expectedCash, without.expectedCash - 800 + 50);
+  assert.equal(s.expectedGcash, without.expectedGcash - 100 + 300);
+  assert.deepEqual(tradingProfit(s), tradingProfit(without), 'a loan is not a cost, a repayment is not a sale');
+  assert.deepEqual([s.collected, s.expenses, s.drawerExpenses], [without.collected, without.expenses, without.drawerExpenses]);
+});
+
+test('parts weekly net: a pay week counts in the period that holds its Saturday', () => {
+  const { partsNetIn } = require('../lib/calc');
+  const weeks = [
+    { week_start: '2036-06-22', amount: 5000 }, // Sat 2036-06-28: June
+    { week_start: '2036-06-29', amount: -1200 }, // Sat 2036-07-05: July (a loss)
+  ];
+  assert.equal(partsNetIn(weeks, '2036-06-01', '2036-06-30').total, 5000);
+  assert.equal(partsNetIn(weeks, '2036-07-01', '2036-07-31').total, -1200);
+  assert.deepEqual(partsNetIn(weeks, '2036-06-01', '2036-07-31').weeks.map(w => w.week_start), ['2036-06-22', '2036-06-29']);
+  assert.equal(partsNetIn(weeks, '2036-06-23', '2036-07-04').total, 5000, 'a range holding only the first Saturday');
+  assert.equal(partsNetIn(weeks, '2036-06-22', '2036-06-27').total, 0, 'a week whose Saturday is not reached yet does not count');
+  assert.deepEqual(partsNetIn([], '2036-06-01', '2036-06-30'), { total: 0, weeks: [] });
+});

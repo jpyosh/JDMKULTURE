@@ -188,7 +188,9 @@ export const DEPARTMENTS = [
 ];
 export const departmentOf = key => DEPARTMENTS.find(d => d.key === key) || DEPARTMENTS[0];
 
-export const state = { user: null, catalog: null };
+// partsRetiredFrom: the day the parts department moved to its Excel file (from /api/auth/config); from then the app
+// sells no parts, so the Parts and Suppliers tabs, "+ Add part" and EOD's supplier payment are hidden.
+export const state = { user: null, catalog: null, partsRetiredFrom: null };
 export const isOwner = () => state.user?.role === 'owner';
 
 export async function loadCatalog(force = false) {

@@ -46,7 +46,8 @@ function mount(el) {
     <div class="card">
       <div class="table-wrap"><table class="weekly-table">
         <thead><tr><th>Period</th><th class="num">Days with sales</th><th class="num">Cars</th><th class="num">Sales</th><th class="num">Per day</th><th class="num">Per car</th>
-          <th class="num">Commission</th><th class="num">Parts cost</th><th class="num">Expenses</th><th class="num">Payroll</th><th class="num">Bills</th><th class="num">Net profit</th></tr></thead>
+          <th class="num">Commission</th><th class="num">Parts cost</th><th class="num">Expenses</th><th class="num">Payroll</th><th class="num">Bills</th><th class="num">Net profit</th>
+          <th class="num" title="The parts department's weekly net profit from its Excel file, in the period holding each week's Saturday">Parts (Excel)</th><th class="num">Total profit</th></tr></thead>
         <tbody data-rows></tbody>
       </table></div>
     </div>
@@ -142,7 +143,9 @@ function render() {
     <td class="num money" data-label="Expenses">${peso(p.expenses)}</td>
     <td class="num money" data-label="Payroll">${peso(p.payroll)}</td>
     <td class="num money" data-label="Bills">${peso(p.bills)}</td>
-    <td class="num money weekly-profit ${p.netProfit < 0 ? 'neg' : 'pos'}" data-label="Net profit">${peso(p.netProfit)}</td></tr>`).join('');
+    <td class="num money weekly-profit ${p.netProfit < 0 ? 'neg' : 'pos'}" data-label="Net profit">${peso(p.netProfit)}</td>
+    <td class="num money" data-label="Parts (Excel)">${p.partsNet ? peso(p.partsNet) : '—'}</td>
+    <td class="num money weekly-profit ${p.totalProfit < 0 ? 'neg' : 'pos'}" data-label="Total profit">${peso(p.totalProfit)}</td></tr>`).join('');
 }
 
 // Short enough to sit under a bar on a phone.

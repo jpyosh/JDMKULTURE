@@ -10,6 +10,10 @@ const { start } = require('./sandbox');
 // Several steps work on days in 2027 so they have a day to themselves. The server refuses dates after today
 // (lib/clock.js, covered by test/api.test.js), so for this run today is pinned after them.
 require('../lib/clock').setShopToday('2099-12-31');
+// The parts department moved to Excel on 2026-11-18 (lib/parts-retired.js). The steps below still drive the Parts and
+// Suppliers tabs as they worked before, so the cutover is off until the last step turns it on.
+const partsCutover = require('../lib/parts-retired');
+partsCutover.setPartsRetiredFrom(null);
 
 const SHOTS = process.env.SCREENSHOTS;
 const DAY = '2026-09-14';
@@ -2502,6 +2506,64 @@ async function launch() {
         const switchBox = await page.locator('.theme-switch').boundingBox();
         assert.ok(switchBox.x >= 0 && switchBox.x + switchBox.width <= 390, `${theme}: theme switch cut off on mobile`);
         await shot(`17-mobile-${theme}`);
+      }
+    });
+
+    await step('parts moved to Excel: no Parts or Suppliers tab, no + Add part; EOD lends to parts; Finance takes the weekly net', async () => {
+      partsCutover.setPartsRetiredFrom('2026-09-01');
+      try {
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.reload();
+        await page.locator('#nav [data-view="carwash"]').waitFor();
+        assert.equal(await page.locator('#nav [data-view="parts"], #nav [data-view="suppliers"]').count(), 0, 'no Parts or Suppliers tab');
+        await page.click('#nav [data-view="carwash"]');
+        await page.locator('#view-carwash [data-add="service"]').first().waitFor();
+        assert.equal(await page.locator('#view-carwash [data-add="part"]').count(), 0, 'a job offers no parts');
+
+        // EOD: the drawer lends ₱500 for the mechanic's labor; the count follows, profit does not; then parts pays it back.
+        await page.click('#nav [data-view="eod"]');
+        const eodView = page.locator('#view-eod');
+        const D = '2026-09-29';
+        await eodView.locator('[data-date]').fill(D);
+        await eodView.locator('[data-date]').dispatchEvent('change');
+        await page.waitForFunction(d => document.querySelector('#view-eod [data-date]').value === d
+          && /₱0\.00/.test(document.querySelector('#view-eod [data-parts-owes]')?.textContent || ''), D);
+        assert.equal(await eodView.locator('[data-e="for_resale"]').count(), 0, 'supplier payments are kept in the parts Excel file');
+        const expectedCash = async () => Number((await eodView.locator('[data-cash] .row-line.total .money').textContent()).replace(/[₱,]/g, ''));
+        const before = await expectedCash();
+        await eodView.locator('[data-pl="note"]').fill("Mechanic's labor");
+        await eodView.locator('[data-pl="amount"]').fill('500');
+        await eodView.locator('[data-add-parts-loan]').click();
+        await expectToast(/lent to Parts/);
+        assert.equal(await expectedCash(), before - 500);
+        assert.match(await eodView.locator('[data-cash]').textContent(), /Lent to Parts\s*₱500\.00/);
+        assert.match(await eodView.locator('[data-parts-owes]').textContent(), /₱500\.00/);
+        await eodView.locator('[data-pl="kind"]').selectOption('repaid');
+        await eodView.locator('[data-pl="amount"]').fill('500');
+        await eodView.locator('[data-add-parts-loan]').click();
+        await expectToast(/paid back/);
+        assert.equal(await expectedCash(), before);
+        assert.match(await eodView.locator('[data-parts-owes]').textContent(), /₱0\.00/);
+
+        // Finance: the week's NET PROFIT from the parts Excel file is added under the shop's net profit.
+        await page.click('#nav [data-view="finance"]');
+        const fin = page.locator('#view-finance');
+        await fin.locator('[data-parts-weeks] [data-pw="week"] option').first().waitFor({ state: 'attached' });
+        const week = await fin.locator('[data-pw="week"]').inputValue();
+        const saturday = new Date(Date.parse(`${week}T00:00:00Z`) + 6 * 86400000).toISOString().slice(0, 10);
+        await fin.locator('[data-start]').fill(week);
+        await fin.locator('[data-end]').fill(saturday);
+        await fin.locator('[data-end]').dispatchEvent('change');
+        await fin.locator('[data-pw="amount"]').fill('12034');
+        await fin.locator('[data-save-parts-week]').click();
+        await expectToast(/saved/);
+        await fin.locator('[data-parts-net]').waitFor();
+        assert.match(await fin.locator('[data-parts-net]').textContent(), /Parts department[\s\S]*₱12,034\.00[\s\S]*Total net profit/);
+        assert.match(await fin.locator(`[data-parts-week="${week}"]`).textContent(), /₱12,034\.00/);
+        await shot('18-parts-moved-to-excel');
+        await page.evaluate(w => fetch(`/api/parts-weekly-net/${w}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner@sandbox' } }), week);
+      } finally {
+        partsCutover.setPartsRetiredFrom(null);
       }
     });
 
