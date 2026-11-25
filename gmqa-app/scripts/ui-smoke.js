@@ -114,7 +114,7 @@ async function launch() {
       assert.match(await page.textContent('#app .rail .wordmark .sub'), /^GM Operations Console$/);
       assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /\bQA\b/);
       assert.deepEqual(await page.locator('#nav button').allTextContents(),
-        ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Sales Reports',
+        ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Invoice & Forms', 'Sales Reports',
           'Analytics', 'Finance', 'Cash fund', 'Remittances', 'Suppliers', 'Payroll', 'Settings']);
     });
 
@@ -1430,7 +1430,9 @@ async function launch() {
 
     const payroll = page.locator('#view-payroll');
     const setPayrollRange = async (start, end) => {
-      await payroll.locator('[data-start]').fill(start);
+      // From is set without an event: on its own it may make a range longer than 62 days with the To shown
+      // (today's week is more than 62 days after these September weeks), which the server rightly refuses.
+      await payroll.locator('[data-start]').evaluate((el, v) => { el.value = v; }, start);
       await payroll.locator('[data-end]').fill(end);
       await payroll.locator('[data-end]').dispatchEvent('change');
       await page.waitForFunction(([s, e]) => {
@@ -2222,6 +2224,133 @@ async function launch() {
       return name;
     };
 
+    await step('invoice & forms: fill the customer\'s papers once, totals add up, print the ones picked as A4 pages', async () => {
+      await page.click('#nav [data-view="forms"]');
+      const forms = page.locator('#view-forms');
+      const paper = doc => forms.locator(`.paper[data-doc="${doc}"]`);
+      await paper('invoice').waitFor();
+      assert.deepEqual(await forms.locator('.paper .doc-badge').allTextContents(),
+        ['SERVICE INVOICE', 'WAIVER & RELEASE', 'VEHICLE RELEASE', 'AFTERCARE & WARRANTY'], 'the four papers of the shop\'s PDF');
+      // Today (shop time) is filled in; the customer is typed once and appears on every paper that asks for it.
+      const browserToday = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+      assert.equal(await paper('invoice').locator('[data-k="date"]').inputValue(), browserToday);
+      assert.equal(await paper('release').locator('[data-k="date_release"]').first().inputValue(), browserToday);
+      assert.equal(await paper('release').locator('[data-k="date_release"]').last().inputValue(), browserToday, 'the signature date too');
+      await paper('invoice').locator('[data-k="name"]').fill('Smoke Customer');
+      await paper('invoice').locator('[data-k="contact"]').fill('0917 555 0101');
+      await paper('invoice').locator('[data-k="make"]').fill('Honda');
+      await paper('invoice').locator('[data-k="model"]').fill('Civic FD');
+      await paper('invoice').locator('[data-k="plate"]').fill('ABC 1234');
+      assert.equal(await paper('waiver').locator('[data-k="name"]').inputValue(), 'Smoke Customer');
+      assert.equal(await paper('release').locator('[data-k="name"]').first().inputValue(), 'Smoke Customer');
+      assert.equal(await paper('release').locator('[data-k="name"]').last().inputValue(), 'Smoke Customer', 'Client Name by the signature too');
+      assert.equal(await paper('release').locator('[data-k="plate"]').inputValue(), 'ABC 1234');
+      assert.equal(await paper('release').locator('[data-k="vehicle"]').inputValue(), 'Honda Civic FD', 'make and model fill Vehicle Make/Model');
+      await paper('release').locator('[data-k="vehicle"]').fill('Honda Civic FD 2008');
+      await paper('invoice').locator('[data-k="model"]').fill('Civic FD2');
+      assert.equal(await paper('release').locator('[data-k="vehicle"]').inputValue(), 'Honda Civic FD 2008', 'what was typed there is kept');
+
+      // Services: five lines like the paper, more on request. AMOUNT is the line's amount; subtotal less discount is the total.
+      const rows = paper('invoice').locator('[data-line]');
+      assert.equal(await rows.count(), 5);
+      await rows.nth(0).locator('[data-l="qty"]').fill('1');
+      await rows.nth(0).locator('[data-l="desc"]').fill('Ceramic coating, 2 layers, with a full exterior decontamination wash and clay bar before application');
+      await rows.nth(0).locator('[data-l="amount"]').fill('1,500');
+      await rows.nth(1).locator('[data-l="desc"]').fill('Interior vacuum');
+      await rows.nth(1).locator('[data-l="amount"]').fill('350.50');
+      await paper('invoice').locator('[data-k="discount"]').fill('200');
+      assert.equal(await paper('invoice').locator('[data-subtotal]').textContent(), '1,850.50');
+      assert.equal(await paper('invoice').locator('[data-total]').textContent(), '1,650.50');
+      const fits = await rows.nth(0).locator('[data-l="desc"]').evaluate(el => el.scrollHeight <= el.clientHeight + 1);
+      assert.ok(fits, 'a long description grows its line instead of being cut off');
+      await forms.locator('[data-add-line]').click();
+      assert.equal(await rows.count(), 6);
+      await paper('invoice').locator('[data-pay="GCash"]').check();
+      // A long note makes Remarks taller instead of being cut off on paper.
+      await paper('invoice').locator('[data-k="remarks"]').fill('Line one of the note\nLine two\nLine three\nLine four\nLine five');
+      const remarksFit = await paper('invoice').locator('[data-k="remarks"]').evaluate(el => el.scrollHeight <= el.clientHeight + 1);
+      assert.ok(remarksFit, 'every line of Remarks shows');
+      // Another day picked on the invoice is the date on the waiver and the release too.
+      await paper('invoice').locator('[data-k="date"]').fill('2026-11-20');
+      await paper('invoice').locator('[data-k="date"]').dispatchEvent('change');
+      assert.equal(await paper('waiver').locator('[data-k="date"]').inputValue(), '2026-11-20');
+      assert.equal(await paper('release').locator('[data-k="date"]').inputValue(), '2026-11-20', 'Date of Service');
+      // Marketing consent is one choice or the other.
+      await paper('waiver').locator('[data-consent="allow"]').check();
+      await paper('waiver').locator('[data-consent="deny"]').check();
+      assert.equal(await paper('waiver').locator('[data-consent="allow"]').isChecked(), false);
+
+      // The paper stays white and readable in every theme. It ends on Telemetry, whose decorations once printed over the paper.
+      for (const theme of ['editorial', 'classic', 'telemetry']) {
+        await pickTheme(theme);
+        const look = await paper('invoice').evaluate(el => ({
+          bg: getComputedStyle(el).backgroundColor,
+          input: getComputedStyle(el.querySelector('[data-k="name"]')).color,
+          inputBg: getComputedStyle(el.querySelector('[data-k="name"]')).backgroundColor,
+        }));
+        assert.equal(look.bg, 'rgb(255, 255, 255)', `${theme}: paper is white`);
+        assert.equal(look.input, 'rgb(0, 0, 0)', `${theme}: typed text is black`);
+        assert.match(look.inputBg, /rgba\(0, 0, 0, 0\)|transparent/, `${theme}: fields sit on the paper's lines`);
+      }
+
+      // A refresh keeps what was typed (this browser tab only).
+      await page.reload();
+      await paper('invoice').locator('[data-k="name"]').waitFor();
+      assert.equal(await paper('invoice').locator('[data-k="name"]').inputValue(), 'Smoke Customer');
+      assert.equal(await paper('invoice').locator('[data-line]').nth(1).locator('[data-l="desc"]').inputValue(), 'Interior vacuum');
+      assert.equal(await paper('invoice').locator('[data-total]').textContent(), '1,650.50');
+      assert.ok(await paper('invoice').locator('[data-pay="GCash"]').isChecked());
+
+      // Print: only the papers ticked, one A4 page each, with what was typed.
+      await forms.locator('[data-pick="aftercare"]').uncheck();
+      await page.evaluate(() => { window.printed = 0; window.print = () => { window.printed += 1; }; });
+      await forms.locator('[data-print]').click();
+      assert.equal(await page.evaluate(() => window.printed), 1, 'Print opens the print dialog');
+      // As a print window prints by default: "Background graphics" off. The black header must still print.
+      const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: false });
+      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); fs.writeFileSync(path.join(SHOTS, '19-forms.pdf'), pdf); }
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(pdf), useSystemFonts: false }).promise;
+      // This invoice is over-full (six lines, a long description, a five-line note): its Remarks go on to a second sheet
+      // rather than being cut off. Then the Waiver and the Vehicle Release, one page each; Aftercare left out.
+      assert.equal(doc.numPages, 4, 'Invoice (2 sheets), Waiver, Vehicle Release');
+      const pageText = async n => (await (await doc.getPage(n)).getTextContent()).items.map(i => i.str).join(' ');
+      const [p1a, p1b, p2, p3] = [await pageText(1), await pageText(2), await pageText(3), await pageText(4)];
+      const p1 = `${p1a} ${p1b}`;
+      assert.match(p1b, /^\s*Line one of the note/, 'the second sheet carries on with the Remarks');
+      const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+      assert.ok(Math.abs(vp.width - 595.3) < 2 && Math.abs(vp.height - 841.9) < 2, `A4 pages (${vp.width}x${vp.height})`);
+      // The badges are letter-spaced, so the PDF's text may split their letters ("S E RV I C E"): compare without spaces.
+      const squash = t => t.replace(/\s+/g, '');
+      assert.match(squash(p1), /SERVICEINVOICE/);
+      assert.match(p1, /Smoke Customer/);
+      assert.match(p1, /1,650\.50/);
+      assert.match(p1, /Date:\s*November 20, 2026/, 'the date picked, written out, never 11/20 or 20/11');
+      assert.doesNotMatch(p1, /\d{1,2}\/\d{1,2}\/\d{4}/);
+      assert.match(p1, /Line one of the note[\s\S]*Line five/, 'every line of Remarks prints');
+      assert.match(p2, /November 20, 2026/);
+      assert.match(p3, /Date of Service:\s*November 20, 2026/);
+      assert.doesNotMatch(p1, /Print|Add line|GM Operations Console|Carwash/, 'no app buttons or menu on the paper');
+      assert.match(squash(p2), /WAIVER&RELEASE[\s\S]*SmokeCustomer/);
+      assert.match(squash(p3), /VEHICLERELEASE[\s\S]*HondaCivicFD2008/);
+      await forms.locator('[data-pick="aftercare"]').check();
+      await pickTheme('classic');
+
+      // A phone: the papers scroll inside their own box; the page never scrolls sideways.
+      await page.setViewportSize({ width: 390, height: 844 });
+      const sideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(sideways <= 1, `forms scroll the page sideways by ${sideways}px on a phone`);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await shot('19-forms');
+
+      // New customer clears every paper, back to today's date.
+      await forms.locator('[data-clear]').click();
+      assert.equal(await paper('waiver').locator('[data-k="name"]').inputValue(), '');
+      assert.equal(await paper('invoice').locator('[data-total]').textContent(), '');
+      assert.equal(await paper('invoice').locator('[data-line]').count(), 5);
+      assert.equal(await paper('invoice').locator('[data-k="date"]').inputValue(), browserToday);
+    });
+
     await step('Enter in a box does what the button next to it does', async () => {
       const ENTER_DAY = '2026-06-15'; // nothing else on it
       // EOD: an expense, then the setup boxes.
@@ -2345,7 +2474,7 @@ async function launch() {
       const leftovers = await page.evaluate(() => [...document.querySelectorAll('main .view')].filter(v => v.innerHTML.trim()).map(v => v.id));
       assert.deepEqual(leftovers, [], 'previous user screens must be cleared on sign-out');
       await signIn('staff@sandbox');
-      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix']);
+      assert.deepEqual(await page.locator('#nav button').allTextContents(), ['Carwash', 'Detailing', 'Tint & PPF', 'Parts', 'Inventory', 'EOD Closing', 'Pricing Matrix', 'Invoice & Forms']);
       assert.ok(await page.locator('.theme-switch').isVisible(), 'staff can pick a theme too');
       await page.click('#nav [data-view="eod"]');
       await eod.locator('[data-add-expense]').waitFor();

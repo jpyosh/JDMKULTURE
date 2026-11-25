@@ -8,6 +8,7 @@ import parts from './views/parts.js';
 import inventory from './views/inventory.js';
 import eod from './views/eod.js';
 import pricing from './views/pricing.js';
+import forms, { clearFormsDraft } from './views/forms.js';
 import reports from './views/reports.js';
 import analytics from './views/analytics.js';
 import finance from './views/finance.js';
@@ -25,6 +26,7 @@ const VIEWS = [
   { key: 'inventory', label: 'Inventory', module: inventory, roles: ['owner', 'staff'] },
   { key: 'eod', label: 'EOD Closing', module: eod, roles: ['owner', 'staff'] },
   { key: 'pricing', label: 'Pricing Matrix', module: pricing, roles: ['owner', 'staff'] },
+  { key: 'forms', label: 'Invoice & Forms', module: forms, roles: ['owner', 'staff'] },
   { key: 'reports', label: 'Sales Reports', module: reports, roles: ['owner'] },
   { key: 'analytics', label: 'Analytics', module: analytics, roles: ['owner'] },
   { key: 'finance', label: 'Finance', module: finance, roles: ['owner'] },
@@ -63,6 +65,7 @@ const ICONS = {
   inventory: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/>',
   eod: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.5 2.5 5-5.4"/>',
   pricing: '<path d="M20.3 13.3l-7 7a1.8 1.8 0 0 1-2.6 0L3.5 13V3.5H13l7.3 7.2a1.8 1.8 0 0 1 0 2.6z"/><circle cx="8" cy="8" r="1.4"/>',
+  forms: '<path d="M14 3.5H6.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V9z"/><path d="M14 3.5V9h5.5M8.5 13h7M8.5 16.5h4.5"/>',
   reports: '<path d="M3.5 20.5h17M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',
   analytics: '<path d="M3.5 17.5l5.5-5.5 4 4 7.5-8"/><path d="M15.5 8h5v5"/>',
   finance: '<rect x="3.5" y="6" width="17" height="13" rx="2.5"/><path d="M3.5 10h17M15.5 15h2"/>',
@@ -151,6 +154,7 @@ async function init() {
       // Wipe every screen so the next person to sign in never sees the previous user's data.
       state.user = null;
       state.catalog = null;
+      clearFormsDraft();
       mounted.clear();
       document.querySelectorAll('main .view').forEach(view => { view.innerHTML = ''; view.classList.remove('active'); });
       showGate({ login: true });

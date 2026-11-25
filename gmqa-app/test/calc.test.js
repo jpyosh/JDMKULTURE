@@ -454,3 +454,13 @@ test('parts weekly net: a pay week counts in the period that holds its Saturday'
   assert.equal(partsNetIn(weeks, '2036-06-22', '2036-06-27').total, 0, 'a week whose Saturday is not reached yet does not count');
   assert.deepEqual(partsNetIn([], '2036-06-01', '2036-06-30'), { total: 0, weeks: [] });
 });
+
+// Forms tab: the printed Service Invoice. AMOUNT is each line's amount (as on the paper form), not qty × price.
+test('invoice totals: subtotal is the sum of the amounts, less the discount', () => {
+  const { invoiceTotals } = require('../lib/calc');
+  assert.deepEqual(invoiceTotals([{ amount: '1,500' }, { amount: 350.5 }, { amount: '' }, { amount: '₱ 100' }], '200'),
+    { subtotal: 1950.5, discount: 200, total: 1750.5 });
+  assert.deepEqual(invoiceTotals([], ''), { subtotal: 0, discount: 0, total: 0 }, 'a blank invoice is zero');
+  assert.deepEqual(invoiceTotals([{ amount: 'abc' }, { amount: '500' }], 'x'), { subtotal: 500, discount: 0, total: 500 }, 'text that is not a number counts as 0');
+  assert.equal(invoiceTotals([{ amount: '0.1' }, { amount: '0.2' }], 0).subtotal, 0.3, 'centavos add up exactly');
+});
