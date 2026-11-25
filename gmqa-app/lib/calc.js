@@ -792,6 +792,16 @@ function passbookExpected({ startDate, startBalance, remittances }) {
   return { startDate, startBalance: round2(startBalance), depositedSince, count: since.length, expected: round2(Number(startBalance) + depositedSince) };
 }
 
+// The printed Service Invoice (Invoice & Forms tab): nothing is saved or booked, it only adds up the paper.
+// AMOUNT is each line's amount, as on the shop's paper form (not qty × price). Amounts may be typed with ₱ or commas;
+// anything that is not a number counts as 0. The browser mirrors this in public/js/views/forms.js.
+const invoiceAmount = v => { const n = Number(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
+function invoiceTotals(lines, discount) {
+  const subtotal = sum(lines || [], l => invoiceAmount(l.amount));
+  const off = round2(invoiceAmount(discount));
+  return { subtotal, discount: off, total: round2(subtotal - off) };
+}
+
 module.exports = {
   DEPARTMENTS, DEPARTMENT_KEYS, department, isRunning, saleDate,
   round2, jobTotals, replayAvgCost, isCounted, daySummary, TIPS_TRACKED_FROM, tipsOwed, salesReport,
@@ -799,5 +809,5 @@ module.exports = {
   nextDueDate, fundStatus, setAsidePeriod, splitBill, closedDates, openDatesWithEntries,
   isDate, addDays, sundayOf, datesBetween, daysUntil, joPrefix,
   periodTotals, profitAndLoss, tradingProfit, partsNetIn, analyticsRow, periodBuckets, pctChange, PERIOD_COUNTS, serviceTrends,
-  remittanceReport, passbookExpected, payWeek, supplierReport,
+  remittanceReport, passbookExpected, payWeek, supplierReport, invoiceTotals,
 };

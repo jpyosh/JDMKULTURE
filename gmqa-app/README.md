@@ -13,6 +13,7 @@ Auth, deployed on Vercel.
 | Parts — job orders and auto parts for sale. **Hidden since 2026-11-18** (the parts department moved to Excel) | ✓ | ✓ (no costs) |
 | Inventory — everything stocked, tags, department containers, List / Sheet views, counts, deliveries, Excel export/paste | edit | view + stock counts |
 | Pricing Matrix — price + commission per vehicle class | edit | view |
+| Invoice & Forms — the shop's Service Invoice, Waiver & Release, Vehicle Release and Aftercare & Warranty, filled in on screen and printed as A4 (nothing saved or booked; kept in the browser tab until New customer or sign-out) | ✓ | ✓ |
 | Sales Reports — any date range | ✓ | — |
 | Suppliers — each supplier's parts sold, cost, profit and what is still to pay. **Hidden since 2026-11-18** | ✓ | — |
 | Analytics — daily, weekly, monthly, quarterly trends | ✓ | — |

@@ -1015,3 +1015,117 @@ textarea[data-paste-text]{width:100%;margin-bottom:10px;font-family:var(--mono);
   .list-card .section-header{padding:16px 16px 0;}
   .list-foot{padding:10px 16px;}
 }
+
+/* ---------- Invoice & Forms: the shop's papers, filled in on screen and printed as A4 ----------
+   The paper looks the same in every theme (white, black ink, the shop's red), so every rule is under #view-forms
+   to win over the themes' input styles. */
+.forms-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;}
+.forms-bar .hint{flex-basis:100%;margin:0;}
+.forms-picks{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;}
+.forms-picks label{display:inline-flex;align-items:center;gap:7px;min-height:32px;cursor:pointer;}
+.forms-bar .actions{display:flex;gap:10px;}
+.papers{overflow-x:auto;padding:4px 2px 8px;}
+#view-forms .paper{
+  --ink:#000;--red:#e0262b;--rule:.3mm solid #111;
+  display:flex;flex-direction:column;box-sizing:border-box;width:210mm;min-height:297mm;margin:0 auto 28px;padding:11mm 13mm 8mm;
+  background:#fff;color:#111;color-scheme:light;font-family:Arial,"Helvetica Neue",Helvetica,sans-serif;font-size:9.6pt;line-height:1.38;
+  letter-spacing:0;text-transform:none;text-align:left;border-radius:2px;box-shadow:0 10px 34px rgba(0,0,0,.38);
+  -webkit-print-color-adjust:exact;print-color-adjust:exact;transition:opacity .2s;
+}
+#view-forms .paper.skip{opacity:.45;}
+#view-forms .paper *{letter-spacing:inherit;}
+#view-forms .doc-band{display:flex;align-items:center;gap:4mm;margin:0 0 5mm;padding:3.2mm 6mm 3.2mm 4.5mm;background:#000;color:#fff;border-bottom:1.3mm solid var(--red);}
+#view-forms .doc-logo{width:21mm;height:21mm;flex:none;border-radius:50% !important;background:#fff;box-shadow:0 0 0 .5mm #fff,0 0 0 .9mm var(--red);}
+#view-forms .doc-name{font-size:23pt;font-weight:900;font-style:italic;line-height:1;letter-spacing:.02em;color:#fff;white-space:nowrap;}
+#view-forms .doc-sub{margin-top:1.6mm;font-size:7.6pt;font-weight:700;letter-spacing:.5em;color:var(--red);}
+#view-forms .doc-badge{flex:none;margin-left:auto;padding:2.2mm 4.5mm;border-radius:1mm !important;background:var(--red);color:#fff;font-size:12pt;font-weight:700;letter-spacing:.09em;white-space:nowrap;}
+#view-forms .doc-h{margin:3.4mm 0 2.2mm;padding:0 0 1.3mm;border-bottom:.35mm solid var(--red);font-family:inherit;font-size:11.4pt;font-weight:700;color:#111;letter-spacing:0;text-transform:none;}
+#view-forms .doc-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:10mm;margin:0 0 1.7mm;}
+#view-forms .doc-grid.one{grid-template-columns:1fr;}
+#view-forms .doc-field{display:flex;align-items:flex-end;gap:2mm;min-width:0;font-size:9.4pt;font-weight:700;color:#111;}
+#view-forms .doc-field > span:first-child{white-space:nowrap;}
+#view-forms .doc-field input,#view-forms .doc-blank,#view-forms .doc-out,#view-forms .doc-date-text{
+  flex:1 1 0;width:auto;min-width:0;height:6mm;min-height:0;margin:0;padding:0 1mm .5mm;box-sizing:border-box;
+  border:0;border-bottom:var(--rule);border-radius:0;background:transparent;box-shadow:none;
+  color:var(--ink);font:400 10pt/1.2 Arial,"Helvetica Neue",Helvetica,sans-serif;letter-spacing:0;transition:none;
+}
+#view-forms .doc-out{display:block;font-weight:700;font-variant-numeric:tabular-nums;}
+#view-forms .doc-table{width:100%;margin:1mm 0 0;border-collapse:collapse;table-layout:fixed;}
+#view-forms .doc-table th{padding:2.3mm 3mm;background:#000;color:#fff;text-align:left;font-size:8.8pt;font-weight:700;letter-spacing:.04em;border:0;text-transform:none;}
+#view-forms .doc-table td{height:8.4mm;padding:0;border:var(--rule);vertical-align:top;background:#fff;}
+#view-forms .doc-table input,#view-forms .doc-table textarea{
+  display:block;width:100%;height:8.4mm;min-height:8.4mm;margin:0;padding:2mm 2.2mm;box-sizing:border-box;overflow:hidden;resize:none;
+  border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--ink);font:400 9.6pt/1.3 Arial,"Helvetica Neue",Helvetica,sans-serif;letter-spacing:0;transition:none;
+}
+#view-forms .doc-table textarea{height:auto;}
+#view-forms .doc-line-actions{display:flex;gap:8px;margin:2mm 0 0;}
+#view-forms .doc-totals{display:grid;gap:1.8mm;width:47%;box-sizing:border-box;margin:3.4mm 0 0 auto;padding:2.6mm 4.5mm 3mm;border:var(--rule);}
+#view-forms .doc-checks{display:flex;flex-wrap:wrap;align-items:flex-end;gap:2mm 7mm;}
+#view-forms .doc-check{display:inline-flex;align-items:flex-start;gap:2.2mm;font-weight:400;color:#111;cursor:pointer;}
+#view-forms .doc-check input[type=checkbox]{
+  appearance:none;-webkit-appearance:none;display:grid;place-content:center;flex:none;width:3.7mm;height:3.7mm;min-height:0;margin:.5mm 0 0;padding:0;
+  border:var(--rule);border-radius:.3mm;background:#fff;box-shadow:none;cursor:pointer;
+}
+#view-forms .doc-check input[type=checkbox]:checked::before{content:"";width:2.7mm;height:2.7mm;background:#000;clip-path:polygon(14% 44%,0 65%,50% 100%,100% 16%,80% 0,43% 62%);}
+#view-forms .doc-check input[type=checkbox]:focus-visible{outline:2px solid var(--red);outline-offset:1px;}
+#view-forms .doc-check.other{flex:1;align-items:flex-end;min-width:50mm;}
+#view-forms .doc-check.other input[type=checkbox]{align-self:center;margin:0;}
+#view-forms .doc-check.other input[type=text]{
+  flex:1;min-width:0;height:6mm;min-height:0;margin:0;padding:0 1mm .5mm;border:0;border-bottom:var(--rule);border-radius:0;background:transparent;box-shadow:none;
+  color:var(--ink);font:400 10pt/1.2 Arial,"Helvetica Neue",Helvetica,sans-serif;transition:none;
+}
+#view-forms .doc-remarks{
+  /* Fills what is left of the page and gives way (to two lines) when service lines are added. */
+  display:block;flex:1 1 17mm;width:100%;height:17mm;min-height:17mm;margin:0;padding:1.8mm 5mm;box-sizing:border-box;resize:none;
+  border:var(--rule);border-radius:0;box-shadow:none;color:var(--ink);font:400 10pt/7.2mm Arial,"Helvetica Neue",Helvetica,sans-serif;transition:none;
+  background:#fff repeating-linear-gradient(to bottom,transparent 0,transparent 6.95mm,#b5b5b5 6.95mm,#b5b5b5 7.2mm);
+  background-origin:content-box;background-clip:content-box;background-attachment:local;
+}
+#view-forms .doc-p{margin:0 0 2.2mm;}
+#view-forms .doc-strong{font-weight:700;}
+#view-forms .doc-list{margin:0 0 2mm;padding:0 0 0 6.5mm;}
+#view-forms .doc-list li{margin:0 0 1.1mm;padding-left:1mm;}
+#view-forms .doc-box{display:grid;gap:2mm;margin:2.4mm 0 3mm;padding:3mm 4.5mm;border:var(--rule);}
+#view-forms .doc-box-title{font-size:10.4pt;font-weight:700;color:var(--red);}
+#view-forms .doc-red{color:var(--red);font-weight:700;}
+#view-forms .doc-center{margin:3mm 8mm 0;text-align:center;font-size:10pt;}
+#view-forms .doc-signs{margin-top:auto;padding-top:6mm;}
+#view-forms .doc-signs .doc-grid{margin-bottom:3.6mm;}
+#view-forms .doc-foot{margin-top:auto;padding-top:2.4mm;border-top:.3mm solid #cfcfcf;color:#666;font-size:8pt;}
+#view-forms .doc-signs + .doc-foot{margin-top:2mm;}
+#view-forms .doc-care-grid{display:grid;grid-template-columns:1fr 1fr;gap:5.5mm 9mm;}
+#view-forms .doc-care-h{margin:0 0 2.2mm;font-family:inherit;font-size:10.6pt;font-weight:700;color:var(--red);text-transform:none;letter-spacing:0;}
+#view-forms .doc-bullets{margin:0 0 2.4mm;padding:0 0 0 6mm;}
+#view-forms .doc-bullets li{margin:0 0 1.5mm;}
+#view-forms .doc-care .doc-bullets{margin:0;padding:3.4mm 4mm 2.2mm 9.5mm;background:#f4f4f4;border:.3mm solid #dedede;border-left:1.2mm solid var(--red);}
+/* Warranty exclusions: four down the left, three down the right, as on the paper. */
+#view-forms .doc-bullets.doc-cols{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(4,auto);grid-auto-flow:column;column-gap:10mm;}
+#view-forms .doc-bullets.doc-cols li{display:list-item;}
+#view-forms .paper input[type=date]::-webkit-calendar-picker-indicator{display:none;}
+#view-forms .doc-date-text{display:none;}
+#view-forms .doc-remarks + .doc-foot{margin-top:2.4mm;}
+/* On screen only: where the cursor is. */
+#view-forms .paper :is(input[type=text],input[type=date],textarea):hover{background-color:#fffbea;}
+#view-forms .paper :is(input[type=text],input[type=date],textarea):focus{outline:none;background-color:#fff4c2;box-shadow:none;border-color:#111;}
+#view-forms .doc-remarks:is(:hover,:focus){background-color:#fffbea;}
+
+@page forms-a4{size:A4;margin:0;}
+@media print{
+  /* Printing while Invoice & Forms is open prints only the papers ticked, one A4 page each. */
+  body:has(#view-forms.active){background:#fff !important;min-height:0;}
+  body:has(#view-forms.active) :is(.rail,.app-toast,.datepicker,dialog){display:none !important;}
+  body:has(#view-forms.active) .app{display:block;min-height:0;}
+  body:has(#view-forms.active) .main{max-width:none;padding:0;}
+  /* The themes' decorations (Telemetry's banner and screen overlay) and entrance motion stay off the paper. */
+  body:has(#view-forms.active)::before,body:has(#view-forms.active)::after,
+  body:has(#view-forms.active) :is(.app,.main)::before,body:has(#view-forms.active) :is(.app,.main)::after,
+  html:has(#view-forms.active)::before,html:has(#view-forms.active)::after{content:none !important;display:none !important;}
+  #view-forms.active,#view-forms.active *{animation:none !important;transition:none !important;}
+  #view-forms :is(.view-header,.forms-bar,.screen-only,.paper.skip){display:none !important;}
+  #view-forms .papers{overflow:visible;padding:0;}
+  #view-forms .paper{page:forms-a4;width:210mm;min-height:296mm;margin:0;break-before:page;border-radius:0;box-shadow:none;opacity:1;}
+  #view-forms .paper :is(input,textarea),#view-forms .doc-remarks{background-color:transparent !important;caret-color:transparent;}
+  #view-forms .doc-remarks{background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 6.95mm,#b5b5b5 6.95mm,#b5b5b5 7.2mm) !important;}
+  #view-forms .paper input[type=date]{display:none;}
+  #view-forms .doc-date-text{display:block;}
+}
